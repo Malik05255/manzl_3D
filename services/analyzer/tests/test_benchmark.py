@@ -140,3 +140,50 @@ def test_symbol_iou_match_scores_one():
     report=evaluate_floor_plan(prediction,truth)
     assert report["symbols"]["f1"]==1.0
     assert report["symbolClasses"]["bathtub"]["f1"]==1.0
+
+
+
+def test_macro_f1_ignores_categories_empty_on_both_sides():
+    truth={
+        "walls":[{"a":{"x":0,"y":0},"b":{"x":100,"y":0}}],
+        "rooms":[],
+        "doors":[],
+        "windows":[],
+        "dimensions":[],
+        "symbols":[],
+    }
+    prediction={
+        "walls":[],
+        "rooms":[],
+        "doors":[],
+        "windows":[],
+        "dimensions":[],
+        "symbols":[],
+    }
+    report=evaluate_floor_plan(prediction,truth)
+    assert report["walls"]["f1"]==0.0
+    assert report["macroF1"]==0.0
+    assert report["macroCategories"]==["walls"]
+
+
+def test_false_positive_category_is_active_in_macro():
+    truth={
+        "walls":[],
+        "rooms":[],
+        "doors":[],
+        "windows":[],
+        "dimensions":[],
+        "symbols":[],
+    }
+    prediction={
+        "walls":[],
+        "rooms":[],
+        "doors":[{"a":{"x":10,"y":10},"b":{"x":30,"y":10}}],
+        "windows":[],
+        "dimensions":[],
+        "symbols":[],
+    }
+    report=evaluate_floor_plan(prediction,truth)
+    assert report["openings"]["f1"]==0.0
+    assert report["macroF1"]==0.0
+    assert report["macroCategories"]==["openings"]
