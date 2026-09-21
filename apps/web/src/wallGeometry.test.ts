@@ -1,6 +1,6 @@
 import { describe,expect,it } from "vitest";
 import type { FloorPlanModel } from "@manzil/contracts";
-import { createManualWall,removeUnboundWall,wallRemovalReason } from "./wallGeometry";
+import { createManualWall,extendWallEndpoint,joinCollinearWalls,removeUnboundWall,splitWallAtPoint,trimWallEndpoint,wallRemovalReason } from "./wallGeometry";
 
 function plan():FloorPlanModel{
   return {
@@ -76,4 +76,62 @@ it("detaches dimension evidence when deleting an unbound wall",()=>{
   expect(next.walls.some(item=>item.id==="free")).toBe(false);
   expect(next.dimensions?.[0].referenceWallId).toBeNull();
   expect(next.dimensions?.[0].orientation).toBe("unknown");
+});
+
+
+describe("CAD wall operations",()=>{
+  it("splits a room boundary wall and rewrites topology references",()=>{
+    const source=plan();
+    source.doors=[{id:"door",kind:"door",wallId:"bound",a:{x:180,y:100},b:{x:240,y:100},confidence:1}];
+    source.dimensions=[{id:"d",text:"2.00 m",center:{x:400,y:80},valueM:2,unit:"m",orientation:"horizontal",referenceWallId:"bound",confidence:.9}];
+    const next=splitWallAtPoint(source,"bound",{x:300,y:105})!;
+    expect(next.walls.some(wall=>wall.id==="bound")).toBe(false);
+    const splitWalls=next.walls.filter(wall=>wall.id.startsWith("wall-split-"));
+    expect(splitWalls).toHaveLength(2);
+    expect(next.rooms[0].boundaryWallIds).toEqual(splitWalls.map(wall=>wall.id));
+    expect(next.doors[0].wallId).toBe(splitWalls[0].id);
+    expect(next.dimensions?.[0].referenceWallId).toBe(splitWalls[1].id);
+  });
+
+  it("joins connected collinear walls and rewrites hosted references",()=>{
+    const source=plan();
+    source.rooms=[];
+    source.walls=[
+      {id:"a",a:{x:100,y:200},b:{x:300,y:200},thicknessPx:10,confidence:.9,role:"interior"},
+      {id:"b",a:{x:300,y:200},b:{x:550,y:200},thicknessPx:14,confidence:.8,role:"interior"},
+    ];
+    source.windows=[{id:"window",kind:"window",wallId:"b",a:{x:360,y:200},b:{x:430,y:200},confidence:1}];
+    const next=joinCollinearWalls(source,"a","b")!;
+    expect(next.walls).toHaveLength(1);
+    expect(next.walls[0].a.x).toBe(100);
+    expect(next.walls[0].b.x).toBe(550);
+    expect(next.windows[0].wallId).toBe("a");
+  });
+
+  it("rejects joining walls that are not collinear",()=>{
+    const source=plan();
+    source.rooms=[];
+    source.walls=[
+      {id:"a",a:{x:100,y:200},b:{x:300,y:200},thicknessPx:10,confidence:.9},
+      {id:"b",a:{x:300,y:200},b:{x:300,y:450},thicknessPx:10,confidence:.9},
+    ];
+    expect(joinCollinearWalls(source,"a","b")).toBeNull();
+  });
+
+  it("extends and trims a free diagonal wall without forcing orthogonal geometry",()=>{
+    const source=plan();
+    source.rooms=[];
+    source.walls=[{id:"diag",a:{x:100,y:100},b:{x:200,y:200},thicknessPx:10,confidence:.9}];
+    const extended=extendWallEndpoint(source,"diag","b",Math.sqrt(5000))!;
+    expect(extended.walls[0].b.x).toBeCloseTo(250,5);
+    expect(extended.walls[0].b.y).toBeCloseTo(250,5);
+    const trimmed=trimWallEndpoint(extended,"diag","b",Math.sqrt(5000))!;
+    expect(trimmed.walls[0].b.x).toBeCloseTo(200,5);
+    expect(trimmed.walls[0].b.y).toBeCloseTo(200,5);
+  });
+
+  it("does not trim a room boundary wall outside topology-aware editing",()=>{
+    const source=plan();
+    expect(trimWallEndpoint(source,"bound","b",20)).toBeNull();
+  });
 });
