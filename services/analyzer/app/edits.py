@@ -73,7 +73,7 @@ def _absorb_service_alternative(plan:FloorPlan,target:Room,target_w:float,target
     return None
 
 def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:float,command:str)->ProposalResponse:
-    if target.confidence<ROOM_EDIT_CONFIDENCE_MIN:
+    if not target.reviewed and target.confidence<ROOM_EDIT_CONFIDENCE_MIN:
         return ProposalResponse(
             command=command,
             proposals=[],
@@ -227,7 +227,7 @@ def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:fl
     return ProposalResponse(command=command,proposals=[item[2] for item in ranked[:4]])
 
 def build_merge_proposal(plan:FloorPlan,source:Room,target:Room,command:str)->ProposalResponse:
-    uncertain=[room.name for room in (source,target) if room.confidence<ROOM_EDIT_CONFIDENCE_MIN]
+    uncertain=[room.name for room in (source,target) if not room.reviewed and room.confidence<ROOM_EDIT_CONFIDENCE_MIN]
     if uncertain:
         return ProposalResponse(
             command=command,
