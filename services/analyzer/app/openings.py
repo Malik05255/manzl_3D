@@ -112,14 +112,20 @@ def _door_leaf_evidence_details(
     b:dict,
     gap_px:float,
     wall_angle_deg:float,
-)->tuple[int,set[str]]:
+)->tuple[int,set[str],str,float]:
     roi,offset_x,offset_y=_opening_roi(image,a,b,gap_px)
     evidence=0
     hinges:set[str]=set()
     hinge_tolerance=max(8.0,gap_px*0.28)
     ax,ay=_point(a)
     bx,by=_point(b)
+    gap_length=max(1e-9,math.hypot(bx-ax,by-ay))
+    ux=(bx-ax)/gap_length
+    uy=(by-ay)/gap_length
+    nx=-uy
+    ny=ux
     accepted=[]
+    signed_depths=[]
     for x1,y1,x2,y2 in _hough_segments(roi,gap_px):
         dx=float(x2-x1)
         dy=float(y2-y1)
@@ -132,15 +138,19 @@ def _door_leaf_evidence_details(
             continue
 
         endpoints=[
-            (offset_x+x1,offset_y+y1),
-            (offset_x+x2,offset_y+y2),
+            (float(offset_x+x1),float(offset_y+y1)),
+            (float(offset_x+x2),float(offset_y+y2)),
         ]
-        distance_a=min(math.hypot(px-ax,py-ay) for px,py in endpoints)
-        distance_b=min(math.hypot(px-bx,py-by) for px,py in endpoints)
-        nearest=min(distance_a,distance_b)
+        distance_a=[math.hypot(px-ax,py-ay) for px,py in endpoints]
+        distance_b=[math.hypot(px-bx,py-by) for px,py in endpoints]
+        nearest_a=min(distance_a)
+        nearest_b=min(distance_b)
+        nearest=min(nearest_a,nearest_b)
         if nearest>hinge_tolerance:
             continue
-        hinge="a" if distance_a<=distance_b else "b"
+        hinge="a" if nearest_a<=nearest_b else "b"
+        hx,hy=(ax,ay) if hinge=="a" else (bx,by)
+        far=max(endpoints,key=lambda point:math.hypot(point[0]-hx,point[1]-hy))
 
         # Hough can return both edges of the same leaf. Collapse near-identical
         # angle/hinge evidence before classifying a double-swing door.
@@ -150,7 +160,19 @@ def _door_leaf_evidence_details(
         accepted.append(key)
         evidence+=1
         hinges.add(hinge)
-    return evidence,hinges
+        signed_depths.append((far[0]-hx)*nx+(far[1]-hy)*ny)
+
+    if not signed_depths:
+        return evidence,hinges,"unknown",0.0
+    positive=sum(abs(value) for value in signed_depths if value>0)
+    negative=sum(abs(value) for value in signed_depths if value<0)
+    total=positive+negative
+    if total<=1e-9 or abs(positive-negative)/total<.18:
+        swing_side="unknown"
+    else:
+        swing_side="positive" if positive>negative else "negative"
+    swing_depth=max(abs(value) for value in signed_depths)
+    return evidence,hinges,swing_side,float(swing_depth)
 
 
 def _door_leaf_evidence(
@@ -160,7 +182,7 @@ def _door_leaf_evidence(
     gap_px:float,
     wall_angle_deg:float,
 )->int:
-    evidence,_=_door_leaf_evidence_details(image,a,b,gap_px,wall_angle_deg)
+    evidence,_,_,_=_door_leaf_evidence_details(image,a,b,gap_px,wall_angle_deg)
     return evidence
 
 def _door_arc_evidence(image:np.ndarray,a:dict,b:dict,gap_px:float)->int:
@@ -327,7 +349,7 @@ def detect_doors(
             a=_point_from_frame(fe,offset,ux,uy)
             b=_point_from_frame(ss,offset,ux,uy)
 
-            leaf_evidence,leaf_hinges=_door_leaf_evidence_details(image,a,b,gap,wall_angle)
+            leaf_evidence,leaf_hinges,swing_side,swing_depth=_door_leaf_evidence_details(image,a,b,gap,wall_angle)
             arc_evidence=_door_arc_evidence(image,a,b,gap)
             if leaf_evidence<1 and arc_evidence<2:
                 continue
@@ -353,6 +375,8 @@ def detect_doors(
                 "id":f"door-candidate-{len(candidates)+1}",
                 "kind":"door",
                 "doorSubtype":door_subtype,
+                "doorSwingSide":swing_side,
+                "doorSwingDepthPx":round(swing_depth,2) if swing_depth>0 else None,
                 "wallId":wall_id,
                 "a":a,
                 "b":b,
