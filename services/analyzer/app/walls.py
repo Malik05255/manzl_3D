@@ -642,16 +642,51 @@ def _candidate_near_dimension_label(
     return False
 
 
+def _thin_matching_vector(
+    wall:dict,
+    vector_lines:list[dict],
+    min_side:float,
+)->bool:
+    if not vector_lines:
+        return False
+    ws,we,wo,wlen,ux,uy=_frame(wall)
+    if wlen<=1e-9:
+        return False
+    nx=-uy
+    ny=ux
+    thin_stroke=max(4.0,min(6.0,min_side*.004))
+    for vector in vector_lines:
+        try:
+            stroke=float(vector.get("widthPx",1.0))
+        except (TypeError,ValueError):
+            continue
+        if stroke>thin_stroke or _angle_difference(wall,vector)>4.0:
+            continue
+        vax,vay=_point(vector["a"])
+        vbx,vby=_point(vector["b"])
+        vs=min(vax*ux+vay*uy,vbx*ux+vby*uy)
+        ve=max(vax*ux+vay*uy,vbx*ux+vby*uy)
+        vo=((vax+vbx)/2)*nx+((vay+vby)/2)*ny
+        shared=max(0.0,min(we,ve)-max(ws,vs))
+        overlap=shared/max(1.0,min(wlen,ve-vs))
+        axis_tol=max(5.0,stroke*2.5)
+        if overlap>=.60 and abs(vo-wo)<=axis_tol:
+            return True
+    return False
+
+
 def quarantine_dimension_aligned_walls(
     walls:list[dict],
     labels:list[dict],
     height:int,
     width:int,
+    vector_lines:list[dict]|None=None,
 )->set[str]:
-    """Downgrade thin extracted lines that align with explicit dimension text.
+    """Downgrade lines that align with explicit dimension text/evidence.
 
-    The wall remains in the canonical model for review, but callers can exclude
-    its id from automatic room/opening topology.
+    A nearby text glyph can make a thin raster dimension stroke look thick, so
+    native PDF stroke width is used as an independent thin-line signal when
+    available. The wall remains in the model for review.
     """
     min_side=float(max(1,min(height,width)))
     thin_limit=max(4.5,min(8.0,min_side*.0045))
@@ -662,9 +697,13 @@ def quarantine_dimension_aligned_walls(
             wall_id=str(wall.get("id",""))
         except (TypeError,ValueError):
             continue
-        if not wall_id or thickness>thin_limit:
+        if not wall_id:
             continue
         if not _candidate_near_dimension_label(wall,labels,min_side):
+            continue
+        thin_raster=thickness<=thin_limit
+        thin_vector=_thin_matching_vector(wall,vector_lines or [],min_side)
+        if not thin_raster and not thin_vector:
             continue
         wall["confidence"]=min(float(wall.get("confidence",0.0)),0.64)
         quarantined.add(wall_id)
