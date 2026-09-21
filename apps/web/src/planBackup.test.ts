@@ -106,3 +106,15 @@ it("deep clones dimension symbol and analysis metadata for a new project",()=>{
   expect(original.dimensions![0].center.x).toBe(200);
   expect(original.analysis!.engines).toEqual(["opencv","symbol-detector"]);
 });
+
+
+it("rejects door-only metadata on a window",()=>{
+  const broken={
+    ...plan(),
+    windows:[{
+      id:"window-1",kind:"window" as const,doorSubtype:"single_swing",
+      wallId:"wall-1",a:{x:100,y:0},b:{x:180,y:0},confidence:.9,
+    }],
+  };
+  expect(()=>parsePlanBackup(JSON.stringify(broken))).toThrow("BACKUP_WINDOWS");
+});
