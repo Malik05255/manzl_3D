@@ -608,11 +608,46 @@ def enrich_walls_with_vector(walls:list[dict],vector_lines:list[dict])->list[dic
     return result
 
 
+def _candidate_near_dimension_label(
+    candidate:dict,
+    labels:list[dict],
+    min_side:float,
+)->bool:
+    if not labels:
+        return False
+    start,end,offset,length,ux,uy=_frame(candidate)
+    if length<=1e-9:
+        return False
+    nx=-uy
+    ny=ux
+    thickness=max(2.0,float(candidate.get("thicknessPx",4.0)))
+    normal_tolerance=max(18.0,min(min_side*.035,thickness*5.0))
+    axial_margin=max(14.0,min(length*.18,min_side*.04))
+
+    for label in labels:
+        if str(label.get("kind",""))!="dimension":
+            continue
+        try:
+            confidence=float(label.get("confidence",0.0))
+            cx=float(label["center"]["x"])
+            cy=float(label["center"]["y"])
+        except (KeyError,TypeError,ValueError):
+            continue
+        if confidence<.55:
+            continue
+        along=cx*ux+cy*uy
+        normal=cx*nx+cy*ny
+        if start-axial_margin<=along<=end+axial_margin and abs(normal-offset)<=normal_tolerance:
+            return True
+    return False
+
+
 def add_vector_wall_candidates(
     walls:list[dict],
     vector_lines:list[dict],
     height:int,
     width:int,
+    labels:list[dict]|None=None,
 )->list[dict]:
     """Add wall centerlines from native PDF vectors at any angle.
 
@@ -670,6 +705,9 @@ def add_vector_wall_candidates(
 
     result=[dict(wall) for wall in walls]
     candidates=_merge_near_collinear_candidates(candidates)
+    for candidate in candidates:
+        if _candidate_near_dimension_label(candidate,labels or [],min_side):
+            candidate["confidence"]=min(float(candidate.get("confidence",0.0)),0.64)
     accepted=[]
     for candidate in sorted(
         candidates,
@@ -702,6 +740,7 @@ def rasterize_wall_mask(
     height:int,
     width:int,
     base_mask:np.ndarray|None=None,
+    min_pdf_vector_confidence:float|None=None,
 )->np.ndarray:
     """Build a room-separation barrier from canonical wall centerlines."""
     if base_mask is None:
@@ -712,6 +751,12 @@ def rasterize_wall_mask(
         mask=base_mask.copy()
 
     for wall in walls:
+        if (
+            min_pdf_vector_confidence is not None
+            and str(wall.get("provenance",""))=="pdf-vector"
+            and float(wall.get("confidence",0.0))<min_pdf_vector_confidence
+        ):
+            continue
         try:
             x1=int(round(float(wall["a"]["x"])))
             y1=int(round(float(wall["a"]["y"])))
