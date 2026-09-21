@@ -62,6 +62,11 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   const[historyOpen,setHistoryOpen]=useState(false);const[historyBusy,setHistoryBusy]=useState(false);const[revisions,setRevisions]=useState<RevisionView[]>([]);
   const[validationReport,setValidationReport]=useState<ValidationReport|null>(null);const[validationBusy,setValidationBusy]=useState(false);
   const dirty=useMemo(()=>JSON.stringify(plan)!==JSON.stringify(savedPlan),[plan,savedPlan]);
+  const syncPlanForEngineer=async()=>{
+    if(!dirty)return;
+    const synced=await saveRevision(project.id,plan,"حفظ تلقائي قبل H Engineer");
+    setProject(synced);setSavedPlan(plan);setUndoStack([]);setRedoStack([]);
+  };
   const applyLocalPlan=(next:FloorPlanModel)=>{
     setUndoStack(stack=>[...stack.slice(-49),plan]);
     setRedoStack([]);
@@ -99,6 +104,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     const canonical=`عدل ${room.name} إلى ${width}×${height}`;
     setThinking(true);setNotice(null);setPreview(null);
     try{
+      await syncPlanForEngineer();
       const result=await resizeRoomPrecisely(project.id,room.id,width,height);
       setCommand(canonical);setProposals(result.proposals);
       if(result.needsClarification)setNotice(result.needsClarification);
@@ -123,10 +129,10 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     window.addEventListener("keydown",handle);
     return()=>window.removeEventListener("keydown",handle);
   },[undoStack,redoStack,plan]);
-  const ask=async()=>{if(!command.trim())return;setThinking(true);setNotice(null);setPreview(null);try{const r=await askEngineer(project.id,command.trim());setProposals(r.proposals);if(r.needsClarification)setNotice(r.needsClarification);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحليل الطلب");}finally{setThinking(false);}};
+  const ask=async()=>{if(!command.trim())return;setThinking(true);setNotice(null);setPreview(null);try{await syncPlanForEngineer();const r=await askEngineer(project.id,command.trim());setProposals(r.proposals);if(r.needsClarification)setNotice(r.needsClarification);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحليل الطلب");}finally{setThinking(false);}};
   const save=async()=>{setSaving(true);try{const u=await saveRevision(project.id,plan,"تعديل يدوي");setProject(u);setSavedPlan(plan);setNotice("تم حفظ التعديل في السحابة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر الحفظ");}finally{setSaving(false);}};
   const openHistory=async()=>{setHistoryOpen(true);setHistoryBusy(true);try{const r=await listRevisions(project.id);setRevisions(r.items);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحميل سجل النسخ");setHistoryOpen(false);}finally{setHistoryBusy(false);}};
-  const runValidation=async()=>{setValidationBusy(true);setNotice(null);try{setValidationReport(await validateProject(project.id));}catch(e){setNotice(e instanceof Error?e.message:"تعذر فحص المخطط");}finally{setValidationBusy(false);}};
+  const runValidation=async()=>{setValidationBusy(true);setNotice(null);try{setValidationReport(await validateProject(project.id,plan));}catch(e){setNotice(e instanceof Error?e.message:"تعذر فحص المخطط");}finally{setValidationBusy(false);}};
   const restore=async(revision:number)=>{if(dirty){setNotice("احفظ التغييرات الحالية أو تراجع عنها قبل استعادة نسخة سابقة.");return;}setSaving(true);try{const u=await restoreRevision(project.id,revision);if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);setUndoStack([]);setRedoStack([]);}setProject(u);setHistoryOpen(false);setNotice(`تمت استعادة النسخة ${revision} كنسخة جديدة محفوظة.`);}catch(e){setNotice(e instanceof Error?e.message:"تعذر استعادة النسخة");}finally{setSaving(false);}};
   const apply=async()=>{if(!preview)return;setSaving(true);try{const u=await applyProposal(project.id,{command,proposal:preview});if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);setUndoStack([]);setRedoStack([]);}setProject(u);setPreview(null);setProposals([]);setCommand("");setSelectedRoom(null);setExactWidth("");setExactHeight("");setNotice("تم اعتماد التعديل وحفظ نسخة جديدة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر تطبيق التعديل");}finally{setSaving(false);}};
   const applyCalibration=()=>{

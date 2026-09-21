@@ -86,7 +86,7 @@ export async function getProjectPreview(id:string):Promise<string|null>{
 }
 export const askEngineer=(id:string,command:string)=>request<EditProposalResponse>(`/v1/projects/${id}/ai/proposals`,{method:"POST",body:JSON.stringify({command})});
 export const resizeRoomPrecisely=(id:string,roomId:string,widthM:number,heightM:number)=>request<EditProposalResponse>(`/v1/projects/${id}/geometry/resize-proposals`,{method:"POST",body:JSON.stringify({roomId,widthM,heightM})});
-export const validateProject=(id:string)=>request<ValidationReport>(`/v1/projects/${id}/validate`,{method:"POST"});
+export const validateProject=(id:string,plan:FloorPlanModel)=>request<ValidationReport>(`/v1/projects/${id}/validate`,{method:"POST",body:JSON.stringify({plan})});
 export const applyProposal=(id:string,payload:ApplyProposalRequest)=>request<ProjectView>(`/v1/projects/${id}/ai/apply`,{method:"POST",body:JSON.stringify(payload)});
 export function saveRevision(id:string,plan:FloorPlanModel,summary:string){
   const payload:SaveRevisionRequest={plan,summary};

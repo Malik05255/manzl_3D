@@ -176,8 +176,11 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const id=validateMatch[1];
     const secured=await protectedRow(request,env,id);
     if(secured instanceof Response) return secured;
-    const plan=await currentPlan(env,secured);
+    const body=await request.json<{plan?:FloorPlanModel}>().catch(()=>({}));
+    const stored=await currentPlan(env,secured);
+    const plan=body.plan??stored;
     if(!plan) return json({error:"المخطط غير جاهز للفحص"},409);
+    if(plan.id!==id||plan.schemaVersion!==1) return json({error:"صيغة المخطط غير صالحة للفحص"},400);
     try{return json(await analyzerValidation(env,id,plan));}
     catch(error){return json({error:error instanceof Error?error.message:"تعذر فحص المخطط"},502);}
   }
