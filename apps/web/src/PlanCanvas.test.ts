@@ -1,6 +1,6 @@
 import { describe,expect,it } from "vitest";
 import type { FloorPlanModel } from "@manzil/contracts";
-import { moveWallAndTopology } from "./PlanCanvas";
+import { moveWallAndTopology,snapAxis } from "./PlanCanvas";
 
 function plan():FloorPlanModel{
   return {
@@ -45,5 +45,17 @@ describe("manual wall topology",()=>{
     const frame2=moveWallAndTopology(base,original,{...original,a:{x:230,y:0},b:{x:230,y:300}});
     expect(frame1.walls.find(wall=>wall.id==="shared")!.a.x).toBe(215);
     expect(frame2.walls.find(wall=>wall.id==="shared")!.a.x).toBe(230);
+  });
+});
+
+
+describe("manual wall snapping",()=>{
+  it("snaps to 5cm increments when the plan scale is known",()=>{
+    expect(snapAxis(123,.01,.05)).toBe(125);
+    expect(snapAxis(122,.01,.05)).toBe(120);
+  });
+
+  it("leaves coordinates unchanged before calibration",()=>{
+    expect(snapAxis(123,null,.05)).toBe(123);
   });
 });
