@@ -1,5 +1,5 @@
 from app.models import FloorPlan,Point,Quality,Room,Source,Wall
-from app.topology import link_room_boundaries,relink_plan_boundaries
+from app.topology import classify_wall_roles,link_room_boundaries,relink_plan_boundaries
 
 
 def test_links_rectangular_room_to_four_nearby_walls():
@@ -44,3 +44,31 @@ def test_relink_removes_deleted_boundary_wall_reference():
     )
     relink_plan_boundaries(plan)
     assert set(plan.rooms[0].boundaryWallIds)=={"top","left"}
+
+
+def test_classifies_shared_wall_as_interior_and_envelope_as_exterior():
+    rooms=[
+        {
+            "id":"left","polygon":[
+                {"x":110.0,"y":110.0},{"x":500.0,"y":110.0},{"x":500.0,"y":490.0},{"x":110.0,"y":490.0}
+            ],"boundaryWallIds":["outer-left","shared"],
+        },
+        {
+            "id":"right","polygon":[
+                {"x":500.0,"y":110.0},{"x":890.0,"y":110.0},{"x":890.0,"y":490.0},{"x":500.0,"y":490.0}
+            ],"boundaryWallIds":["shared","outer-right"],
+        },
+    ]
+    walls=[
+        {"id":"outer-left","a":{"x":100.0,"y":100.0},"b":{"x":100.0,"y":500.0},"thicknessPx":10.0,"confidence":.9},
+        {"id":"shared","a":{"x":500.0,"y":100.0},"b":{"x":500.0,"y":500.0},"thicknessPx":10.0,"confidence":.9},
+        {"id":"outer-right","a":{"x":900.0,"y":100.0},"b":{"x":900.0,"y":500.0},"thicknessPx":10.0,"confidence":.9},
+    ]
+    classify_wall_roles(walls,rooms)
+    by_id={wall["id"]:wall for wall in walls}
+    assert by_id["shared"]["role"]=="interior"
+    assert by_id["shared"]["locked"] is False
+    assert by_id["outer-left"]["role"]=="exterior"
+    assert by_id["outer-left"]["locked"] is True
+    assert by_id["outer-right"]["role"]=="exterior"
+    assert by_id["outer-right"]["locked"] is True
