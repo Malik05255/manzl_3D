@@ -130,6 +130,10 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
   const[drag,setDrag]=useState<DragState>(null);
   const svgRef=useRef<SVGSVGElement|null>(null);
   const viewBox=useMemo(()=>`0 0 ${Math.max(plan.widthPx,1)} ${Math.max(plan.heightPx,1)}`,[plan.widthPx,plan.heightPx]);
+  const zoomStageStyle=useMemo(()=>({
+    width:`min(${zoom*100}%, ${Math.round(1100*zoom)}px)`,
+    aspectRatio:`${Math.max(plan.widthPx,1)} / ${Math.max(plan.heightPx,1)}`,
+  }),[zoom,plan.widthPx,plan.heightPx]);
 
   const screenToPlan=(clientX:number,clientY:number):Point=>{
     const svg=svgRef.current;if(!svg)return{x:0,y:0};
@@ -155,6 +159,12 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
     if(!calibrationMode||!onCalibrationPoint||calibrationPoints.length>=2)return;
     onCalibrationPoint(screenToPlan(event.clientX,event.clientY));
   };
+  const wheelZoom=(event:React.WheelEvent<HTMLDivElement>)=>{
+    if(!event.ctrlKey&&!event.metaKey)return;
+    event.preventDefault();
+    const step=event.deltaY>0?-.10:.10;
+    setZoom(value=>Math.max(.45,Math.min(3,value+step)));
+  };
 
   return <div className={`canvas-shell ${calibrationMode?"calibration-active":""}`}>
     <div className="canvas-toolbar">
@@ -163,8 +173,9 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
       <button className="icon-button" onClick={()=>setZoom(z=>Math.max(z-.15,.45))} aria-label="تصغير"><Minus size={18}/></button>
       <button className="icon-button" onClick={()=>setZoom(1)} aria-label="إعادة الضبط"><RotateCcw size={18}/></button>
     </div>
-    <div className="canvas-viewport" onPointerMove={move} onPointerUp={()=>setDrag(null)} onPointerCancel={()=>setDrag(null)}>
-      <svg ref={svgRef} className="plan-svg" viewBox={viewBox} style={{transform:`scale(${zoom})`}} onPointerDown={addCalibrationPoint}>
+    <div className="canvas-viewport" onWheel={wheelZoom} onPointerMove={move} onPointerUp={()=>setDrag(null)} onPointerCancel={()=>setDrag(null)}>
+      <div className="plan-zoom-stage" style={zoomStageStyle}>
+      <svg ref={svgRef} className="plan-svg" viewBox={viewBox} onPointerDown={addCalibrationPoint}>
         <rect width={plan.widthPx} height={plan.heightPx} fill="#fff"/>
         {backgroundUrl&&<image href={backgroundUrl} x={0} y={0} width={plan.widthPx} height={plan.heightPx} preserveAspectRatio="none" opacity={backgroundOpacity} pointerEvents="none"/>}
         {comparisonPlan&&comparisonPlan.rooms.map(oldRoom=>{
@@ -213,6 +224,7 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
         {calibrationPoints.length===2&&<line x1={calibrationPoints[0].x} y1={calibrationPoints[0].y} x2={calibrationPoints[1].x} y2={calibrationPoints[1].y} stroke="#e11d48" strokeWidth={3} strokeDasharray="10 7"/>}
         {calibrationPoints.map((point,index)=><g key={index}><circle cx={point.x} cy={point.y} r={9} fill="#e11d48"/><text x={point.x+14} y={point.y-12} className="calibration-label">{index+1}</text></g>)}
       </svg>
+      </div>
     </div>
   </div>;
 }
