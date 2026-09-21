@@ -97,6 +97,10 @@ def analyze_image(image:np.ndarray,project_id:str,filename:str,mime_type:str)->d
     doors=detect_doors(image,topology_walls,scale)
     windows=detect_windows(image,topology_walls,scale)
     walls,doors,windows=normalize_opening_hosts(walls,doors,windows)
+    topology_walls=[
+        wall for wall in walls
+        if str(wall.get("id","")) not in quarantined_wall_ids
+    ]
     room_barrier_mask=rasterize_wall_mask(walls,h,w,excluded_wall_ids=quarantined_wall_ids)
     rooms=detect_rooms(room_barrier_mask,labels,scale)
     link_room_boundaries(rooms,topology_walls)
