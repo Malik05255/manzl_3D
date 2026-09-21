@@ -44,6 +44,15 @@ class Opening(BaseModel):
     reviewed: bool = False
     provenance: ElementProvenance | None = None
 
+class PlanSymbol(BaseModel):
+    id: str
+    kind: Literal["sink","toilet","bathtub","shower","cooktop","stairs"]
+    a: Point
+    b: Point
+    confidence: float = Field(ge=0, le=1)
+    reviewed: bool = False
+    provenance: ElementProvenance | None = None
+
 class PlanLabel(BaseModel):
     id: str
     text: str
@@ -102,6 +111,7 @@ class FloorPlan(BaseModel):
     windows: list[Opening] = []
     labels: list[PlanLabel]
     dimensions: list[Dimension] = []
+    symbols: list[PlanSymbol] = []
     quality: Quality
     source: Source
     analysis: AnalysisMetadata | None = None
