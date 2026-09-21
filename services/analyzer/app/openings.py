@@ -130,7 +130,10 @@ def _door_leaf_evidence_details(
         dx=float(x2-x1)
         dy=float(y2-y1)
         length=math.hypot(dx,dy)
-        if length<gap_px*0.28 or length>gap_px*1.75:
+        # A door leaf is normally a substantial fraction of the opening width.
+        # Short Hough chords cut from a curved swing arc must not count as a
+        # second leaf/hinge.
+        if length<gap_px*0.45 or length>gap_px*1.75:
             continue
         angle=math.degrees(math.atan2(dy,dx))%180.0
         delta=_angle_delta_degrees(angle,wall_angle_deg)
