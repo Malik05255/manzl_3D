@@ -349,7 +349,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
       return;
     }
     applyLocalPlan(next);
-    setNotice(\`تم \${mode==="trim"?"قص":"تمديد"} النهاية \${endpoint==="a"?"A":"B"} بمقدار \${cm.toFixed(1)} سم.\`);
+    setNotice(`تم ${mode==="trim"?"قص":"تمديد"} النهاية ${endpoint==="a"?"A":"B"} بمقدار ${cm.toFixed(1)} سم.`);
   };
   const updateSelectedWallRole=(role:WallRole)=>{
     if(!selectedWall)return;
