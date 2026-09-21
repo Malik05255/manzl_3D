@@ -1,9 +1,11 @@
 from __future__ import annotations
+import asyncio
 import os
 import cv2
 import httpx
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,HttpUrl
+from .cloud_ocr import extract_cloud_ocr_labels
 from .commands import find_target_room,parse_target_size
 from .document import decode_document_with_page,extract_pdf_text_lines,extract_pdf_vector_lines,pdf_page_count,preprocess
 from .edits import build_proposals,build_resize_proposals
@@ -88,7 +90,20 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     _,ink=preprocess(image)
 
     await progress(req.callback_url,req.project_id,"ocr",35,"قراءة النصوص والأبعاد")
-    labels=extract_ocr_labels(image)
+    async def _safe_cloud_ocr():
+        try:
+            return await extract_cloud_ocr_labels(image)
+        except Exception:
+            return []
+    local_labels,cloud_labels=await asyncio.gather(
+        asyncio.to_thread(extract_ocr_labels,image),
+        _safe_cloud_ocr(),
+    )
+    if cloud_labels:
+        distance=max(12.0,min(image.shape[:2])*0.012)
+        labels=_merge_labels(local_labels,cloud_labels,distance)
+    else:
+        labels=local_labels
     if req.mime_type=="application/pdf":
         try:
             native_lines=extract_pdf_text_lines(data,source_page)
