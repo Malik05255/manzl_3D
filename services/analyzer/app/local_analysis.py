@@ -93,7 +93,7 @@ def analyze_document_bytes_local(
         walls=enrich_walls_with_vector(walls,vector_lines)
         walls=add_vector_wall_candidates(walls,vector_lines,h,w,labels=labels)
 
-    quarantined_wall_ids=quarantine_dimension_aligned_walls(walls,labels,h,w)
+    quarantined_wall_ids=quarantine_dimension_aligned_walls(walls,labels,h,w,vector_lines=vector_lines)
     topology_walls=[
         wall for wall in walls
         if str(wall.get("id","")) not in quarantined_wall_ids
