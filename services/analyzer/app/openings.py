@@ -147,13 +147,16 @@ def _door_leaf_evidence(
 
 
 def _door_arc_evidence(image:np.ndarray,a:dict,b:dict,gap_px:float)->int:
-    roi,_,_=_opening_roi(image,a,b,gap_px)
+    roi,offset_x,offset_y=_opening_roi(image,a,b,gap_px)
     if roi.size==0:
         return 0
     gray=cv2.cvtColor(roi,cv2.COLOR_BGR2GRAY)
     edges=cv2.Canny(gray,55,150)
     contours,_=cv2.findContours(edges,cv2.RETR_LIST,cv2.CHAIN_APPROX_NONE)
     evidence=0
+    ax,ay=_point(a)
+    bx,by=_point(b)
+    hinge_tolerance=max(9.0,gap_px*.24)
     for contour in contours:
         perimeter=cv2.arcLength(contour,False)
         if perimeter<gap_px*.35 or perimeter>gap_px*3.8:
@@ -162,10 +165,20 @@ def _door_arc_evidence(image:np.ndarray,a:dict,b:dict,gap_px:float)->int:
         if min(w,h)<max(5,gap_px*.18):
             continue
         aspect=max(w,h)/max(1.0,min(w,h))
-        if aspect>3.2:
+        if aspect>3.2 or len(contour)<8:
             continue
-        if len(contour)>=8:
-            evidence+=1
+
+        points=contour.reshape(-1,2)
+        hinge_distance=min(
+            min(
+                math.hypot(offset_x+float(px)-ax,offset_y+float(py)-ay),
+                math.hypot(offset_x+float(px)-bx,offset_y+float(py)-by),
+            )
+            for px,py in points[::max(1,len(points)//80)]
+        )
+        if hinge_distance>hinge_tolerance:
+            continue
+        evidence+=1
     return min(evidence,2)
 
 
