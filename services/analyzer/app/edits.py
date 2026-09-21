@@ -1,8 +1,18 @@
 from __future__ import annotations
 from itertools import product
-from .commands import find_target_room,resolve_target_size
+from .commands import find_target_room,normalize_arabic,resolve_target_size
 from .edit_geometry import apply_side,bbox
 from .models import EditRequest,Impact,Proposal,ProposalResponse
+
+SERVICE_ROOM_WORDS=("حمام","دوره مياه","دورة مياه","مطبخ","درج","مصعد","غسيل")
+
+def _service_rooms(names:list[str])->list[str]:
+    result=[]
+    for name in names:
+        normalized=normalize_arabic(name)
+        if any(normalize_arabic(word) in normalized for word in SERVICE_ROOM_WORDS):
+            result.append(name)
+    return result
 
 def build_proposals(req:EditRequest)->ProposalResponse:
     target=find_target_room(req.command,req.plan.rooms)
@@ -34,7 +44,7 @@ def build_proposals(req:EditRequest)->ProposalResponse:
     y_sides=[None] if abs(target_h-current_h)<=0.03 else ["bottom","top"]
     direction={"right":"اليمين","left":"اليسار","bottom":"الأسفل","top":"الأعلى"}
 
-    proposals=[]
+    ranked=[]
     for x_side,y_side in product(x_sides,y_sides):
         plan=req.plan.model_copy(deep=True)
         room=next(r for r in plan.rooms if r.id==target.id)
@@ -69,11 +79,25 @@ def build_proposals(req:EditRequest)->ProposalResponse:
             "راجع الأبواب ومسارات الحركة بصريًا قبل اعتماد التعديل."
         ]))
         proposal_id=f"resize:{target.id}:{x_side or 'same'}:{y_side or 'same'}:{target_w:g}x{target_h:g}"
-        proposals.append(Proposal(
+        service_rooms=_service_rooms(affected)
+        effect_titles=[impact.text for impact in impacts if impact.kind=="room_resize"]
+        if len(effect_titles)==1:
+            title=effect_titles[0]
+        elif affected:
+            title=f"إعادة توزيع {' و'.join(affected)}"
+        else:
+            title=f"التعديل باتجاه {dirs}"
+
+        warnings=[]
+        if service_rooms:
+            warnings.append(f"هذا الخيار يغيّر فراغ خدمة: {' و'.join(service_rooms)}.")
+        penalty=0.14*len(service_rooms)+0.04*max(0,len(affected)-1)
+        confidence=max(0.55,min(0.95,req.plan.quality.overall-penalty))
+        proposal=Proposal(
             id=proposal_id,
-            title=f"التعديل باتجاه {dirs}",
+            title=title,
             summary=summary,
-            confidence=max(0.55,min(0.95,req.plan.quality.overall)),
+            confidence=confidence,
             impacts=[
                 Impact(
                     kind="room_resize",
@@ -81,16 +105,17 @@ def build_proposals(req:EditRequest)->ProposalResponse:
                 ),
                 *impacts
             ],
-            warnings=[],
+            warnings=warnings,
             previewPlan=plan
-        ))
-        if len(proposals)>=4:
-            break
+        )
+        ranked.append((penalty,len(affected),proposal))
 
-    if not proposals:
+    if not ranked:
         return ProposalResponse(
             command=req.command,
             proposals=[],
             needsClarification="لا توجد مساحة مجاورة كافية لتنفيذ المقاس المطلوب دون تغيير حدود المبنى."
         )
+    ranked.sort(key=lambda item:(item[0],item[1]))
+    proposals=[item[2] for item in ranked[:4]]
     return ProposalResponse(command=req.command,proposals=proposals)
