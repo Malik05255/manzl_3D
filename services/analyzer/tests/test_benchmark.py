@@ -100,3 +100,43 @@ def test_opening_aggregate_preserves_class_aware_matches():
     assert report["doors"]["f1"]==1.0
     assert report["windows"]["f1"]==1.0
     assert report["openings"]["f1"]==1.0
+
+
+
+def test_symbol_metrics_are_class_aware():
+    truth=base_plan()
+    truth["symbols"]=[{
+        "kind":"toilet",
+        "a":{"x":20,"y":20},
+        "b":{"x":60,"y":70},
+    }]
+    prediction=base_plan()
+    prediction["symbols"]=[{
+        "kind":"sink",
+        "a":{"x":20,"y":20},
+        "b":{"x":60,"y":70},
+    }]
+    report=evaluate_floor_plan(prediction,truth)
+    assert report["symbols"]["tp"]==0
+    assert report["symbols"]["f1"]==0.0
+    assert report["symbolClasses"]["toilet"]["recall"]==0.0
+    assert report["symbolClasses"]["sink"]["precision"]==0.0
+    assert report["macroF1"]<1.0
+
+
+def test_symbol_iou_match_scores_one():
+    truth=base_plan()
+    truth["symbols"]=[{
+        "kind":"bathtub",
+        "a":{"x":100,"y":100},
+        "b":{"x":200,"y":160},
+    }]
+    prediction=base_plan()
+    prediction["symbols"]=[{
+        "kind":"bathtub",
+        "a":{"x":104,"y":102},
+        "b":{"x":198,"y":158},
+    }]
+    report=evaluate_floor_plan(prediction,truth)
+    assert report["symbols"]["f1"]==1.0
+    assert report["symbolClasses"]["bathtub"]["f1"]==1.0
