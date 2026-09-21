@@ -65,7 +65,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   const syncPlanForEngineer=async()=>{
     if(!dirty)return;
     setDraftState("saving");
-    try{await saveDraft(project.id,plan);setDraftState("saved");}
+    try{const synced=await saveDraft(project.id,plan,project.revision);setProject(current=>({...current,...synced,plan:current.plan}));setDraftState("saved");}
     catch(error){setDraftState("error");throw error;}
   };
   const applyLocalPlan=(next:FloorPlanModel)=>{
@@ -132,7 +132,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     const snapshot=plan;
     const timer=window.setTimeout(async()=>{
       setDraftState("saving");
-      try{await saveDraft(project.id,snapshot);setDraftState("saved");}
+      try{const synced=await saveDraft(project.id,snapshot,project.revision);setProject(current=>({...current,...synced,plan:current.plan}));setDraftState("saved");}
       catch{setDraftState("error");}
     },1400);
     return()=>window.clearTimeout(timer);

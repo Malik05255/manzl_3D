@@ -133,9 +133,14 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const id=draftMatch[1];
     const secured=await protectedRow(request,env,id);
     if(secured instanceof Response) return secured;
-    const body=await request.json<{plan?:FloorPlanModel}>();
+    const body=await request.json<{plan?:FloorPlanModel;expectedRevision?:number}>();
     if(!body.plan||body.plan.id!==id||body.plan.schemaVersion!==1) return json({error:"صيغة المسودة غير صالحة"},400);
-    await persistDraft(env,id,body.plan);
+    if(!Number.isInteger(body.expectedRevision)||body.expectedRevision!<0) return json({error:"رقم النسخة المرجعية للمسودة غير صالح"},400);
+    try{await persistDraft(env,id,body.plan,body.expectedRevision);}
+    catch(error){
+      if(error instanceof Error&&error.message==="STALE_DRAFT") return json({error:"المسودة متقادمة بعد حفظ نسخة أحدث"},409);
+      throw error;
+    }
     const row=await getProjectRow(env,id);
     return json(await projectView(env,row!,false));
   }

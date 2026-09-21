@@ -13,7 +13,7 @@ export async function projectView(env:Env,row:ProjectRow,includePlan=true):Promi
   }
   return {
     id:row.id,name:row.name,status:row.status as ProjectView["status"],phase:row.phase as ProjectView["phase"],
-    progress:row.progress,message:row.message,error:row.error,createdAt:row.created_at,updatedAt:row.updated_at,plan
+    progress:row.progress,revision:row.revision,message:row.message,error:row.error,createdAt:row.created_at,updatedAt:row.updated_at,plan
   };
 }
 
@@ -40,12 +40,15 @@ export async function persistPlan(env:Env,id:string,plan:FloorPlanModel,summary:
 }
 
 
-export async function persistDraft(env:Env,id:string,plan:FloorPlanModel){
+export async function persistDraft(env:Env,id:string,plan:FloorPlanModel,expectedRevision:number){
   const row=await getProjectRow(env,id);
   if(!row) throw new Error("PROJECT_NOT_FOUND");
-  const key=`projects/${id}/draft/current.json`;
+  if(row.revision!==expectedRevision) throw new Error("STALE_DRAFT");
+
+  const key=`projects/${id}/draft/current-r${expectedRevision}.json`;
   await env.ASSETS.put(key,JSON.stringify(plan),{httpMetadata:{contentType:"application/json"}});
   const now=new Date().toISOString();
-  await env.DB.prepare("UPDATE projects SET plan_key=?, status='ready', phase='ready', progress=100, message=?, error=NULL, updated_at=? WHERE id=?")
-    .bind(key,"تم حفظ المسودة سحابيًا",now,id).run();
+  const result=await env.DB.prepare("UPDATE projects SET plan_key=?, status='ready', phase='ready', progress=100, message=?, error=NULL, updated_at=? WHERE id=? AND revision=?")
+    .bind(key,"تم حفظ المسودة سحابيًا",now,id,expectedRevision).run();
+  if((result.meta.changes??0)<1) throw new Error("STALE_DRAFT");
 }

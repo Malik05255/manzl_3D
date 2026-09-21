@@ -49,6 +49,7 @@ export interface ProjectView {
   status: ProjectStatus;
   phase: AnalysisPhase;
   progress: number;
+  revision: number;
   message?: string | null;
   error?: string | null;
   createdAt: string;
