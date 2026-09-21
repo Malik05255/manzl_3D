@@ -350,3 +350,31 @@ def test_resize_preserves_irregular_neighbor_polygon():
     moved_boundary=[point.x for point in hall.polygon if point.y in (100,500)]
     assert 600 in moved_boundary
     assert any(point.x==700 and point.y==300 for point in hall.polygon)
+
+
+def test_selected_room_context_handles_pronoun_resize():
+    request=EditRequest(
+        project_id="project-1",
+        command="خليها 5×4",
+        target_room_id="bed",
+        plan=sample_plan(),
+    )
+    response=build_proposals(request)
+    assert response.proposals
+    preview=response.proposals[0].previewPlan
+    bed=next(room for room in preview.rooms if room.id=="bed")
+    assert round(room_width(bed,0.01),2)==5.0
+
+
+def test_explicit_room_name_overrides_selected_room_context():
+    request=EditRequest(
+        project_id="project-1",
+        command="عدل الصالة إلى 3×4",
+        target_room_id="bed",
+        plan=sample_plan(),
+    )
+    response=build_proposals(request)
+    assert response.proposals
+    preview=response.proposals[0].previewPlan
+    hall=next(room for room in preview.rooms if room.id=="hall")
+    assert round(room_width(hall,0.01),2)==3.0
