@@ -101,3 +101,12 @@ def test_text_duplicate_prefers_higher_confidence_provider():
 def test_architectural_area_labels_are_room_names():
     for text in ["Balcony","SHAFT","Elevator","Stairs","شرفة","مصعد","درج"]:
         assert classify_text(text)=="room_name"
+
+
+
+def test_common_architectural_room_vocabulary_is_classified():
+    for text in [
+        "DINING","WC","OFFICE","GARAGE","LAUNDRY","STORE",
+        "مخزن","مكتب","غرفة ملابس","سفرة",
+    ]:
+        assert classify_text(text)=="room_name"
