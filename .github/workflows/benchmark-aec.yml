@@ -147,5 +147,6 @@ jobs:
             benchmark-output/manzil-commit.txt
             benchmark-output/dataset-commit.txt
             benchmark-output/aec15/predictions/*.json
+            benchmark-output/aec15/predictions/_canonical/*.json
           if-no-files-found: warn
           retention-days: 30
