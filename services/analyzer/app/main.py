@@ -98,6 +98,8 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
                     "center":item["center"],
                     "confidence":0.995,
                     "kind":classify_text(item["text"]),
+                    "reviewed":False,
+                    "provenance":"pdf-text",
                 }
                 for index,item in enumerate(native_lines,start=1)
             ]
