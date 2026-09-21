@@ -24,6 +24,13 @@ export async function setProgress(env:Env,id:string,status:string,phase:string,p
     .bind(status,phase,Math.max(0,Math.min(100,Math.round(progress))),message??null,error??null,now,id).run();
 }
 
+export async function setAnalysisProgress(env:Env,id:string,sourceKey:string,expectedRevision:number,status:string,phase:string,progress:number,message?:string|null,error?:string|null){
+  const now=new Date().toISOString();
+  const result=await env.DB.prepare("UPDATE projects SET status=?, phase=?, progress=?, message=?, error=?, updated_at=? WHERE id=? AND source_key=? AND revision=?")
+    .bind(status,phase,Math.max(0,Math.min(100,Math.round(progress))),message??null,error??null,now,id,sourceKey,expectedRevision).run();
+  return (result.meta.changes??0)>0;
+}
+
 export async function persistPlan(env:Env,id:string,plan:FloorPlanModel,summary:string,expectedRevision?:number){
   const row=await getProjectRow(env,id);
   if(!row) throw new Error("PROJECT_NOT_FOUND");
