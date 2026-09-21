@@ -141,3 +141,7 @@ class ValidationReport(BaseModel):
 class ValidationRequest(BaseModel):
     project_id: str
     plan: FloorPlan
+
+class CanonicalizeRequest(BaseModel):
+    project_id: str
+    plan: FloorPlan
