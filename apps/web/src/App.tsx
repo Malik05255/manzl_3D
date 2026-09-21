@@ -237,14 +237,14 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     if(!previous)return;
     setUndoStack(stack=>stack.slice(0,-1));
     setRedoStack(stack=>[...stack.slice(-49),plan]);
-    setPlan(previous);setSelectedWall(null);setWallThicknessCm("");setSelectedRoom(null);setSelectedOpening(null);setSelectedDimension(null);setPreview(null);setProposals([]);
+    setPlan(previous);setSelectedWall(null);setWallThicknessCm("");setSelectedRoom(null);setSelectedOpening(null);setSelectedDimension(null);setSelectedSymbol(null);setPreview(null);setProposals([]);
   };
   const redoLocal=()=>{
     const next=redoStack.at(-1);
     if(!next)return;
     setRedoStack(stack=>stack.slice(0,-1));
     setUndoStack(stack=>[...stack.slice(-49),plan]);
-    setPlan(next);setSelectedWall(null);setWallThicknessCm("");setSelectedRoom(null);setSelectedOpening(null);setSelectedDimension(null);setPreview(null);setProposals([]);
+    setPlan(next);setSelectedWall(null);setWallThicknessCm("");setSelectedRoom(null);setSelectedOpening(null);setSelectedDimension(null);setSelectedSymbol(null);setPreview(null);setProposals([]);
   };
   const selectWall=(wallId:string|null)=>{
     setSelectedWall(wallId);setSelectedRoom(null);setSelectedOpening(null);setSelectedDimension(null);setSelectedSymbol(null);setPreview(null);setProposals([]);
