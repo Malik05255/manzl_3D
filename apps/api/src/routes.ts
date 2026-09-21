@@ -103,6 +103,18 @@ export async function route(request:Request,env:Env):Promise<Response>{
   }
 
   const revision=path.match(/^\/v1\/projects\/([^/]+)\/revisions$/);
+  if(revision&&request.method==="GET"){
+    const id=revision[1];
+    const secured=await protectedRow(request,env,id);
+    if(secured instanceof Response) return secured;
+    const result=await env.DB.prepare("SELECT revision, summary, created_at FROM revisions WHERE project_id=? ORDER BY revision DESC LIMIT 50")
+      .bind(id).all<{revision:number;summary:string;created_at:string}>();
+    return json({items:(result.results??[]).map(item=>({
+      revision:item.revision,
+      summary:item.summary,
+      createdAt:item.created_at
+    }))});
+  }
   if(revision&&request.method==="POST"){
     const id=revision[1];
     const secured=await protectedRow(request,env,id);
@@ -110,6 +122,25 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const body=await request.json<SaveRevisionRequest>();
     if(!body.plan||body.plan.schemaVersion!==1||body.plan.id!==id) return json({error:"صيغة المخطط غير صالحة"},400);
     await persistPlan(env,id,body.plan,cleanName(body.summary||"تعديل يدوي"));
+    const row=await getProjectRow(env,id);
+    return json(await projectView(env,row!,true));
+  }
+
+  const restoreRevision=path.match(/^\/v1\/projects\/([^/]+)\/revisions\/(\d+)\/restore$/);
+  if(restoreRevision&&request.method==="POST"){
+    const id=restoreRevision[1];
+    const secured=await protectedRow(request,env,id);
+    if(secured instanceof Response) return secured;
+    const revisionNumber=Number(restoreRevision[2]);
+    if(!Number.isInteger(revisionNumber)||revisionNumber<1) return json({error:"رقم النسخة غير صالح"},400);
+    const item=await env.DB.prepare("SELECT plan_key FROM revisions WHERE project_id=? AND revision=?")
+      .bind(id,revisionNumber).first<{plan_key:string}>();
+    if(!item?.plan_key) return json({error:"النسخة غير موجودة"},404);
+    const object=await env.ASSETS.get(item.plan_key);
+    if(!object) return json({error:"تعذر تحميل النسخة"},500);
+    const plan=await object.json<FloorPlanModel>();
+    if(plan.id!==id||plan.schemaVersion!==1) return json({error:"النسخة المخزنة غير صالحة"},500);
+    await persistPlan(env,id,plan,`استعادة النسخة ${revisionNumber}`);
     const row=await getProjectRow(env,id);
     return json(await projectView(env,row!,true));
   }

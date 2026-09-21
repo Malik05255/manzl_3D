@@ -1,4 +1,4 @@
-import type { ApplyProposalRequest, EditProposalResponse, FloorPlanModel, ProjectView, SaveRevisionRequest } from "@manzil/contracts";
+import type { ApplyProposalRequest, EditProposalResponse, FloorPlanModel, ProjectView, RevisionView, SaveRevisionRequest } from "@manzil/contracts";
 
 const API_BASE=(import.meta.env.VITE_API_BASE_URL as string|undefined)?.replace(/\/$/,"")??"http://localhost:8787";
 const tokenKey=(projectId:string)=>`manzil:project-token:${projectId}`;
@@ -90,3 +90,6 @@ export function saveRevision(id:string,plan:FloorPlanModel,summary:string){
   const payload:SaveRevisionRequest={plan,summary};
   return request<ProjectView>(`/v1/projects/${id}/revisions`,{method:"POST",body:JSON.stringify(payload)});
 }
+
+export const listRevisions=(id:string)=>request<{items:RevisionView[]}>(`/v1/projects/${id}/revisions`);
+export const restoreRevision=(id:string,revision:number)=>request<ProjectView>(`/v1/projects/${id}/revisions/${revision}/restore`,{method:"POST"});

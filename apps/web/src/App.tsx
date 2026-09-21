@@ -1,7 +1,7 @@
 import { useEffect,useMemo,useRef,useState } from "react";
-import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Cloud,FileImage,FileText,Hammer,Layers3,LoaderCircle,Save,Sparkles,Undo2,UploadCloud,WandSparkles } from "lucide-react";
-import type { EditProposal,FloorPlanModel,Point,ProjectView } from "@manzil/contracts";
-import { applyProposal,askEngineer,createProject,forgetLastProject,getLastProjectId,getProject,getProjectPreview,saveRevision,uploadSource } from "./api";
+import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Clock3,Cloud,FileImage,FileText,Hammer,Layers3,LoaderCircle,Save,Sparkles,Undo2,UploadCloud,WandSparkles,X } from "lucide-react";
+import type { EditProposal,FloorPlanModel,Point,ProjectView,RevisionView } from "@manzil/contracts";
+import { applyProposal,askEngineer,createProject,forgetLastProject,getLastProjectId,getProject,getProjectPreview,listRevisions,restoreRevision,saveRevision,uploadSource } from "./api";
 import { PlanCanvas } from "./PlanCanvas";
 import { useAppUpdate } from "./useAppUpdate";
 
@@ -59,6 +59,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   const[selectedWall,setSelectedWall]=useState<string|null>(null);const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
   const[calibrating,setCalibrating]=useState(false);const[calibrationPoints,setCalibrationPoints]=useState<Point[]>([]);const[knownDistance,setKnownDistance]=useState("");
   const[sourcePreview,setSourcePreview]=useState<string|null>(null);const[sourceOpacity,setSourceOpacity]=useState(.42);
+  const[historyOpen,setHistoryOpen]=useState(false);const[historyBusy,setHistoryBusy]=useState(false);const[revisions,setRevisions]=useState<RevisionView[]>([]);
   const dirty=useMemo(()=>JSON.stringify(plan)!==JSON.stringify(savedPlan),[plan,savedPlan]);
 
   useEffect(()=>{
@@ -68,6 +69,8 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   },[project.id]);
   const ask=async()=>{if(!command.trim())return;setThinking(true);setNotice(null);setPreview(null);try{const r=await askEngineer(project.id,command.trim());setProposals(r.proposals);if(r.needsClarification)setNotice(r.needsClarification);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحليل الطلب");}finally{setThinking(false);}};
   const save=async()=>{setSaving(true);try{const u=await saveRevision(project.id,plan,"تعديل يدوي");setProject(u);setSavedPlan(plan);setNotice("تم حفظ التعديل في السحابة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر الحفظ");}finally{setSaving(false);}};
+  const openHistory=async()=>{setHistoryOpen(true);setHistoryBusy(true);try{const r=await listRevisions(project.id);setRevisions(r.items);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحميل سجل النسخ");setHistoryOpen(false);}finally{setHistoryBusy(false);}};
+  const restore=async(revision:number)=>{if(dirty){setNotice("احفظ التغييرات الحالية أو تراجع عنها قبل استعادة نسخة سابقة.");return;}setSaving(true);try{const u=await restoreRevision(project.id,revision);if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);}setProject(u);setHistoryOpen(false);setNotice(`تمت استعادة النسخة ${revision} كنسخة جديدة محفوظة.`);}catch(e){setNotice(e instanceof Error?e.message:"تعذر استعادة النسخة");}finally{setSaving(false);}};
   const apply=async()=>{if(!preview)return;setSaving(true);try{const u=await applyProposal(project.id,{command,proposal:preview});if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);}setProject(u);setPreview(null);setProposals([]);setCommand("");setNotice("تم اعتماد التعديل وحفظ نسخة جديدة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر تطبيق التعديل");}finally{setSaving(false);}};
   const applyCalibration=()=>{
     if(calibrationPoints.length!==2)return;
@@ -86,7 +89,8 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   };
 
   return <main className="editor-page">
-    <header className="editor-header"><Brand compact/><div className="project-name"><FileText size={17}/><strong>{project.name}</strong></div><div className="editor-actions"><button className="ghost" onClick={onHome}><ArrowLeft size={17}/> الرئيسية</button><button className="ghost" disabled={!dirty} onClick={()=>setPlan(savedPlan)}><Undo2 size={17}/> تراجع</button><button className="primary small" disabled={!dirty||saving} onClick={save}><Save size={17}/> حفظ</button></div></header>
+    {historyOpen&&<div className="history-backdrop" onClick={()=>setHistoryOpen(false)}><section className="history-modal" onClick={e=>e.stopPropagation()}><div className="history-head"><div><strong>سجل النسخ</strong><span>الاستعادة لا تحذف أي نسخة؛ تُنشئ نسخة جديدة من الحالة المختارة.</span></div><button className="icon-button" onClick={()=>setHistoryOpen(false)} aria-label="إغلاق"><X size={17}/></button></div>{dirty&&<div className="inline-warning">لديك تغييرات غير محفوظة. احفظها أو تراجع عنها قبل الاستعادة.</div>}<div className="history-list">{historyBusy?<div className="history-loading"><LoaderCircle className="spin" size={24}/> تحميل النسخ...</div>:revisions.length?revisions.map((item,index)=><div className="history-item" key={item.revision}><div><strong>نسخة {item.revision}{index===0?" · الأحدث":""}</strong><span>{item.summary}</span><small>{new Date(item.createdAt).toLocaleString("ar-SA")}</small></div><button className="ghost" disabled={dirty||saving||index===0} onClick={()=>restore(item.revision)}>{index===0?"الحالية":"استعادة"}</button></div>):<div className="history-empty">لا توجد نسخ محفوظة بعد.</div>}</div></section></div>}
+    <header className="editor-header"><Brand compact/><div className="project-name"><FileText size={17}/><strong>{project.name}</strong></div><div className="editor-actions"><button className="ghost" onClick={openHistory}><Clock3 size={17}/> النسخ</button><button className="ghost" onClick={onHome}><ArrowLeft size={17}/> الرئيسية</button><button className="ghost" disabled={!dirty} onClick={()=>setPlan(savedPlan)}><Undo2 size={17}/> تراجع</button><button className="primary small" disabled={!dirty||saving} onClick={save}><Save size={17}/> حفظ</button></div></header>
     <div className="editor-workspace">
       <section className="plan-panel"><div className="panel-title"><div><strong>منطقة التعديل</strong><span>اسحب جدارًا لتحريكه أو استخدم H Engineer</span></div><div className="panel-status">{sourcePreview&&<label className="overlay-control"><span>الأصل</span><input type="range" min="0" max=".85" step=".05" value={sourceOpacity} onChange={e=>setSourceOpacity(Number(e.target.value))}/></label>}<div className="quality-pill">جودة التحليل {Math.round(plan.quality.overall*100)}%</div></div></div>
         <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)} selectedWallId={selectedWall} onSelectWall={setSelectedWall} onPlanChange={setPlan}

@@ -77,3 +77,4 @@ export interface EditProposalResponse {
 }
 export interface ApplyProposalRequest { command: string; proposal: EditProposal; }
 export interface SaveRevisionRequest { summary: string; plan: FloorPlanModel; }
+export interface RevisionView { revision: number; summary: string; createdAt: string; }
