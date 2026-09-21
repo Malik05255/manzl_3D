@@ -188,3 +188,27 @@ def test_opening_geometry_edit_preserves_review_metadata():
     opening=response.proposals[0].previewPlan.doors[0]
     assert opening.reviewed is True
     assert opening.provenance=="mixed"
+
+
+def test_protected_wall_blocks_ai_geometry_edit():
+    plan=sample_plan()
+    wall=next(item for item in plan.walls if item.id=="shared")
+    wall.role="exterior"
+    wall.locked=True
+    response=build_proposals(EditRequest(
+        project_id="p1",command="حركه يمين 20 سم",target_wall_id="shared",plan=plan,
+    ))
+    assert not response.proposals
+    assert "محمي" in (response.needsClarification or "")
+
+
+def test_opening_on_protected_wall_blocks_ai_edit():
+    plan=sample_plan()
+    wall=next(item for item in plan.walls if item.id=="top-left")
+    wall.role="exterior"
+    wall.locked=True
+    response=build_proposals(EditRequest(
+        project_id="p1",command="اجعل عرضه 1 متر",target_opening_id="door-1",plan=plan,
+    ))
+    assert not response.proposals
+    assert "محمي" in (response.needsClarification or "")
