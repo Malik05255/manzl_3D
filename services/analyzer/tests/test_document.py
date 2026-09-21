@@ -121,3 +121,21 @@ def test_pdf_rejects_out_of_range_selected_page():
     import pytest
     with pytest.raises(ValueError,match="PDF_PAGE_OUT_OF_RANGE"):
         decode_document_with_page(data,"application/pdf",preferred_page=2)
+
+
+def test_pdf_native_vector_lines_preserve_diagonal_geometry():
+    document=fitz.open()
+    page=document.new_page(width=400,height=300)
+    shape=page.new_shape()
+    shape.draw_line((80,60),(300,220))
+    shape.finish(width=3,color=(0,0,0))
+    shape.commit()
+    data=document.tobytes()
+    document.close()
+
+    lines=extract_pdf_vector_lines(data,1)
+    diagonal=next(item for item in lines if abs(item["b"]["x"]-item["a"]["x"])>300 and abs(item["b"]["y"]-item["a"]["y"])>200)
+    assert diagonal["a"]["x"]==80*PDF_RENDER_SCALE
+    assert diagonal["a"]["y"]==60*PDF_RENDER_SCALE
+    assert diagonal["b"]["x"]==300*PDF_RENDER_SCALE
+    assert diagonal["b"]["y"]==220*PDF_RENDER_SCALE
