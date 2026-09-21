@@ -118,3 +118,20 @@ def test_explicit_metric_reading_beats_noisy_unitless_numbers():
     assert round(scale,4)==0.01
     assert confidence is not None and confidence>=0.55
     assert warnings==[]
+
+
+def test_room_size_pair_does_not_pollute_scale_candidates():
+    scale,confidence=estimate_scale(
+        [
+            label("l1","5 × 4",250,90),
+            label("l2","4.00",250,290),
+        ],
+        [
+            wall("w1",50,100,450,100),
+            wall("w2",50,300,450,300),
+        ],
+        1000,
+        800,
+    )
+    assert scale is None
+    assert confidence is None
