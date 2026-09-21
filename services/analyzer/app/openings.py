@@ -277,6 +277,11 @@ def _door_arc_evidence_details(
             continue
 
         strength=coverage*(1.0-nearest/max(hinge_tolerance,1.0))
+        # Weak secondary circles commonly appear around line corners or the
+        # opposite wall endpoint. A true swing arc has both meaningful angular
+        # coverage and a centre materially close to its hinge.
+        if strength<.04:
+            continue
         previous=by_hinge.get(hinge)
         if previous is None or strength>previous[0]:
             by_hinge[hinge]=(strength,signed_depth)
