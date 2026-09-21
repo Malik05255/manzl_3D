@@ -88,3 +88,20 @@ Supported kinds are `sink`, `toilet`, `bathtub`, `shower`, `cooktop`, and `stair
 Run the manual workflow **AEC Real Drawing Benchmark**, confirm that the dataset licence permits the run, and choose a limit from 1 to 15. It records both the Manzil H and dataset commit SHAs, checks out the released benchmark into the ephemeral GitHub runner, runs Manzil H, executes the official scorer, writes the score into the workflow summary, and uploads predictions plus both `score.txt` and machine-readable `report.json` as artifacts.
 
 If the repository secrets `SYMBOL_DETECTOR_URL` and `SYMBOL_DETECTOR_TOKEN` are configured, fixture classes are evaluated through the same server-side symbol detector. If they are absent, the workflow intentionally measures the geometry/opening baseline without inventing fixture detections.
+
+
+### Local ONNX symbol inference
+
+The Analyzer can run a YOLO-style ONNX model in-process through OpenCV DNN, so floor-plan images do not have to leave the Analyzer. Configure:
+
+```text
+SYMBOL_ONNX_MODEL=/models/floorplan-symbols.onnx
+SYMBOL_ONNX_CLASSES=["sink","toilet","bathtub","shower","cooktop","stairs"]
+SYMBOL_ONNX_INPUT_SIZE=640
+SYMBOL_ONNX_NMS_IOU=0.45
+SYMBOL_MIN_CONFIDENCE=0.78
+```
+
+The decoder accepts common YOLOv8/YOLO11 outputs (`4 + class_count`) and YOLOv5-style outputs (`5 + class_count`, including objectness), applies letterboxing, maps boxes back to original page coordinates, applies NMS, then passes the result through the same canonical class/box validation used by the HTTP detector. If local ONNX returns no accepted detections, the configured HTTP detector remains available as fallback.
+
+Weights are deliberately not stored in this repository. Use only a model and training data whose licence permits your intended deployment.
