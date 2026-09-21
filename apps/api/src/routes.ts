@@ -1,7 +1,7 @@
 import { floorPlanValidationError } from "@manzil/contracts";
 import type { ApplyProposalRequest,EditProposalResponse,FloorPlanModel,SaveRevisionRequest,ValidationReport } from "@manzil/contracts";
 import { createProjectAccess,hasProjectAccess } from "./access";
-import { clearDraft,getProjectRow,persistDraft,persistPlan,projectView } from "./db";
+import { clearDraft,getProjectRow,persistDraft,persistFloorMetadata,persistPlan,projectView } from "./db";
 import { cleanName,json } from "./http";
 import type { Env,ProjectRow } from "./types";
 
@@ -248,15 +248,19 @@ export async function route(request:Request,env:Env):Promise<Response>{
 
     if(nextName===floor.name&&nextElevation===floor.elevation_m&&nextHeight===floor.height_m) return json(await projectView(env,secured,true));
 
-    const now=new Date().toISOString();
-    const nextRevision=secured.revision+1;
-    const results=await env.DB.batch([
-      env.DB.prepare("UPDATE projects SET revision=?, message=?, updated_at=? WHERE id=? AND revision=? AND status NOT IN ('queued','analyzing')")
-        .bind(nextRevision,"تم تحديث بيانات الطابق",now,id,secured.revision),
-      env.DB.prepare("UPDATE project_floors SET name=?, elevation_m=?, height_m=?, updated_at=? WHERE id=? AND project_id=? AND EXISTS (SELECT 1 FROM projects WHERE id=? AND revision=?)")
-        .bind(nextName,nextElevation,nextHeight,now,floorId,id,id,nextRevision),
-    ]);
-    if((results[0]?.meta.changes??0)<1||(results[1]?.meta.changes??0)<1) return json({error:"تغير المشروع أثناء تحديث بيانات الطابق. حدّثه وحاول مرة أخرى."},409);
+    try{
+      await persistFloorMetadata(env,id,floorId,secured.revision,{
+        name:nextName,
+        elevationM:nextElevation,
+        heightM:nextHeight,
+      });
+    }catch(error){
+      if(error instanceof Error&&["STALE_REVISION","ANALYSIS_IN_PROGRESS","DRAFT_PRESENT"].includes(error.message)){
+        return json({error:"تغير المشروع أثناء تحديث بيانات الطابق. حدّثه وحاول مرة أخرى."},409);
+      }
+      if(error instanceof Error&&error.message==="FLOOR_NOT_FOUND") return json({error:"الطابق المطلوب غير موجود"},404);
+      throw error;
+    }
     const row=await getProjectRow(env,id);
     return json(await projectView(env,row!,true));
   }
@@ -350,14 +354,20 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const id=revision[1];
     const secured=await protectedRow(request,env,id);
     if(secured instanceof Response) return secured;
-    const result=await env.DB.prepare("SELECT revision, summary, created_at, source_page, floor_id FROM revisions WHERE project_id=? ORDER BY revision DESC LIMIT 50")
-      .bind(id).all<{revision:number;summary:string;created_at:string;source_page:number|null;floor_id:string|null}>();
+    const result=await env.DB.prepare("SELECT revision, summary, created_at, source_page, floor_id, floor_name, floor_elevation_m, floor_height_m FROM revisions WHERE project_id=? ORDER BY revision DESC LIMIT 50")
+      .bind(id).all<{
+        revision:number;summary:string;created_at:string;source_page:number|null;floor_id:string|null;
+        floor_name:string|null;floor_elevation_m:number|null;floor_height_m:number|null;
+      }>();
     return json({items:(result.results??[]).map(item=>({
       revision:item.revision,
       summary:item.summary,
       createdAt:item.created_at,
       sourcePage:item.source_page,
       floorId:item.floor_id,
+      floorName:item.floor_name,
+      floorElevationM:item.floor_elevation_m,
+      floorHeightM:item.floor_height_m,
     }))});
   }
   if(revision&&request.method==="POST"){
@@ -401,8 +411,11 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(analysisBusy(secured)) return json({error:"تحليل المصدر جارٍ الآن. لا يمكن استعادة نسخة أثناء التحليل."},409);
     const revisionNumber=Number(restoreRevision[2]);
     if(!Number.isInteger(revisionNumber)||revisionNumber<1) return json({error:"رقم النسخة غير صالح"},400);
-    const item=await env.DB.prepare("SELECT plan_key, preview_key FROM revisions WHERE project_id=? AND revision=?")
-      .bind(id,revisionNumber).first<{plan_key:string;preview_key:string|null}>();
+    const item=await env.DB.prepare("SELECT plan_key, preview_key, floor_name, floor_elevation_m, floor_height_m FROM revisions WHERE project_id=? AND revision=?")
+      .bind(id,revisionNumber).first<{
+        plan_key:string;preview_key:string|null;floor_name:string|null;
+        floor_elevation_m:number|null;floor_height_m:number|null;
+      }>();
     if(!item?.plan_key) return json({error:"النسخة غير موجودة"},404);
     const object=await env.ASSETS.get(item.plan_key);
     if(!object) return json({error:"تعذر تحميل النسخة"},500);
@@ -414,7 +427,8 @@ export async function route(request:Request,env:Env):Promise<Response>{
         .bind(id,plan.source.page).first<{preview_key:string|null}>();
       restorePreviewKey=floorPreview?.preview_key??null;
     }
-    try{await persistPlan(env,id,plan,`استعادة النسخة ${revisionNumber}`,secured.revision,undefined,restorePreviewKey);}
+    const floorMetadata=item.floor_name?{name:item.floor_name,elevationM:item.floor_elevation_m,heightM:item.floor_height_m}:undefined;
+    try{await persistPlan(env,id,plan,`استعادة النسخة ${revisionNumber}`,secured.revision,undefined,restorePreviewKey,floorMetadata);}
     catch(error){if(error instanceof Error&&error.message==="STALE_REVISION") return json({error:"تغير المشروع أثناء الاستعادة. أعد تحميله وحاول مرة أخرى."},409);throw error;}
     const row=await getProjectRow(env,id);
     return json(await projectView(env,row!,true));
