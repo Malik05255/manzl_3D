@@ -27,6 +27,12 @@ export interface PlanLabel {
   reviewed?: boolean;
   provenance?: ElementProvenance;
 }
+export interface AnalysisMetadata {
+  pipelineVersion: string;
+  analyzedAt: string;
+  sourceSha256: string;
+  engines: string[];
+}
 export interface FloorPlanQuality {
   overall: number;
   walls: number;
@@ -50,6 +56,7 @@ export interface FloorPlanModel {
   labels: PlanLabel[];
   quality: FloorPlanQuality;
   source: { fileName: string; mimeType: string; page: number; pageCount?: number | null; };
+  analysis?: AnalysisMetadata;
 }
 export interface ProjectFloorView {
   id: string;
@@ -198,6 +205,14 @@ export function floorPlanValidationError(value:unknown,expectedId?:string):strin
 
   if(!fpObject(value.source)||typeof value.source.fileName!=="string"||value.source.fileName.length>500||typeof value.source.mimeType!=="string"||value.source.mimeType.length>160||!fpFinite(value.source.page)||!Number.isInteger(value.source.page)||value.source.page<1||value.source.page>10000)return "PLAN_SOURCE";
   if(value.source.pageCount!==undefined&&value.source.pageCount!==null&&(!fpFinite(value.source.pageCount)||!Number.isInteger(value.source.pageCount)||value.source.pageCount<1||value.source.pageCount>10000||value.source.page>value.source.pageCount))return "PLAN_SOURCE";
+
+  if(value.analysis!==undefined){
+    if(!fpObject(value.analysis))return "PLAN_ANALYSIS";
+    if(typeof value.analysis.pipelineVersion!=="string"||value.analysis.pipelineVersion.length<1||value.analysis.pipelineVersion.length>120)return "PLAN_ANALYSIS";
+    if(typeof value.analysis.analyzedAt!=="string"||value.analysis.analyzedAt.length<10||value.analysis.analyzedAt.length>80)return "PLAN_ANALYSIS";
+    if(typeof value.analysis.sourceSha256!=="string"||!/^[0-9a-f]{64}$/i.test(value.analysis.sourceSha256))return "PLAN_ANALYSIS";
+    if(!Array.isArray(value.analysis.engines)||value.analysis.engines.length>30||!value.analysis.engines.every(item=>typeof item==="string"&&item.length>0&&item.length<=80))return "PLAN_ANALYSIS";
+  }
 
   const ids=[
     ...value.walls.map(item=>(item as Wall).id),
