@@ -87,12 +87,14 @@ def analyze_image(image:np.ndarray,project_id:str,filename:str,mime_type:str)->d
     _,ink=preprocess(image)
     labels=extract_ocr_labels(image)
     walls,_wall_mask=detect_walls(ink)
-    quarantined_wall_ids=quarantine_dimension_aligned_walls(walls,labels,h,w)
+    dimensions=extract_dimension_evidence(labels,walls,w,h,ink=ink)
+    quarantined_wall_ids=quarantine_dimension_aligned_walls(
+        walls,labels,h,w,dimensions=dimensions,
+    )
     topology_walls=[
         wall for wall in walls
         if str(wall.get("id","")) not in quarantined_wall_ids
     ]
-    dimensions=extract_dimension_evidence(labels,walls,w,h,ink=ink)
     scale,scale_confidence,scale_warnings=estimate_scale_with_diagnostics(dimensions,w,h)
     doors=detect_doors(image,topology_walls,scale)
     windows=detect_windows(image,topology_walls,scale)
