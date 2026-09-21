@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.openings import _door_arc_evidence_details,detect_doors,detect_windows,normalize_opening_hosts
+from app.openings import _door_arc_evidence_details,detect_doors,detect_windows,normalize_opening_hosts,resolve_opening_conflicts
 
 
 def wall(wall_id,x1,y1,x2,y2):
@@ -280,3 +280,50 @@ def test_short_parallel_marks_inside_gap_are_not_window():
         meters_per_pixel=.02,
     )
     assert windows==[]
+
+
+
+def test_same_gap_door_suppresses_window_duplicate():
+    doors=[{
+        "id":"door-1","kind":"door",
+        "a":{"x":100.0,"y":150.0},"b":{"x":190.0,"y":150.0},
+        "confidence":.84,
+    }]
+    windows=[{
+        "id":"window-1","kind":"window",
+        "a":{"x":103.0,"y":151.0},"b":{"x":188.0,"y":151.0},
+        "confidence":.91,
+    }]
+    kept_doors,kept_windows=resolve_opening_conflicts(doors,windows)
+    assert kept_doors==doors
+    assert kept_windows==[]
+
+
+def test_adjacent_window_is_not_suppressed_by_door():
+    doors=[{
+        "id":"door-1","kind":"door",
+        "a":{"x":100.0,"y":150.0},"b":{"x":190.0,"y":150.0},
+        "confidence":.84,
+    }]
+    windows=[{
+        "id":"window-1","kind":"window",
+        "a":{"x":230.0,"y":150.0},"b":{"x":330.0,"y":150.0},
+        "confidence":.91,
+    }]
+    _,kept_windows=resolve_opening_conflicts(doors,windows)
+    assert kept_windows==windows
+
+
+def test_different_length_centered_openings_are_not_forced_same_gap():
+    doors=[{
+        "id":"door-1","kind":"door",
+        "a":{"x":140.0,"y":150.0},"b":{"x":200.0,"y":150.0},
+        "confidence":.84,
+    }]
+    windows=[{
+        "id":"window-1","kind":"window",
+        "a":{"x":70.0,"y":150.0},"b":{"x":270.0,"y":150.0},
+        "confidence":.91,
+    }]
+    _,kept_windows=resolve_opening_conflicts(doors,windows)
+    assert kept_windows==windows
