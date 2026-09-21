@@ -2,7 +2,7 @@ from __future__ import annotations
 import numpy as np
 from .document import preprocess
 from .ocr import extract_ocr_labels
-from .openings import detect_doors
+from .openings import detect_doors,detect_windows
 from .rooms import detect_rooms
 from .scale import estimate_scale
 from .walls import detect_walls
@@ -43,5 +43,6 @@ def analyze_image(image:np.ndarray,project_id:str,filename:str,mime_type:str)->d
     walls,wall_mask=detect_walls(ink)
     scale,scale_confidence=estimate_scale(labels,walls,w,h)
     doors=detect_doors(image,walls,scale)
+    windows=detect_windows(image,walls,scale)
     rooms=detect_rooms(wall_mask,labels,scale)
-    return assemble_plan(image,project_id,filename,mime_type,labels,walls,rooms,scale,scale_confidence,doors=doors)
+    return assemble_plan(image,project_id,filename,mime_type,labels,walls,rooms,scale,scale_confidence,doors=doors,windows=windows)

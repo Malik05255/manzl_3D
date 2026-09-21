@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.openings import detect_doors
+from app.openings import detect_doors,detect_windows
 
 
 def wall(wall_id,x1,y1,x2,y2):
@@ -43,3 +43,35 @@ def test_plain_wall_gap_without_door_evidence_is_not_auto_accepted():
     )
 
     assert doors==[]
+
+
+def test_detects_window_gap_with_parallel_glazing_lines():
+    image=np.full((280,360,3),255,dtype=np.uint8)
+    cv2.line(image,(25,140),(120,140),(0,0,0),5)
+    cv2.line(image,(220,140),(335,140),(0,0,0),5)
+    cv2.line(image,(122,134),(218,134),(0,0,0),3)
+    cv2.line(image,(122,146),(218,146),(0,0,0),3)
+
+    windows=detect_windows(
+        image,
+        [wall("left",25,140,120,140),wall("right",220,140,335,140)],
+        meters_per_pixel=0.02,
+    )
+
+    assert len(windows)==1
+    assert windows[0]["kind"]=="window"
+    assert windows[0]["confidence"]>=0.80
+
+
+def test_blank_gap_is_not_window():
+    image=np.full((280,360,3),255,dtype=np.uint8)
+    cv2.line(image,(25,140),(120,140),(0,0,0),5)
+    cv2.line(image,(220,140),(335,140),(0,0,0),5)
+
+    windows=detect_windows(
+        image,
+        [wall("left",25,140,120,140),wall("right",220,140,335,140)],
+        meters_per_pixel=0.02,
+    )
+
+    assert windows==[]
