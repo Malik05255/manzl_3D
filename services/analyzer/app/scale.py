@@ -3,20 +3,23 @@ import math
 import re
 from statistics import median
 from .ocr import normalize_digits
+from .dimensions import parse_metric_length
 
 
 def _metric_value(text:str)->tuple[float|None,bool]:
-    match=re.search(r"(\d+(?:\.\d+)?)\s*(mm|cm|m|مم|سم|متر|م)?\b",text)
+    explicit_value,unit=parse_metric_length(text)
+    if explicit_value is not None:
+        return explicit_value,unit!="unknown"
+
+    normalized=normalize_digits(text).lower().strip()
+    if re.search(r"(?:m|م)\s*[²2]",normalized):
+        return None,False
+    if re.search(r"\d+(?:\.\d+)?\s*[x×*]\s*\d+(?:\.\d+)?",normalized):
+        return None,False
+    match=re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*",normalized)
     if not match:
         return None,False
-    value=float(match.group(1))
-    unit=(match.group(2) or "").lower()
-    if unit in ("mm","مم"):
-        value/=1000.0
-    elif unit in ("cm","سم"):
-        value/=100.0
-    explicit=bool(unit)
-    return value,explicit
+    return float(match.group(1)),False
 
 
 def _scale_candidates(labels:list[dict],walls:list[dict],width:int,height:int)->list[tuple[float,bool]]:
