@@ -18,7 +18,15 @@ PYTHONPATH=. python -m app.aec_benchmark \
   --report-json /tmp/manzil-aec15-report.json
 ```
 
-For a quick development pass, add `--limit 1` or `--limit 3`.
+For a quick development pass, add `--limit 1` or `--limit 3`. Limited runs now generate a filtered temporary ground-truth XML before invoking the official scorer, so unselected sheets are not incorrectly counted as missing predictions.
+
+When `--report-json` is used, the report includes:
+- aggregate object/wall/area metrics,
+- per-object-class TP/FP/FN, precision, recall and F1,
+- the exact selected sheet list,
+- the same official metrics independently for every selected sheet.
+
+This makes threshold tuning attributable to a specific class and drawing instead of relying on one aggregate F1.
 
 Do not vendor the benchmark drawings into this repository. The released AEC dataset is licensed separately from its scoring code. Keep a licensed local copy outside the application source tree and use the adapter above.
 
