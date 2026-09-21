@@ -752,18 +752,16 @@ def quarantine_dimension_aligned_walls(
         if not span_match and not label_match:
             continue
 
-        # A detected metric dimension span is stronger evidence than raster
-        # thickness: text/extension marks can inflate the apparent band and
-        # Hough may return several centerlines from the same dimension stroke.
-        # Quarantine every wall overlapping that trusted span. If we only have
-        # nearby dimension text, keep the conservative thin-line requirement.
-        if not span_match:
-            thin_raster=thickness<=thin_limit
-            thin_vector=_thin_matching_vector(
-                wall,vector_lines or [],min_side,
-            )
-            if not thin_raster and not thin_vector:
-                continue
+        # Span/text alignment establishes dimension semantics, but geometry
+        # still needs independent thin-line evidence. This prevents a genuine
+        # thick wall from being quarantined merely because a dimension span is
+        # drawn directly along it.
+        thin_raster=thickness<=thin_limit
+        thin_vector=_thin_matching_vector(
+            wall,vector_lines or [],min_side,
+        )
+        if not thin_raster and not thin_vector:
+            continue
 
         wall["confidence"]=min(float(wall.get("confidence",0.0)),0.64)
         quarantined.add(wall_id)
