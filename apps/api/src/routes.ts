@@ -44,6 +44,19 @@ async function analyzerValidation(env:Env,id:string,plan:FloorPlanModel):Promise
   return upstream.json<ValidationReport>();
 }
 
+async function analyzerCanonicalize(env:Env,id:string,plan:FloorPlanModel):Promise<FloorPlanModel>{
+  const upstream=await fetch(`${env.ANALYZER_URL.replace(/\/$/,"")}/v1/canonicalize`,{
+    method:"POST",
+    headers:{"content-type":"application/json","x-manzil-internal":env.INTERNAL_TOKEN},
+    body:JSON.stringify({project_id:id,plan})
+  });
+  if(!upstream.ok){
+    const detail=await upstream.text().catch(()=>"");
+    throw new Error(detail||"تعذر توحيد النموذج الهندسي");
+  }
+  return upstream.json<FloorPlanModel>();
+}
+
 function criticalFindingKey(item:ValidationReport["findings"][number]){
   const rooms=[...item.roomIds].sort().join(",");
   const walls=[...(item.wallIds??[])].sort().join(",");
@@ -379,11 +392,13 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const planError=floorPlanValidationError(body.plan,id);
     if(planError) return json({error:"صيغة المخطط غير صالحة"},400);
     if(!Number.isInteger(body.expectedRevision)||body.expectedRevision<0) return json({error:"رقم النسخة المرجعية غير صالح"},400);
+    let canonicalPlan:FloorPlanModel;
     try{
       const baseline=await committedPlan(env,secured);
-      const protectedError=baseline?protectedEditViolation(baseline,body.plan):null;
+      canonicalPlan=await analyzerCanonicalize(env,id,body.plan);
+      const protectedError=baseline?protectedEditViolation(baseline,canonicalPlan):null;
       if(protectedError)return json({error:protectedError},422);
-      const checked=await validateTransition(env,id,baseline,body.plan);
+      const checked=await validateTransition(env,id,baseline,canonicalPlan);
       if(checked.introduced.length){
         return json({
           error:"لن يتم حفظ التعديل لأنه أضاف تعارضًا هندسيًا جديدًا. راجع العناصر المحددة ثم حاول مرة أخرى.",
@@ -394,7 +409,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
     }catch(error){
       return json({error:error instanceof Error?error.message:"تعذر التحقق الهندسي قبل الحفظ"},502);
     }
-    try{await persistPlan(env,id,body.plan,cleanName(body.summary||"تعديل يدوي"),body.expectedRevision);}
+    try{await persistPlan(env,id,canonicalPlan,cleanName(body.summary||"تعديل يدوي"),body.expectedRevision);}
     catch(error){
       if(error instanceof Error&&error.message==="STALE_REVISION") return json({error:"تم حفظ نسخة أحدث من مشروعك. حدّث المشروع قبل الحفظ مرة أخرى."},409);
       throw error;
@@ -421,6 +436,9 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(!object) return json({error:"تعذر تحميل النسخة"},500);
     const plan=await object.json<FloorPlanModel>();
     if(plan.id!==id||plan.schemaVersion!==1) return json({error:"النسخة المخزنة غير صالحة"},500);
+    let canonicalPlan:FloorPlanModel;
+    try{canonicalPlan=await analyzerCanonicalize(env,id,plan);}
+    catch(error){return json({error:error instanceof Error?error.message:"تعذر توحيد النسخة قبل الاستعادة"},502);}
     let restorePreviewKey=item.preview_key;
     if(!restorePreviewKey){
       const floorPreview=await env.DB.prepare("SELECT preview_key FROM project_floors WHERE project_id=? AND source_page=?")
@@ -428,7 +446,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
       restorePreviewKey=floorPreview?.preview_key??null;
     }
     const floorMetadata=item.floor_name?{name:item.floor_name,elevationM:item.floor_elevation_m,heightM:item.floor_height_m}:undefined;
-    try{await persistPlan(env,id,plan,`استعادة النسخة ${revisionNumber}`,secured.revision,undefined,restorePreviewKey,floorMetadata);}
+    try{await persistPlan(env,id,canonicalPlan,`استعادة النسخة ${revisionNumber}`,secured.revision,undefined,restorePreviewKey,floorMetadata);}
     catch(error){if(error instanceof Error&&error.message==="STALE_REVISION") return json({error:"تغير المشروع أثناء الاستعادة. أعد تحميله وحاول مرة أخرى."},409);throw error;}
     const row=await getProjectRow(env,id);
     return json(await projectView(env,row!,true));
@@ -446,7 +464,10 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const planError=floorPlanValidationError(candidate,id);
     if(planError) return json({error:"صيغة المخطط غير صالحة للفحص"},400);
     const plan=candidate as FloorPlanModel;
-    try{return json(await analyzerValidation(env,id,plan));}
+    try{
+      const canonical=await analyzerCanonicalize(env,id,plan);
+      return json(await analyzerValidation(env,id,canonical));
+    }
     catch(error){return json({error:error instanceof Error?error.message:"تعذر فحص المخطط"},502);}
   }
 
@@ -522,10 +543,13 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const selected=fresh.proposals.find(proposal=>proposal.id===selectedId);
     if(!selected) return json({error:"المخطط تغير أو أن خيار التعديل لم يعد صالحًا. أعد المعاينة."},409);
     if(floorPlanValidationError(selected.previewPlan,id)) return json({error:"نتيجة H Engineer غير صالحة"},502);
-    const protectedError=protectedEditViolation(plan,selected.previewPlan);
+    let canonicalPreview:FloorPlanModel;
+    try{canonicalPreview=await analyzerCanonicalize(env,id,selected.previewPlan);}
+    catch(error){return json({error:error instanceof Error?error.message:"تعذر توحيد نتيجة H Engineer"},502);}
+    const protectedError=protectedEditViolation(plan,canonicalPreview);
     if(protectedError)return json({error:protectedError},422);
     try{
-      const checked=await validateTransition(env,id,plan,selected.previewPlan);
+      const checked=await validateTransition(env,id,plan,canonicalPreview);
       if(checked.introduced.length){
         return json({
           error:"تم إيقاف الاقتراح لأنه يضيف تعارضًا هندسيًا جديدًا.",
@@ -537,7 +561,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
       return json({error:error instanceof Error?error.message:"تعذر التحقق الهندسي من الاقتراح"},502);
     }
 
-    try{await persistPlan(env,id,selected.previewPlan,`H Engineer: ${cleanName(command)}`,body.expectedRevision);}
+    try{await persistPlan(env,id,canonicalPreview,`H Engineer: ${cleanName(command)}`,body.expectedRevision);}
     catch(error){if(error instanceof Error&&error.message==="STALE_REVISION") return json({error:"تغير المشروع أثناء تحليل H Engineer. أعد المعاينة على النسخة الأحدث."},409);throw error;}
     const row=await getProjectRow(env,id);
     return json(await projectView(env,row!,true));
