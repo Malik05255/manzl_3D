@@ -2,6 +2,7 @@ from __future__ import annotations
 from itertools import product
 from .commands import find_target_room,normalize_arabic,parse_merge_rooms,resize_neighbor_constraints,resolve_target_size
 from .edit_geometry import absorb_neighbor,adjacent,apply_side,bbox,is_rectangular_room,merge_neighbor,minimum_clear_span_m
+from .element_edits import build_selected_element_proposals
 from .models import EditRequest,FloorPlan,Impact,Proposal,ProposalResponse,Room
 from .validation import validate_plan
 
@@ -263,13 +264,28 @@ def build_proposals(req:EditRequest)->ProposalResponse:
         source,target=merge
         return build_merge_proposal(req.plan,source,target,req.command)
 
-    target=find_target_room(req.command,req.plan.rooms)
+    # An explicitly named room always wins over a selected wall/opening context.
+    explicit_target=find_target_room(req.command,req.plan.rooms)
+    if explicit_target is not None:
+        mpp=req.plan.metersPerPixel
+        if not mpp or mpp<=0:
+            return ProposalResponse(command=req.command,proposals=[],needsClarification="يجب تثبيت مقياس المخطط أولًا قبل تنفيذ تعديل بالمتر.")
+        x1,y1,x2,y2=bbox(explicit_target)
+        size=resolve_target_size(req.command,(x2-x1)*mpp,(y2-y1)*mpp)
+        if size:
+            return build_resize_proposals(req.plan,explicit_target,size[0],size[1],req.command)
+
+    element_result=build_selected_element_proposals(req)
+    if element_result is not None:
+        return element_result
+
+    target=explicit_target
     if target is None and req.target_room_id:
         target=next((room for room in req.plan.rooms if room.id==req.target_room_id),None)
     if target is None:
         names="، ".join(room.name for room in req.plan.rooms[:10])
         detail=f" الغرف المقروءة: {names}." if names else ""
-        return ProposalResponse(command=req.command,proposals=[],needsClarification="لم أستطع تحديد الغرفة المقصودة بثقة."+detail)
+        return ProposalResponse(command=req.command,proposals=[],needsClarification="لم أستطع تحديد العنصر المقصود بثقة."+detail)
 
     mpp=req.plan.metersPerPixel
     if not mpp or mpp<=0:
@@ -283,7 +299,7 @@ def build_proposals(req:EditRequest)->ProposalResponse:
         return ProposalResponse(
             command=req.command,
             proposals=[],
-            needsClarification="حدد المقاس مثل 5×4، أو قل: اجعل العرض 5 متر والعمق 4 متر، أو: زد العرض متر."
+            needsClarification="حدد المقاس مثل 5×4، أو قل: اجعل العرض 5 متر والعمق 4 متر، أو اختر جدارًا أو فتحة ثم اكتب التعديل المطلوب."
         )
 
     return build_resize_proposals(req.plan,target,size[0],size[1],req.command)
