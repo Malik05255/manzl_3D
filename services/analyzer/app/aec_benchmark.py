@@ -6,9 +6,17 @@ import math
 import re
 import subprocess
 import sys
+import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .local_analysis import analyze_document_bytes_local
+
+
+AEC_OBJECT_CLASSES=[
+    "Single Swing Door","Double Swing Door","Window","Sink",
+    "Toilet","Bathtub","Shower","Cooktops",
+]
 
 
 def _scale_point(point:dict,sx:float,sy:float)->list[float]:
@@ -187,7 +195,7 @@ def run_dataset(dataset_dir:Path,output_dir:Path,limit:int|None=None)->list[Path
 
 
 def parse_official_score_output(output:str)->dict:
-    """Parse the stable summary lines emitted by AEC-Geometric-Bench score.py."""
+    """Parse aggregate and per-class summary lines emitted by official score.py."""
     result={}
     mapping={
         "OBJECT MICRO":"objectMicro",
@@ -195,8 +203,32 @@ def parse_official_score_output(output:str)->dict:
         "area pixel":"areaPixel",
         "area instance":"areaInstance",
     }
+    classes={}
     for raw_line in output.splitlines():
         line=raw_line.strip()
+        if not line or line.startswith("-"):
+            continue
+
+        matched_class=next(
+            (name for name in AEC_OBJECT_CLASSES if line.startswith(name)),
+            None,
+        )
+        if matched_class is not None:
+            numeric=[
+                float(value)
+                for value in re.findall(r"(?<![A-Za-z])\d+(?:\.\d+)?",line[len(matched_class):])
+            ]
+            if len(numeric)>=6:
+                classes[matched_class]={
+                    "tp":int(numeric[-6]),
+                    "fp":int(numeric[-5]),
+                    "fn":int(numeric[-4]),
+                    "precision":round(numeric[-3],4),
+                    "recall":round(numeric[-2],4),
+                    "f1":round(numeric[-1],4),
+                }
+            continue
+
         for prefix,key in mapping.items():
             if not line.startswith(prefix):
                 continue
@@ -220,19 +252,32 @@ def parse_official_score_output(output:str)->dict:
                 })
             result[key]=item
             break
+
     required={"objectMicro","wallPixel","areaPixel","areaInstance"}
-    if set(result)!=required:
+    if not required.issubset(result):
         missing=sorted(required-set(result))
         raise ValueError("AEC_SCORE_PARSE:"+",".join(missing))
     result["macroF1"]=round(sum(result[key]["f1"] for key in required)/len(required),4)
+    result["classes"]=classes
     return result
 
 
-def run_official_scorer(
-    scorer:Path,
-    prediction_dir:Path,
-    dataset_dir:Path,
-)->tuple[int,str,dict|None]:
+def _write_gt_subset(dataset_dir:Path,target_dir:Path,sheet_names:list[str])->Path:
+    source=dataset_dir/"annotations_15_scoring_ready.xml"
+    tree=ET.parse(source)
+    root=tree.getroot()
+    selected=set(sheet_names)
+    for image in list(root.findall("image")):
+        name=Path(str(image.get("name") or "")).stem
+        if name not in selected:
+            root.remove(image)
+    target_dir.mkdir(parents=True,exist_ok=True)
+    target=target_dir/"annotations_15_scoring_ready.xml"
+    tree.write(target,encoding="utf-8",xml_declaration=True)
+    return target
+
+
+def _score_command(scorer:Path,prediction_dir:Path,dataset_dir:Path)->tuple[int,str,dict|None]:
     command=[
         sys.executable,str(scorer),
         "--pred",str(prediction_dir),
@@ -245,6 +290,39 @@ def run_official_scorer(
     if completed.returncode==0:
         report=parse_official_score_output(output)
     return completed.returncode,output,report
+
+
+def run_official_scorer(
+    scorer:Path,
+    prediction_dir:Path,
+    dataset_dir:Path,
+    *,
+    sheet_names:list[str]|None=None,
+    include_per_sheet:bool=True,
+)->tuple[int,str,dict|None]:
+    selected=sheet_names or sorted(path.stem for path in prediction_dir.glob("*.json"))
+    with tempfile.TemporaryDirectory(prefix="manzil-aec-gt-") as temp:
+        score_gt=dataset_dir
+        if selected:
+            _write_gt_subset(dataset_dir,Path(temp),selected)
+            score_gt=Path(temp)
+        code,output,report=_score_command(scorer,prediction_dir,score_gt)
+        if code!=0 or report is None:
+            return code,output,report
+
+        report["sheets"]={}
+        if include_per_sheet:
+            for sheet in selected:
+                per_sheet_dir=Path(temp)/f"sheet-{sheet}"
+                _write_gt_subset(dataset_dir,per_sheet_dir,[sheet])
+                sheet_code,_,sheet_report=_score_command(
+                    scorer,prediction_dir,per_sheet_dir,
+                )
+                if sheet_code==0 and sheet_report is not None:
+                    sheet_report.pop("sheets",None)
+                    report["sheets"][sheet]=sheet_report
+        report["selectedSheets"]=selected
+        return code,output,report
 
 
 def main()->int:
@@ -269,7 +347,13 @@ def main()->int:
     print(f"Wrote {len(written)} prediction file(s) to {output}")
 
     if args.scorer:
-        code,score_output,report=run_official_scorer(Path(args.scorer),output,dataset)
+        code,score_output,report=run_official_scorer(
+            Path(args.scorer),
+            output,
+            dataset,
+            sheet_names=[path.stem for path in written],
+            include_per_sheet=True,
+        )
         print(score_output,end="" if score_output.endswith("\n") else "\n")
         if args.report_json and report is not None:
             target=Path(args.report_json)
