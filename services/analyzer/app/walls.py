@@ -773,8 +773,12 @@ def add_vector_wall_candidates(
 
     result=[dict(wall) for wall in walls]
     candidates=_merge_near_collinear_candidates(candidates)
+    dimension_candidate_thin_limit=max(4.5,min(8.0,min_side*.0045))
     for candidate in candidates:
-        if _candidate_near_dimension_label(candidate,labels or [],min_side):
+        if (
+            float(candidate.get("thicknessPx",4.0))<=dimension_candidate_thin_limit
+            and _candidate_near_dimension_label(candidate,labels or [],min_side)
+        ):
             candidate["confidence"]=min(float(candidate.get("confidence",0.0)),0.64)
     accepted=[]
     for candidate in sorted(
