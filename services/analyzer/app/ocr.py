@@ -85,6 +85,13 @@ def _ocr_pass(image:np.ndarray,lang:str,config:str,min_conf:float,prefix:str)->l
     return labels
 
 
+def _normalized_label_text(value:str)->str:
+    text=normalize_digits(value).lower()
+    text=(text.replace("أ","ا").replace("إ","ا").replace("آ","ا")
+        .replace("ة","ه").replace("ى","ي").replace("ـ",""))
+    return re.sub(r"[^0-9a-z\u0600-\u06ff]+","",text)
+
+
 def _label_distance(a:dict,b:dict)->float:
     dx=a["center"]["x"]-b["center"]["x"]
     dy=a["center"]["y"]-b["center"]["y"]
@@ -102,7 +109,14 @@ def _merge_labels(primary:list[dict],secondary:list[dict],distance_px:float)->li
             candidate_digits=re.sub(r"\D","",normalize_digits(candidate["text"]))
             same_numeric=bool(existing_digits and candidate_digits and existing_digits==candidate_digits)
             same_kind=existing["kind"]==candidate["kind"]=="dimension"
-            if same_numeric or same_kind:
+            existing_text=_normalized_label_text(str(existing.get("text","")))
+            candidate_text=_normalized_label_text(str(candidate.get("text","")))
+            same_text=bool(
+                len(existing_text)>=2
+                and existing_text==candidate_text
+                and existing["kind"]==candidate["kind"]
+            )
+            if same_numeric or same_kind or same_text:
                 duplicate_index=index
                 break
         if duplicate_index is None:
