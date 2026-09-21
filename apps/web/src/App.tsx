@@ -25,7 +25,8 @@ const phaseLabels:Record<string,string>={
 };
 
 function provenanceLabel(value?:ElementProvenance){
-  return ({
+  if(!value)return "قراءة آلية";
+  const labels:Record<ElementProvenance,string>={
     "opencv":"OpenCV",
     "pdf-vector":"PDF متجهي",
     "ocr":"OCR",
@@ -33,7 +34,8 @@ function provenanceLabel(value?:ElementProvenance){
     "manual":"يدوي",
     "ai":"H Engineer",
     "mixed":"قراءة مدمجة",
-  } as Partial<Record<ElementProvenance,string>>)[value??""]??"قراءة آلية";
+  };
+  return labels[value];
 }
 
 function Brand({compact=false}:{compact?:boolean}){return <div className={`brand ${compact?"brand-compact":""}`}><img src="/icon.svg" alt=""/><div><strong>منزل H</strong>{!compact&&<span>محرر المخططات الذكي</span>}</div></div>;}
