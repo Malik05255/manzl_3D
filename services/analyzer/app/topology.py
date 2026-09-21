@@ -237,7 +237,7 @@ def filter_nonarchitectural_enclosures(
             for wall_id in ids
             if wall_id in wall_by_id
         ]
-        if not generated or reviewed or len(boundaries)<3:
+        if not generated or reviewed or len(boundaries)<2:
             kept.append(room)
             continue
 
@@ -249,10 +249,16 @@ def filter_nonarchitectural_enclosures(
         boundary_median=boundary_thicknesses[len(boundary_thicknesses)//2]
         coverage=room_boundary_coverage(room,walls)
         furniture_thin=(
-            boundary_median<=max(3.5,median*.28)
-            and max(boundary_thicknesses)<=max(5.0,median*.40)
+            boundary_median<=max(4.5,median*.34)
+            and max(boundary_thicknesses)<=max(6.5,median*.48)
         )
-        if area_ratio<.018 and coverage>=.72 and furniture_thin:
+        # Thin furniture rectangles often get only two canonical wall links
+        # after Hough deduplication even though the raster barrier closes the
+        # contour. Keep named/reviewed spaces, but reject a small unlabeled
+        # enclosure when the available boundary evidence is consistently much
+        # thinner than the drawing's architectural walls.
+        min_coverage=.48 if len(boundaries)==2 else .68
+        if area_ratio<.018 and coverage>=min_coverage and furniture_thin:
             continue
         kept.append(room)
     return kept
