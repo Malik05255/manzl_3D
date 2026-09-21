@@ -2,7 +2,7 @@ import fitz
 import numpy as np
 import cv2
 
-from app.document import _order_quad,_plan_likeness_score,_warp_quad,decode_document_with_page
+from app.document import _order_quad,_plan_likeness_score,_warp_quad,decode_document_with_page,normalize_resolution
 
 
 def test_plan_likeness_prefers_orthogonal_geometry():
@@ -50,3 +50,16 @@ def test_orders_and_warps_document_quad():
     warped=_warp_quad(image,quad)
     assert warped.shape[0]>180
     assert warped.shape[1]>250
+
+
+def test_low_resolution_plan_is_upscaled():
+    image=np.full((500,800,3),255,dtype=np.uint8)
+    resized=normalize_resolution(image)
+    assert min(resized.shape[:2])>=1100
+    assert max(resized.shape[:2])<2000
+
+
+def test_very_large_plan_is_capped():
+    image=np.full((5400,1200,3),255,dtype=np.uint8)
+    resized=normalize_resolution(image)
+    assert max(resized.shape[:2])<=5200

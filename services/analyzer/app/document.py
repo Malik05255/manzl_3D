@@ -195,13 +195,31 @@ def _rotate_keep_bounds(image:np.ndarray,angle:float)->np.ndarray:
     )
 
 
+def normalize_resolution(image:np.ndarray)->np.ndarray:
+    h,w=image.shape[:2]
+    short=max(1,min(h,w))
+    long=max(h,w)
+
+    if long>5200:
+        scale=5200.0/long
+    elif short<1050 and long<4200:
+        scale=min(2.2,1200.0/short)
+    else:
+        return image
+
+    new_w=max(1,int(round(w*scale)))
+    new_h=max(1,int(round(h*scale)))
+    interpolation=cv2.INTER_CUBIC if scale>1 else cv2.INTER_AREA
+    return cv2.resize(image,(new_w,new_h),interpolation=interpolation)
+
+
 def normalize_raster_document(image:np.ndarray)->np.ndarray:
     quad=_detect_document_quad(image)
     normalized=_warp_quad(image,quad) if quad is not None else image
     angle=_deskew_angle(normalized)
     if abs(angle)<=8:
         normalized=_rotate_keep_bounds(normalized,angle)
-    return normalized
+    return normalize_resolution(normalized)
 
 
 def _candidate_page_indexes(page_count:int)->list[int]:
@@ -248,6 +266,7 @@ def decode_document(data:bytes,mime_type:str)->np.ndarray:
 
 def preprocess(image:np.ndarray)->tuple[np.ndarray,np.ndarray]:
     gray=cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
+    gray=cv2.createCLAHE(clipLimit=1.8,tileGridSize=(8,8)).apply(gray)
     gray=cv2.bilateralFilter(gray,7,35,35)
     ink=cv2.adaptiveThreshold(
         gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY_INV,31,11
