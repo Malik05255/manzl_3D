@@ -28,6 +28,7 @@ def test_detects_door_gap_when_swing_leaf_is_visible():
 
     assert len(doors)==1
     assert doors[0]["kind"]=="door"
+    assert doors[0]["doorSubtype"]=="single_swing"
     assert doors[0]["confidence"]>=0.76
 
 
@@ -196,3 +197,19 @@ def test_unanchored_diagonal_annotation_is_not_door_leaf():
         meters_per_pixel=.02,
     )
     assert doors==[]
+
+
+def test_detects_double_swing_door_from_two_hinged_leaves():
+    image=np.full((300,360,3),255,dtype=np.uint8)
+    cv2.line(image,(30,150),(120,150),(0,0,0),5)
+    cv2.line(image,(210,150),(330,150),(0,0,0),5)
+    cv2.line(image,(120,150),(158,108),(0,0,0),4)
+    cv2.line(image,(210,150),(172,108),(0,0,0),4)
+
+    doors=detect_doors(
+        image,
+        [wall("left",30,150,120,150),wall("right",210,150,330,150)],
+        meters_per_pixel=.02,
+    )
+    assert len(doors)==1
+    assert doors[0]["doorSubtype"]=="double_swing"
