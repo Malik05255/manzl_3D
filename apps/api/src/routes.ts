@@ -132,7 +132,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const now=new Date().toISOString();
     await env.DB.prepare("UPDATE projects SET source_key=?, status='queued', phase='upload', progress=10, message=?, error=NULL, updated_at=? WHERE id=?")
       .bind(key,"اكتمل الرفع، بانتظار محرك التحليل",now,id).run();
-    await env.ANALYZE_QUEUE.send({projectId:id,sourceKey:key,fileName,mimeType:mime});
+    await env.ANALYZE_QUEUE.send({projectId:id,sourceKey:key,fileName,mimeType:mime,expectedRevision:secured.revision});
     return json({ok:true},202);
   }
 
@@ -144,16 +144,34 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(!secured.source_key) return json({error:"لا يوجد ملف مصدر لإعادة التحليل"},409);
     if(["queued","analyzing"].includes(secured.status)) return json({error:"التحليل جارٍ بالفعل"},409);
 
+    const body=await request.json<{sourcePage?:number|null}>().catch(()=>({}));
+    const requestedPage=body.sourcePage==null?null:Number(body.sourcePage);
+    if(requestedPage!==null&&(!Number.isInteger(requestedPage)||requestedPage<1||requestedPage>10000)){
+      return json({error:"رقم صفحة PDF غير صالح"},400);
+    }
+
     const source=await env.ASSETS.head(secured.source_key);
     if(!source) return json({error:"تعذر العثور على ملف المصدر"},404);
     const mimeType=source.httpMetadata?.contentType??"";
     if(!["application/pdf","image/png","image/jpeg","image/webp"].includes(mimeType)) return json({error:"نوع الملف المصدر غير مدعوم"},415);
+    if(requestedPage!==null&&mimeType!=="application/pdf") return json({error:"اختيار الصفحة متاح لملفات PDF فقط"},400);
+
+    if(requestedPage!==null){
+      const existing=await currentPlan(env,secured);
+      const pageCount=existing?.source.pageCount;
+      if(pageCount&&requestedPage>pageCount) return json({error:`الملف يحتوي على ${pageCount} صفحة فقط`},400);
+      if(existing?.source.page===requestedPage&&secured.status==="ready") return json({error:"هذه الصفحة هي الصفحة الحالية بالفعل"},409);
+    }
 
     const fileName=secured.source_key.split("/").at(-1)??"source";
     const now=new Date().toISOString();
+    const message=requestedPage===null?"تمت إعادة جدولة التحليل السحابي":`تمت جدولة تحليل الصفحة ${requestedPage}`;
     await env.DB.prepare("UPDATE projects SET status='queued', phase='upload', progress=10, message=?, error=NULL, updated_at=? WHERE id=?")
-      .bind("تمت إعادة جدولة التحليل السحابي",now,id).run();
-    await env.ANALYZE_QUEUE.send({projectId:id,sourceKey:secured.source_key,fileName,mimeType});
+      .bind(message,now,id).run();
+    await env.ANALYZE_QUEUE.send({
+      projectId:id,sourceKey:secured.source_key,fileName,mimeType,
+      sourcePage:requestedPage??undefined,expectedRevision:secured.revision
+    });
     const row=await getProjectRow(env,id);
     return json(await projectView(env,row!,false),202);
   }
