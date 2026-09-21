@@ -166,3 +166,33 @@ def test_normalizes_slanted_opening_gap_into_single_host_wall():
     dx=normalized[0]["b"]["x"]-normalized[0]["a"]["x"]
     dy=normalized[0]["b"]["y"]-normalized[0]["a"]["y"]
     assert abs(dx)>200 and abs(dy)>140
+
+
+def test_single_parallel_stroke_is_not_window():
+    image=np.full((280,360,3),255,dtype=np.uint8)
+    cv2.line(image,(25,140),(120,140),(0,0,0),5)
+    cv2.line(image,(220,140),(335,140),(0,0,0),5)
+    # A single thick line can yield two Hough edges. It must not become a window.
+    cv2.line(image,(122,140),(218,140),(0,0,0),4)
+
+    windows=detect_windows(
+        image,
+        [wall("left",25,140,120,140),wall("right",220,140,335,140)],
+        meters_per_pixel=.02,
+    )
+    assert windows==[]
+
+
+def test_unanchored_diagonal_annotation_is_not_door_leaf():
+    image=np.full((260,320,3),255,dtype=np.uint8)
+    cv2.line(image,(30,130),(120,130),(0,0,0),5)
+    cv2.line(image,(170,130),(290,130),(0,0,0),5)
+    # Diagonal annotation/text-like stroke is near the gap but not hinged at either edge.
+    cv2.line(image,(137,95),(157,115),(0,0,0),3)
+
+    doors=detect_doors(
+        image,
+        [wall("left",30,130,120,130),wall("right",170,130,290,130)],
+        meters_per_pixel=.02,
+    )
+    assert doors==[]
