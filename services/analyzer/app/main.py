@@ -5,7 +5,7 @@ import httpx
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,HttpUrl
 from .commands import find_target_room,parse_target_size
-from .document import decode_document,preprocess
+from .document import decode_document_with_page,preprocess
 from .edits import build_proposals
 from .models import EditRequest,FloorPlan,ProposalResponse
 from .ocr import extract_ocr_labels
@@ -72,7 +72,8 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     if len(data)>50*1024*1024:
         raise HTTPException(status_code=413,detail="file too large")
 
-    image=decode_document(data,req.mime_type)
+    await progress(req.callback_url,req.project_id,"preprocess",23,"اختيار صفحة المخطط الأنسب")
+    image,source_page=decode_document_with_page(data,req.mime_type)
     h,w=image.shape[:2]
     await upload_preview(req.preview_url,image)
     _,ink=preprocess(image)
@@ -88,7 +89,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     rooms=detect_rooms(wall_mask,labels,scale)
 
     await progress(req.callback_url,req.project_id,"validation",93,"التحقق من جودة النتيجة")
-    result=assemble_plan(image,req.project_id,req.filename,req.mime_type,labels,walls,rooms,scale,scale_confidence)
+    result=assemble_plan(image,req.project_id,req.filename,req.mime_type,labels,walls,rooms,scale,scale_confidence,source_page=source_page)
     return FloorPlan.model_validate(result)
 
 @app.post("/v1/edit/proposals",response_model=ProposalResponse)
