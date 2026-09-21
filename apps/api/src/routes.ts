@@ -400,7 +400,8 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(analysisBusy(secured)) return json({error:"تحليل المصدر جارٍ الآن. انتظر حتى يصبح المخطط جاهزًا."},409);
     const plan=await currentPlan(env,secured);
     if(!plan) return json({error:"المخطط غير جاهز للتحرير"},409);
-    const body=await request.json<{roomId?:string;widthM?:number;heightM?:number}>();
+    const body=await request.json<{roomId?:string;widthM?:number;heightM?:number;expectedRevision?:number}>();
+    if(!Number.isInteger(body.expectedRevision)||body.expectedRevision!==secured.revision) return json({error:"تغير المشروع قبل إنشاء المعاينة. أعد تحميله وحاول مرة أخرى."},409);
     const roomId=(body.roomId??"").trim();
     const widthM=Number(body.widthM);
     const heightM=Number(body.heightM);
@@ -420,7 +421,8 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(analysisBusy(secured)) return json({error:"تحليل المصدر جارٍ الآن. انتظر حتى يصبح المخطط جاهزًا قبل استخدام H Engineer."},409);
     const plan=await currentPlan(env,secured);
     if(!plan) return json({error:"المخطط غير جاهز للتحرير"},409);
-    const body=await request.json<{command?:string;targetRoomId?:string|null;targetWallId?:string|null;targetOpeningId?:string|null}>();
+    const body=await request.json<{command?:string;targetRoomId?:string|null;targetWallId?:string|null;targetOpeningId?:string|null;expectedRevision?:number}>();
+    if(!Number.isInteger(body.expectedRevision)||body.expectedRevision!==secured.revision) return json({error:"تغير المشروع أو الطابق المفتوح. أعد تحميل المشروع قبل طلب تعديل جديد."},409);
     const command=(body.command??"").trim();
     const targetRoomId=(body.targetRoomId??"").trim()||null;
     const targetWallId=(body.targetWallId??"").trim()||null;
@@ -440,6 +442,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(secured instanceof Response) return secured;
     if(analysisBusy(secured)) return json({error:"تحليل المصدر جارٍ الآن. لا يمكن اعتماد تعديل H Engineer أثناء التحليل."},409);
     const body=await request.json<ApplyProposalRequest>();
+    if(!Number.isInteger(body.expectedRevision)||body.expectedRevision!==secured.revision) return json({error:"تغير المشروع منذ إنشاء المعاينة. أعد إنشاء الاقتراح على النسخة الحالية."},409);
     const command=(body.command??"").trim();
     const selectedId=body.proposal?.id;
     if(!command||!selectedId) return json({error:"طلب التعديل غير مكتمل"},400);
@@ -476,7 +479,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
       return json({error:error instanceof Error?error.message:"تعذر التحقق الهندسي من الاقتراح"},502);
     }
 
-    try{await persistPlan(env,id,selected.previewPlan,`H Engineer: ${cleanName(command)}`,secured.revision);}
+    try{await persistPlan(env,id,selected.previewPlan,`H Engineer: ${cleanName(command)}`,body.expectedRevision);}
     catch(error){if(error instanceof Error&&error.message==="STALE_REVISION") return json({error:"تغير المشروع أثناء تحليل H Engineer. أعد المعاينة على النسخة الأحدث."},409);throw error;}
     const row=await getProjectRow(env,id);
     return json(await projectView(env,row!,true));
