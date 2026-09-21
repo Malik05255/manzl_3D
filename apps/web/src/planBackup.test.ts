@@ -25,6 +25,26 @@ describe("plan backup",()=>{
     expect(()=>parsePlanBackup(JSON.stringify(broken))).toThrow("BACKUP_WALLS");
   });
 
+  it("round trips canonical dimension evidence",()=>{
+    const source={...plan(),dimensions:[{
+      id:"dimension-1",sourceLabelId:"label-1",text:"4.20 m",center:{x:200,y:30},
+      valueM:4.2,unit:"m" as const,orientation:"horizontal" as const,referenceWallId:"wall-1",
+      confidence:.92,reviewed:false,provenance:"ocr" as const,
+    }]};
+    const parsed=parsePlanBackup(JSON.stringify(source));
+    expect(parsed.dimensions?.[0].valueM).toBe(4.2);
+    expect(parsed.dimensions?.[0].referenceWallId).toBe("wall-1");
+  });
+
+  it("rejects orphaned dimension wall references",()=>{
+    const source={...plan(),dimensions:[{
+      id:"dimension-1",text:"4.20 m",center:{x:200,y:30},
+      valueM:4.2,unit:"m" as const,orientation:"horizontal" as const,referenceWallId:"missing-wall",
+      confidence:.92,
+    }]};
+    expect(()=>parsePlanBackup(JSON.stringify(source))).toThrow("BACKUP_DIMENSION_WALL");
+  });
+
   it("clones a backup under the new cloud project id",()=>{
     const original=plan();
     const cloned=clonePlanForProject(original,"new-project");
