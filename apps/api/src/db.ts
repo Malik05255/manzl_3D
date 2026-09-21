@@ -32,9 +32,10 @@ export async function projectView(env:Env,row:ProjectRow,includePlan=true):Promi
     if(object) plan=await object.json<FloorPlanModel>();
   }
   const floors=await getProjectFloors(env,row.id);
+  const activeFloorId=row.active_floor_id??(plan?floors.find(item=>item.sourcePage===plan.source.page)?.id:null)??null;
   return {
     id:row.id,name:row.name,status:row.status as ProjectView["status"],phase:row.phase as ProjectView["phase"],
-    progress:row.progress,revision:row.revision,hasDraft:Boolean(row.draft_key),activeFloorId:row.active_floor_id,
+    progress:row.progress,revision:row.revision,hasDraft:Boolean(row.draft_key),activeFloorId,
     floors,message:row.message,error:row.error,createdAt:row.created_at,updatedAt:row.updated_at,plan
   };
 }
