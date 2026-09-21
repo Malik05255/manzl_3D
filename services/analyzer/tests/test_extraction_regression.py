@@ -137,7 +137,24 @@ def test_dimension_line_does_not_split_room_topology():
         and abs(wall["a"]["y"]-wall["b"]["y"])<4
         and min(wall["a"]["y"],wall["b"]["y"])>300
     ]
-    assert suspicious,prediction["walls"]
+    assert suspicious,{
+        "walls":[
+            (
+                wall["id"],
+                wall["a"],
+                wall["b"],
+                wall["thicknessPx"],
+                wall["confidence"],
+                wall.get("provenance"),
+            )
+            for wall in prediction["walls"]
+        ],
+        "labels":[
+            (label["text"],label["center"],label["kind"],label["confidence"])
+            for label in prediction["labels"]
+        ],
+        "dimensions":prediction.get("dimensions",[]),
+    }
     assert len(prediction["rooms"])==1,prediction["rooms"]
     assert not (
         set(prediction["rooms"][0].get("boundaryWallIds",[]))
