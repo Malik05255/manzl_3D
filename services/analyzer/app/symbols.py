@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import math
 import os
 
 import cv2
@@ -174,7 +176,168 @@ def normalize_symbol_response(payload:object,width:int,height:int,min_confidence
     return accepted
 
 
+
+
+_ONNX_CACHE:dict[tuple[str,int],object]={}
+
+
+def _local_class_names()->list[str]:
+    raw=os.getenv("SYMBOL_ONNX_CLASSES","").strip()
+    if not raw:
+        return []
+    if raw.startswith("["):
+        try:
+            values=json.loads(raw)
+            if isinstance(values,list):
+                return [str(item).strip() for item in values]
+        except Exception:
+            return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _letterbox(image:np.ndarray,size:int)->tuple[np.ndarray,float,float,float]:
+    h,w=image.shape[:2]
+    scale=min(size/max(1,w),size/max(1,h))
+    new_w=max(1,int(round(w*scale)))
+    new_h=max(1,int(round(h*scale)))
+    resized=cv2.resize(image,(new_w,new_h),interpolation=cv2.INTER_AREA if scale<1 else cv2.INTER_CUBIC)
+    canvas=np.full((size,size,3),114,dtype=np.uint8)
+    pad_x=(size-new_w)//2
+    pad_y=(size-new_h)//2
+    canvas[pad_y:pad_y+new_h,pad_x:pad_x+new_w]=resized
+    return canvas,scale,float(pad_x),float(pad_y)
+
+
+def _prepare_yolo_rows(output:np.ndarray,class_count:int)->np.ndarray:
+    value=np.asarray(output,dtype=np.float32)
+    while value.ndim>2 and value.shape[0]==1:
+        value=value[0]
+    if value.ndim!=2:
+        return np.empty((0,4+class_count),dtype=np.float32)
+    feature_sizes={4+class_count,5+class_count}
+    if value.shape[0] in feature_sizes and value.shape[1] not in feature_sizes:
+        value=value.T
+    if value.shape[1] not in feature_sizes:
+        return np.empty((0,4+class_count),dtype=np.float32)
+    return value
+
+
+def _decode_yolo_output(
+    output:np.ndarray,
+    *,
+    class_names:list[str],
+    confidence_threshold:float,
+    original_width:int,
+    original_height:int,
+    input_size:int,
+    scale:float,
+    pad_x:float,
+    pad_y:float,
+)->list[dict]:
+    rows=_prepare_yolo_rows(output,len(class_names))
+    if rows.size==0:
+        return []
+    boxes=[]
+    confidences=[]
+    class_ids=[]
+    has_objectness=rows.shape[1]==5+len(class_names)
+    for row in rows:
+        cx,cy,bw,bh=map(float,row[:4])
+        if has_objectness:
+            objectness=float(row[4])
+            scores=np.asarray(row[5:],dtype=np.float32)*objectness
+        else:
+            scores=np.asarray(row[4:],dtype=np.float32)
+        if not len(scores):
+            continue
+        class_id=int(np.argmax(scores))
+        confidence=float(scores[class_id])
+        if confidence<confidence_threshold:
+            continue
+        x1=(cx-bw/2-pad_x)/max(scale,1e-9)
+        y1=(cy-bh/2-pad_y)/max(scale,1e-9)
+        x2=(cx+bw/2-pad_x)/max(scale,1e-9)
+        y2=(cy+bh/2-pad_y)/max(scale,1e-9)
+        x1=max(0.0,min(float(original_width),x1))
+        y1=max(0.0,min(float(original_height),y1))
+        x2=max(0.0,min(float(original_width),x2))
+        y2=max(0.0,min(float(original_height),y2))
+        if x2-x1<4 or y2-y1<4:
+            continue
+        boxes.append([x1,y1,x2-x1,y2-y1])
+        confidences.append(confidence)
+        class_ids.append(class_id)
+    if not boxes:
+        return []
+    indexes=cv2.dnn.NMSBoxes(
+        boxes,confidences,confidence_threshold,
+        float(os.getenv("SYMBOL_ONNX_NMS_IOU",".45") or ".45"),
+    )
+    if indexes is None or len(indexes)==0:
+        return []
+    flattened=np.asarray(indexes).reshape(-1).tolist()
+    payload=[]
+    for index in flattened:
+        x,y,w,h=boxes[int(index)]
+        payload.append({
+            "class":class_names[class_ids[int(index)]],
+            "bbox":[x,y,x+w,y+h],
+            "confidence":confidences[int(index)],
+        })
+    return normalize_symbol_response(
+        payload,original_width,original_height,confidence_threshold,
+    )
+
+
+def extract_local_onnx_symbols(image:np.ndarray)->list[dict]:
+    model_path=os.getenv("SYMBOL_ONNX_MODEL","").strip()
+    class_names=_local_class_names()
+    if not model_path or not class_names:
+        return []
+    input_size=int(os.getenv("SYMBOL_ONNX_INPUT_SIZE","640") or "640")
+    input_size=max(128,min(2048,input_size))
+    confidence=float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78")
+    confidence=max(.50,min(.99,confidence))
+
+    key=(model_path,input_size)
+    net=_ONNX_CACHE.get(key)
+    if net is None:
+        if not os.path.exists(model_path):
+            return []
+        net=cv2.dnn.readNetFromONNX(model_path)
+        _ONNX_CACHE[key]=net
+
+    boxed,scale,pad_x,pad_y=_letterbox(image,input_size)
+    blob=cv2.dnn.blobFromImage(
+        boxed,1/255.0,(input_size,input_size),
+        swapRB=True,crop=False,
+    )
+    net.setInput(blob)
+    raw=net.forward()
+    h,w=image.shape[:2]
+    return _decode_yolo_output(
+        raw,
+        class_names=class_names,
+        confidence_threshold=confidence,
+        original_width=w,
+        original_height=h,
+        input_size=input_size,
+        scale=scale,
+        pad_x=pad_x,
+        pad_y=pad_y,
+    )
+
+
 async def extract_symbol_detections(image:np.ndarray)->list[dict]:
+    # Prefer an in-process ONNX model when configured. This removes network
+    # latency and keeps plan images inside the Analyzer boundary.
+    try:
+        local=extract_local_onnx_symbols(image)
+    except Exception:
+        local=[]
+    if local:
+        return local
+
     url=os.getenv("SYMBOL_DETECTOR_URL","").strip()
     if not url:
         return []
