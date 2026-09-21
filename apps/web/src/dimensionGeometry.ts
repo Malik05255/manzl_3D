@@ -30,7 +30,7 @@ export function correctDimensionValue(plan:FloorPlanModel,dimensionId:string,val
 
 export function calibratePlanFromDimension(plan:FloorPlanModel,dimensionId:string):FloorPlanModel|null{
   const dimension=(plan.dimensions??[]).find(item=>item.id===dimensionId);
-  if(!dimension?.valueM||!dimension.referenceWallId)return null;
+  if(!dimension?.reviewed||!dimension.valueM||!dimension.referenceWallId)return null;
   const wall=plan.walls.find(item=>item.id===dimension.referenceWallId);
   if(!wall)return null;
 
