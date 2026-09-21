@@ -455,3 +455,15 @@ def test_low_confidence_merge_requires_confirmation():
     ))
     assert not response.proposals
     assert "منخفضة الثقة" in (response.needsClarification or "")
+
+
+def test_reviewed_low_confidence_room_can_be_edited():
+    plan=sample_plan()
+    plan.rooms[0].confidence=.60
+    plan.rooms[0].reviewed=True
+    response=build_proposals(EditRequest(
+        project_id="project-1",
+        command="عدل غرفة النوم إلى 5×4",
+        plan=plan,
+    ))
+    assert response.proposals
