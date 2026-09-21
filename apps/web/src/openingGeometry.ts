@@ -1,4 +1,4 @@
-import type { ElementProvenance,FloorPlanModel,Opening,Point,Wall } from "@manzil/contracts";
+import type { DoorSubtype,ElementProvenance,FloorPlanModel,Opening,Point,Wall } from "@manzil/contracts";
 
 function manualProvenance(value?:ElementProvenance):ElementProvenance{
   return value?"mixed":"manual";
@@ -48,6 +48,12 @@ export function changeOpeningKind(plan:FloorPlanModel,id:string,kind:Opening["ki
   const opening=findOpening(plan,id);
   if(!opening)return null;
   return replaceOpening(plan,markManual({...opening,kind,doorSubtype:kind==="door"?(opening.doorSubtype??"unknown"):undefined}));
+}
+
+export function changeDoorSubtype(plan:FloorPlanModel,id:string,doorSubtype:DoorSubtype):FloorPlanModel|null{
+  const opening=findOpening(plan,id);
+  if(!opening||opening.kind!=="door")return null;
+  return replaceOpening(plan,markManual({...opening,doorSubtype}));
 }
 
 function normalizedOpening(plan:FloorPlanModel,opening:Opening,widthPx:number,centerDistance:number):Opening|null{
