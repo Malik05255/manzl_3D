@@ -72,7 +72,21 @@ def _room_context(request:EditRequest)->list[dict]:
     return result
 
 
+def _room_rebuild_command(command:str)->bool:
+    normalized=normalize_arabic(command)
+    phrases=(
+        "اعاده بناء الغرف",
+        "اعاده بناء الفراغات",
+        "استخرج الغرف من الجدران",
+        "استخراج الغرف من الجدران",
+        "ابن الغرف من الجدران",
+    )
+    return any(phrase in normalized for phrase in phrases)
+
+
 def _deterministic_understands(request:EditRequest)->bool:
+    if _room_rebuild_command(request.command):
+        return True
     if parse_merge_rooms(request.command,request.plan.rooms) is not None:
         return True
     target=find_target_room(request.command,request.plan.rooms)
