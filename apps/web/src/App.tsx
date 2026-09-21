@@ -46,6 +46,10 @@ function manualProvenance(value?:ElementProvenance):ElementProvenance{
   return value?"mixed":"manual";
 }
 
+function symbolKindLabel(kind:string){
+  return ({sink:"مغسلة",toilet:"مرحاض",bathtub:"بانيو",shower:"دش",cooktop:"موقد",stairs:"درج"} as Record<string,string>)[kind]??kind;
+}
+
 function openingHostProtected(plan:FloorPlanModel,openingId:string|null){
   if(!openingId)return false;
   const opening=[...plan.doors,...plan.windows].find(item=>item.id===openingId);
@@ -143,7 +147,7 @@ function Processing({projectId,onReady,onHome}:{projectId:string;onReady:(p:Proj
 
 function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>void}){
   const[project,setProject]=useState(initialProject);const[plan,setPlan]=useState<FloorPlanModel>(initialProject.plan!);const[savedPlan,setSavedPlan]=useState<FloorPlanModel>(initialProject.plan!);const[undoStack,setUndoStack]=useState<FloorPlanModel[]>([]);const[redoStack,setRedoStack]=useState<FloorPlanModel[]>([]);
-  const[selectedWall,setSelectedWall]=useState<string|null>(null);const[wallThicknessCm,setWallThicknessCm]=useState("");const[wallMoveCm,setWallMoveCm]=useState("10");const[selectedRoom,setSelectedRoom]=useState<string|null>(null);const[selectedOpening,setSelectedOpening]=useState<string|null>(null);const[selectedDimension,setSelectedDimension]=useState<string|null>(null);const[dimensionValue,setDimensionValue]=useState("");const[openingWidth,setOpeningWidth]=useState("");const[openingPosition,setOpeningPosition]=useState(50);const[exactName,setExactName]=useState("");const[exactWidth,setExactWidth]=useState("");const[exactHeight,setExactHeight]=useState("");const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
+  const[selectedWall,setSelectedWall]=useState<string|null>(null);const[wallThicknessCm,setWallThicknessCm]=useState("");const[wallMoveCm,setWallMoveCm]=useState("10");const[selectedRoom,setSelectedRoom]=useState<string|null>(null);const[selectedOpening,setSelectedOpening]=useState<string|null>(null);const[selectedDimension,setSelectedDimension]=useState<string|null>(null);const[selectedSymbol,setSelectedSymbol]=useState<string|null>(null);const[dimensionValue,setDimensionValue]=useState("");const[openingWidth,setOpeningWidth]=useState("");const[openingPosition,setOpeningPosition]=useState(50);const[exactName,setExactName]=useState("");const[exactWidth,setExactWidth]=useState("");const[exactHeight,setExactHeight]=useState("");const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
   const[calibrating,setCalibrating]=useState(false);const[calibrationPoints,setCalibrationPoints]=useState<Point[]>([]);const[knownDistance,setKnownDistance]=useState("");const[calibrationDimensionId,setCalibrationDimensionId]=useState<string|null>(null);
   const[sourcePreview,setSourcePreview]=useState<string|null>(null);const[sourceOpacity,setSourceOpacity]=useState(.42);const[sourcePreviewNonce,setSourcePreviewNonce]=useState(0);const[sourcePageInput,setSourcePageInput]=useState(String(initialProject.plan?.source.page??1));const[pageSwitchBusy,setPageSwitchBusy]=useState(false);
   const[layerOpen,setLayerOpen]=useState(false);const[layers,setLayers]=useState<PlanLayerVisibility>({...DEFAULT_PLAN_LAYERS});
@@ -168,23 +172,29 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
       return opening?`${opening.kind==="door"?"الباب":"النافذة"} المحدد`:"الفتحة المحددة";
     }
     if(selectedDimension)return "البعد المقروء المحدد";
+    if(selectedSymbol){
+      const symbol=(plan.symbols??[]).find(item=>item.id===selectedSymbol);
+      return symbol?`الرمز · ${symbolKindLabel(symbol.kind)}`:"الرمز المحدد";
+    }
     if(selectedWall)return "الجدار المحدد";
     return null;
-  },[selectedRoom,selectedOpening,selectedDimension,selectedWall,plan.rooms,plan.doors,plan.windows]);
+  },[selectedRoom,selectedOpening,selectedDimension,selectedSymbol,selectedWall,plan.rooms,plan.doors,plan.windows,plan.symbols]);
   const reviewItems=useMemo(()=>{
-    const items:Array<{key:string;kind:"room"|"wall"|"opening"|"dimension";id:string;label:string;confidence:number;provenance?:ElementProvenance}>=[];
+    const items:Array<{key:string;kind:"room"|"wall"|"opening"|"dimension"|"symbol";id:string;label:string;confidence:number;provenance?:ElementProvenance}>=[];
     for(const room of plan.rooms)if(!room.reviewed&&room.confidence<.78)items.push({key:`room:${room.id}`,kind:"room",id:room.id,label:room.name||"غرفة غير مسماة",confidence:room.confidence,provenance:room.provenance});
     for(const wall of plan.walls)if(!wall.reviewed&&wall.confidence<.72)items.push({key:`wall:${wall.id}`,kind:"wall",id:wall.id,label:"جدار يحتاج تأكيد",confidence:wall.confidence,provenance:wall.provenance});
     for(const opening of [...plan.doors,...plan.windows])if(!opening.reviewed&&opening.confidence<.84)items.push({key:`opening:${opening.id}`,kind:"opening",id:opening.id,label:opening.kind==="door"?"باب يحتاج تأكيد":"نافذة تحتاج تأكيد",confidence:opening.confidence,provenance:opening.provenance});
     for(const dimension of plan.dimensions??[])if(!dimension.reviewed&&dimension.confidence<.90)items.push({key:`dimension:${dimension.id}`,kind:"dimension",id:dimension.id,label:dimension.valueM?`بعد مقروء · ${dimension.valueM.toFixed(2)} م`:`بعد يحتاج تأكيد · ${dimension.text}`,confidence:dimension.confidence,provenance:dimension.provenance});
+    for(const symbol of plan.symbols??[])if(!symbol.reviewed&&symbol.confidence<.86)items.push({key:`symbol:${symbol.id}`,kind:"symbol",id:symbol.id,label:`${symbolKindLabel(symbol.kind)} يحتاج تأكيد`,confidence:symbol.confidence,provenance:symbol.provenance});
     return items.sort((a,b)=>a.confidence-b.confidence);
-  },[plan.rooms,plan.walls,plan.doors,plan.windows,plan.dimensions]);
+  },[plan.rooms,plan.walls,plan.doors,plan.windows,plan.dimensions,plan.symbols]);
   const selectedReviewItem=useMemo(()=>reviewItems.find(item=>
     (item.kind==="room"&&item.id===selectedRoom)||
     (item.kind==="wall"&&item.id===selectedWall)||
     (item.kind==="opening"&&item.id===selectedOpening)||
-    (item.kind==="dimension"&&item.id===selectedDimension)
-  )??null,[reviewItems,selectedRoom,selectedWall,selectedOpening,selectedDimension]);
+    (item.kind==="dimension"&&item.id===selectedDimension)||
+    (item.kind==="symbol"&&item.id===selectedSymbol)
+  )??null,[reviewItems,selectedRoom,selectedWall,selectedOpening,selectedDimension,selectedSymbol]);
   const enqueueDraft=(snapshot:FloorPlanModel,revision:number,generation:number)=>{
     const run=async()=>{
       if(generation!==draftGeneration.current)return;
@@ -237,7 +247,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     setPlan(next);setSelectedWall(null);setWallThicknessCm("");setSelectedRoom(null);setSelectedOpening(null);setSelectedDimension(null);setPreview(null);setProposals([]);
   };
   const selectWall=(wallId:string|null)=>{
-    setSelectedWall(wallId);setSelectedRoom(null);setSelectedOpening(null);setSelectedDimension(null);setPreview(null);setProposals([]);
+    setSelectedWall(wallId);setSelectedRoom(null);setSelectedOpening(null);setSelectedDimension(null);setSelectedSymbol(null);setPreview(null);setProposals([]);
     const wall=plan.walls.find(item=>item.id===wallId);
     if(!wall||!plan.metersPerPixel){setWallThicknessCm("");return;}
     setWallThicknessCm((wall.thicknessPx*plan.metersPerPixel*100).toFixed(1));
@@ -370,7 +380,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     setNotice(wall.locked?"تم فك حماية الجدار. راجع أثر أي تعديل بعناية.":"تمت حماية الجدار من التعديل والحركة.");
   };
   const selectRoom=(roomId:string|null)=>{
-    setSelectedRoom(roomId);setSelectedWall(null);setSelectedOpening(null);setSelectedDimension(null);setPreview(null);setProposals([]);
+    setSelectedRoom(roomId);setSelectedWall(null);setSelectedOpening(null);setSelectedDimension(null);setSelectedSymbol(null);setPreview(null);setProposals([]);
     const room=plan.rooms.find(item=>item.id===roomId);
     setExactName(room?.name??"");
     if(!room||!plan.metersPerPixel){setExactWidth("");setExactHeight("");return;}
@@ -379,16 +389,19 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     setExactHeight(((Math.max(...ys)-Math.min(...ys))*plan.metersPerPixel).toFixed(2));
   };
   const selectOpening=(openingId:string|null)=>{
-    setSelectedOpening(openingId);setSelectedRoom(null);setSelectedWall(null);setSelectedDimension(null);setPreview(null);setProposals([]);
+    setSelectedOpening(openingId);setSelectedRoom(null);setSelectedWall(null);setSelectedDimension(null);setSelectedSymbol(null);setPreview(null);setProposals([]);
     if(!openingId){setOpeningWidth("");setOpeningPosition(50);return;}
     const metrics=openingMetrics(plan,openingId);
     setOpeningWidth(metrics?.widthM?.toFixed(2)??"");
     setOpeningPosition(Math.round(metrics?.positionPct??50));
   };
   const selectDimension=(dimensionId:string|null)=>{
-    setSelectedDimension(dimensionId);setSelectedRoom(null);setSelectedWall(null);setSelectedOpening(null);setPreview(null);setProposals([]);
+    setSelectedDimension(dimensionId);setSelectedRoom(null);setSelectedWall(null);setSelectedOpening(null);setSelectedSymbol(null);setPreview(null);setProposals([]);
     const dimension=(plan.dimensions??[]).find(item=>item.id===dimensionId);
     setDimensionValue(dimension?.valueM?.toFixed(2)??"");
+  };
+  const selectSymbol=(symbolId:string|null)=>{
+    setSelectedSymbol(symbolId);setSelectedRoom(null);setSelectedWall(null);setSelectedOpening(null);setSelectedDimension(null);setPreview(null);setProposals([]);
   };
   const addOpening=(kind:Opening["kind"])=>{
     if(!selectedWall)return;
@@ -443,11 +456,12 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     if(openingHostProtected(plan,selectedOpening)){setNotice("الفتحة على جدار محمي. فك حماية الجدار أولًا.");return;}
     applyLocalPlan(removeOpening(plan,selectedOpening));setSelectedOpening(null);setOpeningWidth("");setNotice("تم حذف الفتحة محليًا. يمكنك التراجع قبل الحفظ.");
   };
-  const focusReviewItem=(item:{kind:"room"|"wall"|"opening"|"dimension";id:string})=>{
+  const focusReviewItem=(item:{kind:"room"|"wall"|"opening"|"dimension"|"symbol";id:string})=>{
     if(item.kind==="room"){selectRoom(item.id);return;}
     if(item.kind==="wall"){selectWall(item.id);return;}
     if(item.kind==="opening"){selectOpening(item.id);return;}
-    selectDimension(item.id);
+    if(item.kind==="dimension"){selectDimension(item.id);return;}
+    selectSymbol(item.id);
   };
   const confirmSelectedReading=()=>{
     const item=selectedReviewItem;
@@ -462,13 +476,24 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
         doors:plan.doors.map(opening=>opening.id===item.id?{...opening,reviewed:true}:opening),
         windows:plan.windows.map(opening=>opening.id===item.id?{...opening,reviewed:true}:opening),
       });
-    }else{
+    }else if(item.kind==="dimension"){
       applyLocalPlan({
         ...plan,
         dimensions:(plan.dimensions??[]).map(dimension=>dimension.id===item.id?{...dimension,reviewed:true}:dimension),
       });
+    }else{
+      applyLocalPlan({
+        ...plan,
+        symbols:(plan.symbols??[]).map(symbol=>symbol.id===item.id?{...symbol,reviewed:true}:symbol),
+      });
     }
     setNotice("تم تأكيد قراءة العنصر. سيُحفظ ضمن المسودة السحابية تلقائيًا.");
+  };
+  const deleteSelectedSymbol=()=>{
+    if(!selectedSymbol)return;
+    applyLocalPlan({...plan,symbols:(plan.symbols??[]).filter(symbol=>symbol.id!==selectedSymbol)});
+    setSelectedSymbol(null);
+    setNotice("تم حذف الرمز المكتشف محليًا. يمكنك التراجع قبل الحفظ.");
   };
   const updateSelectedDimensionValue=()=>{
     if(!selectedDimension)return;
@@ -704,7 +729,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
 ] as Array<[keyof PlanLayerVisibility,string]>).map(([key,label])=><label key={key}><input type="checkbox" checked={layers[key]} onChange={()=>toggleLayer(key)}/><span>{label}</span></label>)}<button className="ghost layer-reset" onClick={()=>setLayers({...DEFAULT_PLAN_LAYERS})}>إظهار الكل</button></div>}</div>{activeFloor&&<div className="floor-control-wrap"><button className={`validate-chip ${floorSettingsOpen?"active":""}`} disabled={dirty} onClick={()=>setFloorSettingsOpen(value=>!value)}><Settings2 size={14}/> الطابق</button>{floorSettingsOpen&&<div className="floor-meta-popover"><div className="floor-meta-head"><strong>بيانات الطابق</strong><span>صفحة المصدر {activeFloor.sourcePage}</span></div><label><span>الاسم</span><input value={floorName} maxLength={100} onChange={e=>setFloorName(e.target.value)}/></label><div className="floor-meta-grid"><label><span>المنسوب م</span><input inputMode="decimal" value={floorElevation} onChange={e=>setFloorElevation(e.target.value)} placeholder="اختياري"/></label><label><span>الارتفاع م</span><input inputMode="decimal" value={floorHeight} onChange={e=>setFloorHeight(e.target.value)} placeholder="اختياري"/></label></div><button className="primary small" disabled={floorMetaBusy} onClick={()=>void saveFloorMetadata()}>{floorMetaBusy?<LoaderCircle className="spin" size={14}/>:<Check size={14}/>} حفظ بيانات الطابق</button><small>المنسوب والارتفاع محفوظان كأساس هندسي ولا يغيران الرسم ثنائي الأبعاد حاليًا.</small></div>}</div>}<button className="validate-chip export-chip" onClick={()=>setExportOpen(true)}><Download size={14}/> تصدير</button>{sourcePreview&&<label className="overlay-control"><span>الأصل</span><input type="range" min="0" max=".85" step=".05" value={sourceOpacity} onChange={e=>setSourceOpacity(Number(e.target.value))}/></label>}<button className="validate-chip" disabled={validationBusy} onClick={runValidation}>{validationBusy?<LoaderCircle className="spin" size={14}/>:<ShieldCheck size={14}/>} فحص</button>{(plan.source.pageCount??1)>1&&<div className="source-page-control"><span>PDF {plan.source.page}/{plan.source.pageCount}</span><input type="number" min="1" max={plan.source.pageCount??1} value={sourcePageInput} disabled={pageSwitchBusy||dirty} onChange={e=>setSourcePageInput(e.target.value)}/><button className="ghost" disabled={pageSwitchBusy||dirty||Number(sourcePageInput)===plan.source.page} onClick={()=>void reanalyzeSourcePage()}>{pageSwitchBusy?<LoaderCircle className="spin" size={13}/>:null} {project.floors?.some(item=>item.sourcePage===Number(sourcePageInput))?"فتح الصفحة":"تحليل الصفحة"}</button></div>}<div className="quality-pill">جودة التحليل {Math.round(plan.quality.overall*100)}%</div></div></div>
         {(project.floors?.length??0)>1&&<div className="floor-strip"><span>الطوابق المحللة</span><div>{project.floors!.map(item=><button key={item.id} className={item.id===project.activeFloorId?"active":""} disabled={pageSwitchBusy||dirty||item.id===project.activeFloorId} onClick={()=>void activateKnownFloor(item.id,item.sourcePage)}>{item.name}</button>)}</div></div>}
         {recoveredDraft&&<div className="recovered-draft"><div><strong>تمت استعادة مسودة تلقائية</strong><span>هذه التغييرات محفوظة سحابيًا لكنها ليست Revision رسمية بعد.</span></div><div><button className="ghost" disabled={saving} onClick={()=>void discardRecoveredDraft()}>تجاهل المسودة</button><button className="primary small" disabled={saving} onClick={save}><Save size={15}/> حفظ كنسخة</button></div></div>}
-        <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)||pageSwitchBusy} selectedWallId={selectedWall} onSelectWall={selectWall} selectedRoomId={selectedRoom} onSelectRoom={selectRoom} selectedOpeningId={selectedOpening} onSelectOpening={selectOpening} selectedDimensionId={selectedDimension} onSelectDimension={selectDimension} onPlanChange={applyLocalPlan} onPlanCommit={commitTransientPlan}
+        <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)||pageSwitchBusy} selectedWallId={selectedWall} onSelectWall={selectWall} selectedRoomId={selectedRoom} onSelectRoom={selectRoom} selectedOpeningId={selectedOpening} onSelectOpening={selectOpening} selectedDimensionId={selectedDimension} onSelectDimension={selectDimension} selectedSymbolId={selectedSymbol} onSelectSymbol={selectSymbol} onPlanChange={applyLocalPlan} onPlanCommit={commitTransientPlan}
           calibrationMode={calibrating} calibrationPoints={calibrationPoints}
           onCalibrationPoint={point=>setCalibrationPoints(points=>points.length<2?[...points,point]:points)}
           backgroundUrl={sourcePreview} backgroundOpacity={sourceOpacity} comparisonPlan={preview?plan:null} validationFindings={validationReport?.findings??[]} layers={layers} onAddWall={addManualWall}/>
@@ -712,7 +737,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
         {calibrating&&<div className="calibration-bar"><div><strong>معايرة المقياس</strong><span>{calibrationPoints.length<2?`حدد نقطتين على بُعد معروف · ${calibrationPoints.length}/2`:"أدخل المسافة الحقيقية بين النقطتين"}</span></div>{calibrationPoints.length===2&&<input inputMode="decimal" value={knownDistance} onChange={e=>setKnownDistance(e.target.value)} placeholder="مثال: 4.20 م"/>}<button className="ghost" onClick={()=>{setCalibrating(false);setCalibrationPoints([]);setKnownDistance("");setCalibrationDimensionId(null);}}>إلغاء</button>{calibrationPoints.length===2&&<button className="primary small" onClick={applyCalibration}><Check size={16}/> تثبيت</button>}</div>}
       </section>
       <aside className="ai-panel"><div className="ai-title"><div className="ai-avatar"><BrainCircuit size={22}/></div><div><strong>H Engineer</strong><span>يفهم الأثر قبل التنفيذ</span></div></div>
-        {reviewItems.length>0&&<div className="reading-review-card"><div className="reading-review-head"><div><strong>مراجعة القراءة</strong><span>{reviewItems.length} عنصر منخفض الثقة يحتاج نظرة سريعة</span></div><span className="review-count">{reviewItems.length}</span></div><div className="reading-review-list">{reviewItems.slice(0,6).map(item=><button type="button" key={item.key} className={`reading-review-item ${selectedReviewItem?.key===item.key?"active":""}`} onClick={()=>focusReviewItem(item)}><span>{item.label}</span><small>{provenanceLabel(item.provenance)} · {Math.round(item.confidence*100)}%</small></button>)}</div>{selectedReviewItem&&<div className="reading-review-actions"><button className="primary small" onClick={confirmSelectedReading}><Check size={15}/> تأكيد القراءة</button>{selectedReviewItem.kind==="opening"&&<button className="delete-opening compact" onClick={deleteOpening}><Trash2 size={14}/> حذف العنصر</button>}</div>}<small className="review-note">التأكيد يسجل مراجعتك البشرية دون تغيير درجة ثقة الاستخراج الأصلية، ويمكن التراجع عنه قبل الحفظ.</small></div>}
+        {reviewItems.length>0&&<div className="reading-review-card"><div className="reading-review-head"><div><strong>مراجعة القراءة</strong><span>{reviewItems.length} عنصر منخفض الثقة يحتاج نظرة سريعة</span></div><span className="review-count">{reviewItems.length}</span></div><div className="reading-review-list">{reviewItems.slice(0,6).map(item=><button type="button" key={item.key} className={`reading-review-item ${selectedReviewItem?.key===item.key?"active":""}`} onClick={()=>focusReviewItem(item)}><span>{item.label}</span><small>{provenanceLabel(item.provenance)} · {Math.round(item.confidence*100)}%</small></button>)}</div>{selectedReviewItem&&<div className="reading-review-actions"><button className="primary small" onClick={confirmSelectedReading}><Check size={15}/> تأكيد القراءة</button>{selectedReviewItem.kind==="opening"&&<button className="delete-opening compact" onClick={deleteOpening}><Trash2 size={14}/> حذف العنصر</button>}{selectedReviewItem.kind==="symbol"&&<button className="delete-opening compact" onClick={deleteSelectedSymbol}><Trash2 size={14}/> حذف الرمز</button>}</div>}<small className="review-note">التأكيد يسجل مراجعتك البشرية دون تغيير درجة ثقة الاستخراج الأصلية، ويمكن التراجع عنه قبل الحفظ.</small></div>}
         {validationReport&&<div className="validation-card"><div className="validation-summary"><div><strong>الفحص الهندسي الداخلي</strong><span>سلامة النموذج {Math.round(validationReport.score*100)}%</span></div><div className={`validation-score ${validationReport.findings.some(item=>item.severity==="critical")?"bad":validationReport.findings.length?"warn":"good"}`}>{Math.round(validationReport.score*100)}</div></div>{validationReport.findings.length?<div className="validation-findings">{validationReport.findings.slice(0,6).map((item,index)=><button type="button" key={`${item.code}-${index}`} className={`validation-finding ${item.severity} ${item.roomIds.length||(item.dimensionIds?.length??0)||(item.wallIds?.length??0)||(item.openingIds?.length??0)?"clickable":""}`} disabled={!(item.roomIds.length||(item.dimensionIds?.length??0)||(item.wallIds?.length??0)||(item.openingIds?.length??0))} onClick={()=>focusValidationFinding(item)}><span>{item.severity==="critical"?"!":"•"}</span><p>{item.text}</p></button>)}</div>:<div className="validation-clean"><Check size={16}/> لا توجد مشاكل هندسية واضحة في النموذج الحالي.</div>}<small>هذا فحص اتساق واستخدام داخلي، وليس اعتمادًا لكود البناء.</small></div>}
         <div className="topology-repair-card"><div><strong>إعادة بناء الفراغات</strong><span>بعد تصحيح أو رسم الجدران، أعد اشتقاق الغرف المغلقة من الشبكة الحالية مع معاينة قبل الاعتماد.</span></div><button className="ghost" disabled={thinking||Boolean(preview)||plan.walls.length<4} onClick={()=>void rebuildRoomsPreview()}>{thinking?<LoaderCircle className="spin" size={15}/>:<WandSparkles size={15}/>} إعادة بناء الغرف</button></div>
         {selectedWall&&plan.walls.find(wall=>wall.id===selectedWall)&&<div className="wall-editor"><div className="precise-title"><div><strong>تعديل الجدار</strong><span>{plan.metersPerPixel?`الطول ${(Math.hypot((plan.walls.find(w=>w.id===selectedWall)!.b.x-plan.walls.find(w=>w.id===selectedWall)!.a.x),(plan.walls.find(w=>w.id===selectedWall)!.b.y-plan.walls.find(w=>w.id===selectedWall)!.a.y))*plan.metersPerPixel).toFixed(2)} م`:"ثبّت المقياس لعرض القياسات الحقيقية"}</span></div><Ruler size={18}/></div><div className="wall-safety"><label><span>تصنيف الجدار</span><select value={plan.walls.find(w=>w.id===selectedWall)?.role??"unknown"} onChange={e=>updateSelectedWallRole(e.target.value as WallRole)}><option value="unknown">غير محدد</option><option value="interior">داخلي</option><option value="exterior">خارجي</option><option value="structural">إنشائي</option></select></label><button className={`ghost ${plan.walls.find(w=>w.id===selectedWall)?.locked?"wall-protected":""}`} onClick={toggleSelectedWallLock}>{plan.walls.find(w=>w.id===selectedWall)?.locked?"فك الحماية":"حماية الجدار"}</button>{plan.walls.find(w=>w.id===selectedWall)?.locked&&<span className="wall-protection-note">محمي من الحركة والتعديل التلقائي</span>}</div><label className="wall-thickness"><span>سماكة الجدار بالسنتيمتر</span><div><input inputMode="decimal" disabled={!plan.metersPerPixel||Boolean(plan.walls.find(w=>w.id===selectedWall)?.locked)} value={wallThicknessCm} onChange={e=>setWallThicknessCm(e.target.value)} placeholder={plan.metersPerPixel?"20.0":"ثبّت المقياس"}/><button className="ghost" disabled={!plan.metersPerPixel||!wallThicknessCm||Boolean(preview)||Boolean(plan.walls.find(w=>w.id===selectedWall)?.locked)} onClick={updateWallThickness}>تطبيق</button></div></label><div className="wall-move"><span>تحريك دقيق بالسنتيمتر</span><div><input inputMode="decimal" disabled={!plan.metersPerPixel||Boolean(plan.walls.find(w=>w.id===selectedWall)?.locked)} value={wallMoveCm} onChange={e=>setWallMoveCm(e.target.value)} placeholder="10"/><button className="ghost" disabled={!plan.metersPerPixel||!wallMoveCm||Boolean(preview)||Boolean(plan.walls.find(w=>w.id===selectedWall)?.locked)} onClick={()=>moveSelectedWallExact(-1)}>{(()=>{const w=plan.walls.find(item=>item.id===selectedWall);return w&&Math.abs(w.a.x-w.b.x)<=Math.abs(w.a.y-w.b.y)?"يسار":"أعلى";})()}</button><button className="ghost" disabled={!plan.metersPerPixel||!wallMoveCm||Boolean(preview)||Boolean(plan.walls.find(w=>w.id===selectedWall)?.locked)} onClick={()=>moveSelectedWallExact(1)}>{(()=>{const w=plan.walls.find(item=>item.id===selectedWall);return w&&Math.abs(w.a.x-w.b.x)<=Math.abs(w.a.y-w.b.y)?"يمين":"أسفل";})()}</button></div></div><div className="wall-opening-actions"><button className="ghost" disabled={!plan.metersPerPixel||Boolean(preview)||Boolean(plan.walls.find(w=>w.id===selectedWall)?.locked)} onClick={()=>resizeSelectedWallEndpoint("a","trim")}>قص A</button><button className="ghost" disabled={!plan.metersPerPixel||Boolean(preview)||Boolean(plan.walls.find(w=>w.id===selectedWall)?.locked)} onClick={()=>resizeSelectedWallEndpoint("b","trim")}>قص B</button><button className="ghost" disabled={!plan.metersPerPixel||Boolean(preview)||Boolean(plan.walls.find(w=>w.id===selectedWall)?.locked)} onClick={()=>resizeSelectedWallEndpoint("a","extend")}>تمديد A</button><button className="ghost" disabled={!plan.metersPerPixel||Boolean(preview)||Boolean(plan.walls.find(w=>w.id===selectedWall)?.locked)} onClick={()=>resizeSelectedWallEndpoint("b","extend")}>تمديد B</button><button className="ghost" disabled={Boolean(preview)||Boolean(plan.walls.find(w=>w.id===selectedWall)?.locked)} onClick={splitSelectedWallMidpoint}><Hammer size={16}/> تقسيم بالنصف</button><button className="ghost" disabled={Boolean(preview)||Boolean(plan.walls.find(w=>w.id===selectedWall)?.locked)} onClick={joinSelectedWall}><Layers3 size={16}/> دمج المتصل</button><button className="ghost" disabled={Boolean(preview)||Boolean(plan.walls.find(w=>w.id===selectedWall)?.locked)} onClick={()=>addOpening("door")}><DoorOpen size={16}/> إضافة باب</button><button className="ghost" disabled={Boolean(preview)||Boolean(plan.walls.find(w=>w.id===selectedWall)?.locked)} onClick={()=>addOpening("window")}><Square size={15}/> إضافة نافذة</button></div><button className="delete-opening compact" disabled={Boolean(preview)||Boolean(wallRemovalReason(plan,selectedWall))} title={wallRemovalReason(plan,selectedWall)??"حذف جدار غير مرتبط بالغرف أو الفتحات"} onClick={deleteSelectedWall}><Trash2 size={14}/> حذف الجدار</button></div>}
