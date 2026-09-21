@@ -29,6 +29,8 @@ def test_detects_door_gap_when_swing_leaf_is_visible():
     assert len(doors)==1
     assert doors[0]["kind"]=="door"
     assert doors[0]["doorSubtype"]=="single_swing"
+    assert doors[0]["doorSwingSide"]=="negative"
+    assert doors[0]["doorSwingDepthPx"]>30
     assert doors[0]["confidence"]>=0.76
 
 
@@ -213,3 +215,5 @@ def test_detects_double_swing_door_from_two_hinged_leaves():
     )
     assert len(doors)==1
     assert doors[0]["doorSubtype"]=="double_swing"
+    assert doors[0]["doorSwingSide"]=="negative"
+    assert doors[0]["doorSwingDepthPx"]>30
