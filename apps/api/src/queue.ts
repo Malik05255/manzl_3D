@@ -27,10 +27,14 @@ export async function consumeAnalysis(batch:MessageBatch<AnalyzeMessage>,env:Env
       const planError=floorPlanValidationError(rawPlan,job.projectId);
       if(planError) throw new Error(`ANALYZER_INVALID_PLAN:${planError}`);
       const plan=rawPlan as FloorPlanModel;
-      await persistPlan(env,job.projectId,plan,"التحليل السحابي الأولي");
+      await persistPlan(env,job.projectId,plan,job.sourcePage?`تحليل الصفحة ${job.sourcePage}`:"التحليل السحابي الأولي",job.expectedRevision);
       message.ack();
     }catch(error){
       const detail=error instanceof Error?error.message:"UNKNOWN_ANALYSIS_ERROR";
+      if(detail==="STALE_REVISION"){
+        message.ack();
+        continue;
+      }
       if(message.attempts<3){
         await setProgress(env,job.projectId,"queued","preprocess",12,"إعادة محاولة التحليل السحابي");
         message.retry({delaySeconds:Math.min(120,20*message.attempts)});
