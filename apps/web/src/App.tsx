@@ -1,6 +1,6 @@
 import { useEffect,useMemo,useRef,useState } from "react";
 import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Cloud,FileImage,FileText,Hammer,Layers3,LoaderCircle,Save,Sparkles,Undo2,UploadCloud,WandSparkles } from "lucide-react";
-import type { EditProposal,FloorPlanModel,ProjectView } from "@manzil/contracts";
+import type { EditProposal,FloorPlanModel,Point,ProjectView } from "@manzil/contracts";
 import { applyProposal,askEngineer,createProject,getProject,saveRevision,uploadSource } from "./api";
 import { PlanCanvas } from "./PlanCanvas";
 import { useAppUpdate } from "./useAppUpdate";
@@ -56,18 +56,36 @@ function Processing({projectId,onReady}:{projectId:string;onReady:(p:ProjectView
 
 function Editor({initialProject}:{initialProject:ProjectView}){
   const[project,setProject]=useState(initialProject);const[plan,setPlan]=useState<FloorPlanModel>(initialProject.plan!);const[savedPlan,setSavedPlan]=useState<FloorPlanModel>(initialProject.plan!);
-  const[selectedWall,setSelectedWall]=useState<string|null>(null);const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
+  const[selectedWall,setSelectedWall]=useState<string|null>(null);const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);\n  const[calibrating,setCalibrating]=useState(false);const[calibrationPoints,setCalibrationPoints]=useState<Point[]>([]);const[knownDistance,setKnownDistance]=useState("");
   const dirty=useMemo(()=>JSON.stringify(plan)!==JSON.stringify(savedPlan),[plan,savedPlan]);
   const ask=async()=>{if(!command.trim())return;setThinking(true);setNotice(null);setPreview(null);try{const r=await askEngineer(project.id,command.trim());setProposals(r.proposals);if(r.needsClarification)setNotice(r.needsClarification);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحليل الطلب");}finally{setThinking(false);}};
   const save=async()=>{setSaving(true);try{const u=await saveRevision(project.id,plan,"تعديل يدوي");setProject(u);setSavedPlan(plan);setNotice("تم حفظ التعديل في السحابة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر الحفظ");}finally{setSaving(false);}};
   const apply=async()=>{if(!preview)return;setSaving(true);try{const u=await applyProposal(project.id,{command,proposal:preview});if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);}setProject(u);setPreview(null);setProposals([]);setCommand("");setNotice("تم اعتماد التعديل وحفظ نسخة جديدة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر تطبيق التعديل");}finally{setSaving(false);}};
+  const applyCalibration=()=>{
+    if(calibrationPoints.length!==2)return;
+    const meters=Number(knownDistance.replace(",","."));
+    const [a,b]=calibrationPoints;
+    const pixels=Math.hypot(b.x-a.x,b.y-a.y);
+    if(!Number.isFinite(meters)||meters<=0||pixels<5){setNotice("أدخل المسافة الحقيقية بين النقطتين بالمتر.");return;}
+    const mpp=meters/pixels;
+    const rooms=plan.rooms.map(room=>{
+      let area=0;
+      for(let i=0;i<room.polygon.length;i++){const p=room.polygon[i],q=room.polygon[(i+1)%room.polygon.length];area+=p.x*q.y-q.x*p.y;}
+      return {...room,areaM2:Number((Math.abs(area)/2*mpp*mpp).toFixed(2))};
+    });
+    setPlan({...plan,metersPerPixel:mpp,calibrationConfidence:1,rooms,quality:{...plan.quality,needsCalibration:false,dimensions:Math.max(plan.quality.dimensions,.95),warnings:plan.quality.warnings.filter(w=>!w.includes("مقياس الرسم"))}});
+    setCalibrating(false);setCalibrationPoints([]);setKnownDistance("");setNotice("تم تثبيت المقياس. احفظ المشروع لتثبيت المعايرة.");
+  };
 
   return <main className="editor-page">
     <header className="editor-header"><Brand compact/><div className="project-name"><FileText size={17}/><strong>{project.name}</strong></div><div className="editor-actions"><button className="ghost" disabled={!dirty} onClick={()=>setPlan(savedPlan)}><Undo2 size={17}/> تراجع</button><button className="primary small" disabled={!dirty||saving} onClick={save}><Save size={17}/> حفظ</button></div></header>
     <div className="editor-workspace">
       <section className="plan-panel"><div className="panel-title"><div><strong>منطقة التعديل</strong><span>اسحب جدارًا لتحريكه أو استخدم H Engineer</span></div><div className="quality-pill">جودة التحليل {Math.round(plan.quality.overall*100)}%</div></div>
-        <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)} selectedWallId={selectedWall} onSelectWall={setSelectedWall} onPlanChange={setPlan}/>
-        {plan.quality.needsCalibration&&<div className="inline-warning">تعذر تثبيت المقياس بثقة كافية؛ بعض الأوامر التي تعتمد على المتر قد تطلب معايرة.</div>}
+        <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)} selectedWallId={selectedWall} onSelectWall={setSelectedWall} onPlanChange={setPlan}
+          calibrationMode={calibrating} calibrationPoints={calibrationPoints}
+          onCalibrationPoint={point=>setCalibrationPoints(points=>points.length<2?[...points,point]:points)}/>
+        {plan.quality.needsCalibration&&!calibrating&&<div className="inline-warning calibration-warning"><span>تعذر تثبيت المقياس تلقائيًا. ثبته مرة واحدة لتفعيل أوامر الأمتار بدقة.</span><button className="ghost" onClick={()=>{setCalibrating(true);setCalibrationPoints([]);}}>معايرة الآن</button></div>}
+        {calibrating&&<div className="calibration-bar"><div><strong>معايرة المقياس</strong><span>{calibrationPoints.length<2?`حدد نقطتين على بُعد معروف · ${calibrationPoints.length}/2`:"أدخل المسافة الحقيقية بين النقطتين"}</span></div>{calibrationPoints.length===2&&<input inputMode="decimal" value={knownDistance} onChange={e=>setKnownDistance(e.target.value)} placeholder="مثال: 4.20 م"/>}<button className="ghost" onClick={()=>{setCalibrating(false);setCalibrationPoints([]);setKnownDistance("");}}>إلغاء</button>{calibrationPoints.length===2&&<button className="primary small" onClick={applyCalibration}><Check size={16}/> تثبيت</button>}</div>}
       </section>
       <aside className="ai-panel"><div className="ai-title"><div className="ai-avatar"><BrainCircuit size={22}/></div><div><strong>H Engineer</strong><span>يفهم الأثر قبل التنفيذ</span></div></div>
         <div className="prompt-box"><textarea value={command} onChange={e=>setCommand(e.target.value)} placeholder="مثال: عدّل غرفة النوم إلى 5×5"/><button className="primary" disabled={thinking||!command.trim()} onClick={ask}>{thinking?<LoaderCircle className="spin" size={18}/>:<Sparkles size={18}/>} تحليل الطلب</button></div>
