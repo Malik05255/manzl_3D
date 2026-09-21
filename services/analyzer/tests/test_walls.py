@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.walls import _estimate_thickness,_merge_axis_lines,_merge_near_collinear_candidates,add_vector_wall_candidates,enrich_walls_with_vector,rasterize_wall_mask
+from app.walls import _collapse_parallel_wall_bands,_estimate_thickness,_merge_axis_lines,_merge_near_collinear_candidates,add_vector_wall_candidates,enrich_walls_with_vector,rasterize_wall_mask
 
 
 def test_estimates_filled_horizontal_wall_thickness():
@@ -271,3 +271,30 @@ def test_high_resolution_detector_rejects_short_thin_annotation_stroke():
         and abs(((wall["a"]["y"]+wall["b"]["y"])/2)-1900)<10
         for wall in walls
     )
+
+
+
+def test_collapses_duplicate_centerlines_inside_one_thick_wall_band():
+    ink=np.zeros((220,420),dtype=np.uint8)
+    cv2.rectangle(ink,(20,90),(400,110),255,-1)
+    collapsed=_collapse_parallel_wall_bands(ink,[
+        (20,92,400,92),
+        (20,100,400,100),
+        (20,108,400,108),
+    ])
+    assert len(collapsed)==1
+    assert 96<=collapsed[0][1]<=104
+    assert collapsed[0][0]<=20 and collapsed[0][2]>=400
+
+
+def test_parallel_wall_band_collapse_does_not_bridge_opening_gap():
+    ink=np.zeros((220,420),dtype=np.uint8)
+    cv2.rectangle(ink,(20,90),(150,110),255,-1)
+    cv2.rectangle(ink,(250,90),(400,110),255,-1)
+    collapsed=_collapse_parallel_wall_bands(ink,[
+        (20,96,150,96),
+        (20,104,150,104),
+        (250,96,400,96),
+        (250,104,400,104),
+    ])
+    assert len(collapsed)==2
