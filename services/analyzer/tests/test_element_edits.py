@@ -132,3 +132,24 @@ def test_incompatible_wall_direction_requires_clarification():
     ))
     assert not response.proposals
     assert response.needsClarification
+
+
+def test_low_confidence_opening_requires_confirmation():
+    plan=sample_plan()
+    plan.doors[0].confidence=.60
+    response=build_proposals(EditRequest(
+        project_id="p1",command="اجعل عرضه 1 متر",target_opening_id="door-1",plan=plan,
+    ))
+    assert not response.proposals
+    assert "منخفضة الثقة" in (response.needsClarification or "")
+
+
+def test_low_confidence_wall_requires_confirmation():
+    plan=sample_plan()
+    wall=next(item for item in plan.walls if item.id=="shared")
+    wall.confidence=.50
+    response=build_proposals(EditRequest(
+        project_id="p1",command="حركه يمين 20 سم",target_wall_id="shared",plan=plan,
+    ))
+    assert not response.proposals
+    assert "منخفضة الثقة" in (response.needsClarification or "")
