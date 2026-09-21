@@ -6,7 +6,7 @@ class Point(BaseModel):
     x: float
     y: float
 
-ElementProvenance = Literal["opencv","pdf-vector","ocr","pdf-text","manual","ai","mixed"]
+ElementProvenance = Literal["opencv","pdf-vector","ocr","cloud-ocr","pdf-text","manual","ai","mixed"]
 WallRole = Literal["unknown","interior","exterior","structural"]
 
 class Wall(BaseModel):
