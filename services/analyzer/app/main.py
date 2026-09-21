@@ -154,7 +154,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
             if vector_lines:
                 used_pdf_vector=True
             walls=enrich_walls_with_vector(walls,vector_lines)
-            walls=add_vector_wall_candidates(walls,vector_lines,h,w)
+            walls=add_vector_wall_candidates(walls,vector_lines,h,w,labels=labels)
         except Exception:
             vector_lines=[]
     dimensions=extract_dimension_evidence(labels,walls,w,h,ink=ink,vector_lines=vector_lines)
@@ -162,7 +162,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     doors=detect_doors(image,walls,scale)
     windows=detect_windows(image,walls,scale)
     walls,doors,windows=normalize_opening_hosts(walls,doors,windows)
-    room_barrier_mask=rasterize_wall_mask(walls,h,w,wall_mask)
+    room_barrier_mask=rasterize_wall_mask(walls,h,w,wall_mask,min_pdf_vector_confidence=.70)
 
     await progress(req.callback_url,req.project_id,"rooms",78,"فهم الغرف والعلاقات")
     rooms=detect_rooms(room_barrier_mask,labels,scale)
