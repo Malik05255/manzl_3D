@@ -378,3 +378,56 @@ def test_explicit_room_name_overrides_selected_room_context():
     preview=response.proposals[0].previewPlan
     hall=next(room for room in preview.rooms if room.id=="hall")
     assert round(room_width(hall,0.01),2)==3.0
+
+
+def test_resize_irregular_orthogonal_target_preserves_polygon_shape():
+    plan=sample_plan()
+    plan.rooms=[
+        Room(
+            id="bed",
+            name="غرفة النوم",
+            polygon=[
+                Point(x=100,y=100),Point(x=500,y=100),Point(x=500,y=300),
+                Point(x=300,y=300),Point(x=300,y=500),Point(x=100,y=500),
+            ],
+            confidence=.95,
+            areaM2=12,
+        ),
+        Room(
+            id="hall",
+            name="الصالة",
+            polygon=[Point(x=500,y=100),Point(x=900,y=100),Point(x=900,y=300),Point(x=500,y=300)],
+            confidence=.95,
+            areaM2=8,
+        ),
+    ]
+    plan.walls=[Wall(id="shared",a=Point(x=500,y=100),b=Point(x=500,y=300),thicknessPx=4,confidence=.9)]
+
+    response=build_proposals(EditRequest(
+        project_id="project-1",
+        command="عدل غرفة النوم إلى 5×4",
+        plan=plan,
+    ))
+    assert response.proposals
+    preview=response.proposals[0].previewPlan
+    bed=next(room for room in preview.rooms if room.id=="bed")
+    hall=next(room for room in preview.rooms if room.id=="hall")
+    assert len(bed.polygon)==6
+    assert max(point.x for point in bed.polygon)==600
+    assert any(point.x==300 and point.y==500 for point in bed.polygon)
+    assert round(bed.areaM2,2)==14.0
+    assert round(room_width(hall,0.01),2)==3.0
+
+
+def test_non_orthogonal_target_still_requires_manual_edit():
+    plan=sample_plan()
+    plan.rooms[0].polygon=[
+        Point(x=100,y=100),Point(x=500,y=100),Point(x=450,y=500),Point(x=100,y=500),
+    ]
+    response=build_proposals(EditRequest(
+        project_id="project-1",
+        command="عدل غرفة النوم إلى 5×4",
+        plan=plan,
+    ))
+    assert not response.proposals
+    assert "غير متعامد" in (response.needsClarification or "")
