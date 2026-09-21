@@ -58,3 +58,25 @@ def test_single_explicit_metric_dimension_is_allowed():
     )
     assert round(scale,4)==0.01
     assert confidence is not None and confidence>=0.55
+
+
+def test_explicit_centimeters_calibrate_in_meters():
+    scale,confidence=estimate_scale(
+        [label("l1","400 cm",250,90)],
+        [wall("w1",50,100,450,100)],
+        1000,
+        800,
+    )
+    assert round(scale,4)==0.01
+    assert confidence is not None and confidence>=0.55
+
+
+def test_explicit_millimeters_calibrate_in_meters():
+    scale,confidence=estimate_scale(
+        [label("l1","4000 mm",250,90)],
+        [wall("w1",50,100,450,100)],
+        1000,
+        800,
+    )
+    assert round(scale,4)==0.01
+    assert confidence is not None and confidence>=0.55
