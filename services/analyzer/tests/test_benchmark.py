@@ -73,3 +73,30 @@ def test_dimension_requires_consistent_metric_value():
     prediction["dimensions"][0]["valueM"]=5.0
     report=evaluate_floor_plan(prediction,truth)
     assert report["dimensions"]["f1"]==0.0
+
+
+
+def test_window_cannot_match_truth_door():
+    truth=base_plan()
+    prediction=base_plan()
+    prediction["doors"]=[]
+    prediction["windows"]=[{
+        "a":{"x":30,"y":0},
+        "b":{"x":60,"y":0},
+    }]
+    report=evaluate_floor_plan(prediction,truth)
+    assert report["doors"]["recall"]==0.0
+    assert report["windows"]["precision"]==0.0
+    assert report["openings"]["tp"]==0
+    assert report["openings"]["f1"]==0.0
+
+
+def test_opening_aggregate_preserves_class_aware_matches():
+    truth=base_plan()
+    truth["windows"]=[{"a":{"x":70,"y":0},"b":{"x":90,"y":0}}]
+    prediction=base_plan()
+    prediction["windows"]=[{"a":{"x":70,"y":0},"b":{"x":90,"y":0}}]
+    report=evaluate_floor_plan(prediction,truth)
+    assert report["doors"]["f1"]==1.0
+    assert report["windows"]["f1"]==1.0
+    assert report["openings"]["f1"]==1.0
