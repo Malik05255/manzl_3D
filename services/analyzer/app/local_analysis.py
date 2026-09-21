@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import os
 from datetime import datetime,timezone
 
 from .document import (
@@ -16,6 +18,7 @@ from .openings import detect_doors,detect_windows,normalize_opening_hosts
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
+from .symbols import extract_symbol_detections
 from .topology import classify_wall_roles,link_room_boundaries
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,rasterize_wall_mask
 
@@ -72,6 +75,13 @@ def analyze_document_bytes_local(
         if vector_lines:
             engines.append("pdf-vector")
 
+    symbols=[]
+    if os.getenv("SYMBOL_DETECTOR_URL","").strip():
+        try:
+            symbols=asyncio.run(extract_symbol_detections(image))
+        except Exception:
+            symbols=[]
+
     walls,wall_mask=detect_walls(ink)
     if vector_lines:
         walls=enrich_walls_with_vector(walls,vector_lines)
@@ -98,5 +108,5 @@ def analyze_document_bytes_local(
     return assemble_plan(
         image,project_id,filename,mime_type,labels,walls,rooms,scale,scale_confidence,
         source_page=page,source_page_count=page_count,doors=doors,windows=windows,
-        dimensions=dimensions,scale_warnings=scale_warnings,analysis=analysis,
+        dimensions=dimensions,symbols=symbols,scale_warnings=scale_warnings,analysis=analysis,
     )
