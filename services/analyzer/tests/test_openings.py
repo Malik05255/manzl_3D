@@ -111,3 +111,58 @@ def test_multiple_openings_merge_one_collinear_wall_chain():
     assert min(host["a"]["x"],host["b"]["x"])==0
     assert max(host["a"]["x"],host["b"]["x"])==400
     assert {item["wallId"] for item in doors}=={host["id"]}
+
+
+def test_detects_door_gap_on_slanted_wall():
+    image=np.full((420,520,3),255,dtype=np.uint8)
+    cv2.line(image,(80,100),(200,190),(0,0,0),5)
+    cv2.line(image,(260,235),(430,363),(0,0,0),5)
+    # Door leaf rotates away from the wall direction.
+    cv2.line(image,(200,190),(255,150),(0,0,0),4)
+
+    doors=detect_doors(
+        image,
+        [wall("left",80,100,200,190),wall("right",260,235,430,363)],
+        meters_per_pixel=.02,
+    )
+    assert len(doors)==1
+    assert doors[0]["kind"]=="door"
+    assert abs(doors[0]["a"]["x"]-200)<8
+    assert abs(doors[0]["b"]["x"]-260)<8
+
+
+def test_detects_window_gap_on_slanted_wall():
+    image=np.full((460,560,3),255,dtype=np.uint8)
+    cv2.line(image,(70,100),(190,190),(0,0,0),5)
+    cv2.line(image,(300,273),(470,400),(0,0,0),5)
+
+    # Two glazing strokes parallel to the host wall across the gap.
+    cv2.line(image,(195,184),(295,259),(0,0,0),3)
+    cv2.line(image,(188,195),(288,270),(0,0,0),3)
+
+    windows=detect_windows(
+        image,
+        [wall("left",70,100,190,190),wall("right",300,273,470,400)],
+        meters_per_pixel=.02,
+    )
+    assert len(windows)==1
+    assert windows[0]["kind"]=="window"
+
+
+def test_normalizes_slanted_opening_gap_into_single_host_wall():
+    walls=[
+        wall("left",80,100,200,190),
+        wall("right",260,235,430,363),
+    ]
+    doors=[{
+        "id":"door","kind":"door","wallId":"left",
+        "a":{"x":200.0,"y":190.0},
+        "b":{"x":260.0,"y":235.0},
+        "confidence":.9,
+    }]
+    normalized,doors,_=normalize_opening_hosts(walls,doors,[])
+    assert len(normalized)==1
+    assert doors[0]["wallId"]==normalized[0]["id"]
+    dx=normalized[0]["b"]["x"]-normalized[0]["a"]["x"]
+    dy=normalized[0]["b"]["y"]-normalized[0]["a"]["y"]
+    assert abs(dx)>200 and abs(dy)>140
