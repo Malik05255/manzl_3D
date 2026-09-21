@@ -148,5 +148,6 @@ jobs:
             benchmark-output/dataset-commit.txt
             benchmark-output/aec15/predictions/*.json
             benchmark-output/aec15/predictions/_canonical/*.json
+            benchmark-output/aec15/predictions/_debug/*.png
           if-no-files-found: warn
           retention-days: 30
