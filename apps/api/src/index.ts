@@ -18,6 +18,26 @@ async function app(request:Request,env:Env){
     return json({ok:true});
   }
 
+  const preview=url.pathname.match(/^\/internal\/preview\/([^/]+)$/);
+  if(preview&&request.method==="PUT"){
+    if(!internalAuthorized(request,env)) return json({error:"unauthorized"},401);
+    const projectId=decodeURIComponent(preview[1]);
+    const row=await getProjectRow(env,projectId);
+    if(!row) return json({error:"project not found"},404);
+    if(!request.body) return json({error:"preview body required"},400);
+    const contentType=request.headers.get("content-type")?.split(";")[0]??"image/webp";
+    if(!["image/webp","image/png","image/jpeg"].includes(contentType)) return json({error:"unsupported preview type"},415);
+    const key=`projects/${projectId}/preview.webp`;
+    const object=await env.ASSETS.put(key,request.body,{httpMetadata:{contentType}});
+    if(object.size>30*1024*1024){
+      await env.ASSETS.delete(key);
+      return json({error:"preview too large"},413);
+    }
+    await env.DB.prepare("UPDATE projects SET preview_key=?, updated_at=? WHERE id=?")
+      .bind(key,new Date().toISOString(),projectId).run();
+    return json({ok:true,size:object.size});
+  }
+
   const source=url.pathname.match(/^\/internal\/source\/([^/]+)$/);
   if(source&&request.method==="GET"){
     if(!internalAuthorized(request,env)) return json({error:"unauthorized"},401);
