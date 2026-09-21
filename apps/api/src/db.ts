@@ -1,8 +1,27 @@
-import type { FloorPlanModel, ProjectView } from "@manzil/contracts";
-import type { Env, ProjectRow } from "./types";
+import type { FloorPlanModel, ProjectFloorView, ProjectView } from "@manzil/contracts";
+import type { Env, FloorRow, ProjectRow } from "./types";
 
 export async function getProjectRow(env:Env,id:string):Promise<ProjectRow|null>{
   return env.DB.prepare("SELECT * FROM projects WHERE id = ?").bind(id).first<ProjectRow>();
+}
+
+export function floorIdForPage(projectId:string,sourcePage:number){
+  return `${projectId}:page:${sourcePage}`;
+}
+
+export async function getProjectFloors(env:Env,id:string):Promise<ProjectFloorView[]>{
+  const result=await env.DB.prepare("SELECT * FROM project_floors WHERE project_id=? ORDER BY source_page ASC")
+    .bind(id).all<FloorRow>();
+  return (result.results??[]).map(item=>({
+    id:item.id,
+    sourcePage:item.source_page,
+    name:item.name,
+    latestRevision:item.latest_revision,
+    previewAvailable:Boolean(item.preview_key),
+    elevationM:item.elevation_m,
+    heightM:item.height_m,
+    updatedAt:item.updated_at,
+  }));
 }
 
 export async function projectView(env:Env,row:ProjectRow,includePlan=true):Promise<ProjectView>{
@@ -12,9 +31,11 @@ export async function projectView(env:Env,row:ProjectRow,includePlan=true):Promi
     const object=await env.ASSETS.get(activePlanKey);
     if(object) plan=await object.json<FloorPlanModel>();
   }
+  const floors=await getProjectFloors(env,row.id);
   return {
     id:row.id,name:row.name,status:row.status as ProjectView["status"],phase:row.phase as ProjectView["phase"],
-    progress:row.progress,revision:row.revision,hasDraft:Boolean(row.draft_key),message:row.message,error:row.error,createdAt:row.created_at,updatedAt:row.updated_at,plan
+    progress:row.progress,revision:row.revision,hasDraft:Boolean(row.draft_key),activeFloorId:row.active_floor_id,
+    floors,message:row.message,error:row.error,createdAt:row.created_at,updatedAt:row.updated_at,plan
   };
 }
 
@@ -31,7 +52,7 @@ export async function setAnalysisProgress(env:Env,id:string,sourceKey:string,exp
   return (result.meta.changes??0)>0;
 }
 
-export async function persistPlan(env:Env,id:string,plan:FloorPlanModel,summary:string,expectedRevision?:number,expectedSourceKey?:string){
+export async function persistPlan(env:Env,id:string,plan:FloorPlanModel,summary:string,expectedRevision?:number,expectedSourceKey?:string,previewKeyOverride?:string|null){
   const row=await getProjectRow(env,id);
   if(!row) throw new Error("PROJECT_NOT_FOUND");
   if(expectedRevision!==undefined&&row.revision!==expectedRevision) throw new Error("STALE_REVISION");
@@ -40,6 +61,8 @@ export async function persistPlan(env:Env,id:string,plan:FloorPlanModel,summary:
   const baseRevision=row.revision;
   const revision=baseRevision+1;
   const revisionId=crypto.randomUUID();
+  const floorId=floorIdForPage(id,plan.source.page);
+  const effectivePreviewKey=previewKeyOverride===undefined?row.preview_key:previewKeyOverride;
   const key=`projects/${id}/revisions/${String(revision).padStart(5,"0")}-${revisionId}.json`;
   await env.ASSETS.put(key,JSON.stringify(plan),{httpMetadata:{contentType:"application/json"}});
   const now=new Date().toISOString();
@@ -48,14 +71,23 @@ export async function persistPlan(env:Env,id:string,plan:FloorPlanModel,summary:
 
   try{
     const results=await env.DB.batch([
-      env.DB.prepare(`INSERT INTO revisions(id,project_id,revision,summary,plan_key,created_at)
-        SELECT ?,?,?,?,?,?
+      env.DB.prepare(`INSERT INTO revisions(id,project_id,revision,summary,plan_key,source_page,preview_key,floor_id,created_at)
+        SELECT ?,?,?,?,?,?,?,?,?
         WHERE EXISTS (SELECT 1 FROM projects WHERE id=? AND revision=?${sourceGuard})`)
-        .bind(revisionId,id,revision,summary,key,now,...projectGuardArgs),
-      env.DB.prepare(`UPDATE projects SET plan_key=?, draft_key=NULL, revision=?, status='ready', phase='ready', progress=100, message=?, error=NULL, updated_at=? WHERE id=? AND revision=?${sourceGuard}`)
-        .bind(key,revision,"المشروع جاهز للتعديل",now,...projectGuardArgs),
+        .bind(revisionId,id,revision,summary,key,plan.source.page,effectivePreviewKey,floorId,now,...projectGuardArgs),
+      env.DB.prepare(`UPDATE projects SET plan_key=?, preview_key=?, active_floor_id=?, draft_key=NULL, revision=?, status='ready', phase='ready', progress=100, message=?, error=NULL, updated_at=? WHERE id=? AND revision=?${sourceGuard}`)
+        .bind(key,effectivePreviewKey,floorId,revision,"المشروع جاهز للتعديل",now,...projectGuardArgs),
+      env.DB.prepare(`INSERT INTO project_floors(id,project_id,source_page,name,plan_key,preview_key,latest_revision,created_at,updated_at)
+        SELECT ?,?,?,?,?,?,?,?,?
+        WHERE EXISTS (SELECT 1 FROM projects WHERE id=? AND revision=? AND active_floor_id=? AND plan_key=?)
+        ON CONFLICT(project_id,source_page) DO UPDATE SET
+          plan_key=excluded.plan_key,
+          preview_key=excluded.preview_key,
+          latest_revision=excluded.latest_revision,
+          updated_at=excluded.updated_at`)
+        .bind(floorId,id,plan.source.page,`الصفحة ${plan.source.page}`,key,effectivePreviewKey,revision,now,now,id,revision,floorId,key),
     ]);
-    if((results[0]?.meta.changes??0)<1||(results[1]?.meta.changes??0)<1){
+    if((results[0]?.meta.changes??0)<1||(results[1]?.meta.changes??0)<1||(results[2]?.meta.changes??0)<1){
       throw new Error(expectedSourceKey!==undefined?"STALE_SOURCE_OR_REVISION":"STALE_REVISION");
     }
   }catch(error){
@@ -73,6 +105,8 @@ export async function persistDraft(env:Env,id:string,plan:FloorPlanModel,expecte
   if(!row) throw new Error("PROJECT_NOT_FOUND");
   if(row.revision!==expectedRevision) throw new Error("STALE_DRAFT");
   if(["queued","analyzing"].includes(row.status)) throw new Error("ANALYSIS_IN_PROGRESS");
+  const expectedFloorId=floorIdForPage(id,plan.source.page);
+  if(row.active_floor_id&&row.active_floor_id!==expectedFloorId) throw new Error("STALE_FLOOR");
 
   const key=`projects/${id}/draft/current-r${expectedRevision}.json`;
   await env.ASSETS.put(key,JSON.stringify(plan),{httpMetadata:{contentType:"application/json"}});
