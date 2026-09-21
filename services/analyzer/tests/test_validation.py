@@ -189,3 +189,43 @@ def test_incomplete_room_boundary_emits_warning():
     finding=next(item for item in report.findings if item.code=="room_boundary_incomplete" and "a" in item.roomIds)
     assert finding.severity=="warning"
     assert finding.roomIds==["a"]
+
+
+def test_source_dimension_mismatch_is_warning():
+    from app.models import Dimension
+    plan=base_plan()
+    plan.dimensions=[Dimension(
+        id="dimension-1",
+        text="5.00 m",
+        center=Point(x=300,y=80),
+        valueM=5.0,
+        unit="m",
+        orientation="horizontal",
+        referenceWallId="top",
+        confidence=.95,
+        provenance="pdf-text",
+    )]
+    report=validate_plan(plan)
+    finding=next(item for item in report.findings if item.code=="source_dimension_mismatch")
+    assert finding.severity=="warning"
+    assert finding.wallIds==["top"]
+
+
+def test_matching_source_dimension_does_not_warn():
+    from app.models import Dimension
+    plan=base_plan()
+    wall=next(item for item in plan.walls if item.id=="top")
+    expected=((wall.b.x-wall.a.x)**2+(wall.b.y-wall.a.y)**2)**0.5*plan.metersPerPixel
+    plan.dimensions=[Dimension(
+        id="dimension-1",
+        text=f"{expected:.2f} m",
+        center=Point(x=300,y=80),
+        valueM=expected,
+        unit="m",
+        orientation="horizontal",
+        referenceWallId="top",
+        confidence=.95,
+        provenance="pdf-text",
+    )]
+    report=validate_plan(plan)
+    assert not any(item.code=="source_dimension_mismatch" for item in report.findings)
