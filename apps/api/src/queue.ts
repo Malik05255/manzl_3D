@@ -18,7 +18,8 @@ export async function consumeAnalysis(batch:MessageBatch<AnalyzeMessage>,env:Env
           filename:job.fileName,
           mime_type:job.mimeType,
           callback_url:`${apiBase}/internal/progress`,
-          preview_url:`${apiBase}/internal/preview/${encodeURIComponent(job.projectId)}`
+          preview_url:`${apiBase}/internal/preview/${encodeURIComponent(job.projectId)}`,
+          source_page:job.sourcePage??null
         })
       });
       if(!response.ok) throw new Error((await response.text().catch(()=>""))||`ANALYZER_${response.status}`);
