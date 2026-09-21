@@ -41,7 +41,6 @@ async function app(request:Request,env:Env){
     const current=await getProjectRow(env,projectId);
     if(!current) return json({error:"project not found"},404);
     if(current.source_key!==identity.sourceKey||current.revision!==identity.revision) return json({error:"stale analysis callback"},409);
-    const previousPreviewKey=current.preview_key;
     if(!request.body) return json({error:"preview body required"},400);
     const contentType=request.headers.get("content-type")?.split(";")[0]??"image/webp";
     if(!["image/webp","image/png","image/jpeg"].includes(contentType)) return json({error:"unsupported preview type"},415);
@@ -57,7 +56,6 @@ async function app(request:Request,env:Env){
       await env.ASSETS.delete(key).catch(()=>undefined);
       return json({error:"stale analysis callback"},409);
     }
-    if(previousPreviewKey&&previousPreviewKey!==key) await env.ASSETS.delete(previousPreviewKey).catch(()=>undefined);
     return json({ok:true,size:object.size});
   }
 
