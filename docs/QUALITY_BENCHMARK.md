@@ -116,3 +116,31 @@ SYMBOL_MIN_CONFIDENCE=0.78
 The decoder accepts common YOLOv8/YOLO11 outputs (`4 + class_count`) and YOLOv5-style outputs (`5 + class_count`, including objectness), applies letterboxing, maps boxes back to original page coordinates, applies NMS, then passes the result through the same canonical class/box validation used by the HTTP detector. If local ONNX returns no accepted detections, the configured HTTP detector remains available as fallback.
 
 Weights are deliberately not stored in this repository. Use only a model and training data whose licence permits your intended deployment.
+
+
+## Internal benchmark semantics
+
+The internal `app.benchmark` report is class-aware for doors, windows and
+architectural symbols. Its `macroF1` is an **active-category macro**: a category
+is included only when either prediction or ground truth contains at least one
+item in that category. Empty-on-both-sides categories do not contribute an
+artificial F1 of 1.0. The report exposes the included names in
+`macroCategories`.
+
+Door and window matches are scored separately before producing the aggregate
+`openings` metric, so a window can never satisfy a ground-truth door merely
+because the segments overlap. Symbol boxes are likewise matched only within the
+same fixture class at IoU 0.50.
+
+## AEC diagnostic artifacts
+
+Each licensed AEC workflow run retains, per selected sheet:
+
+- the official AEC prediction JSON,
+- the full Manzil H canonical extraction under `predictions/_canonical/`,
+- a source-space visual overlay under `predictions/_debug/`,
+- aggregate and per-class metrics,
+- per-sheet official metrics.
+
+The canonical JSON and overlay are diagnostic artifacts only; they do not alter
+the official scoring input.
