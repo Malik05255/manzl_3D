@@ -1,4 +1,4 @@
-import type { ElementProvenance,FloorPlanModel } from "@manzil/contracts";
+import type { ElementProvenance,FloorPlanModel,Point } from "@manzil/contracts";
 
 function manualProvenance(value?:ElementProvenance):ElementProvenance{
   return value?"mixed":"manual";
@@ -75,15 +75,11 @@ export function correctDimensionValue(plan:FloorPlanModel,dimensionId:string,val
   };
 }
 
-export function calibratePlanFromDimension(plan:FloorPlanModel,dimensionId:string):FloorPlanModel|null{
-  const dimension=(plan.dimensions??[]).find(item=>item.id===dimensionId);
-  if(!dimension?.reviewed||!dimension.valueM||!dimension.referenceWallId)return null;
-  const wall=plan.walls.find(item=>item.id===dimension.referenceWallId);
-  if(!wall)return null;
-
-  const pixels=Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y);
-  if(pixels<5)return null;
-  const metersPerPixel=dimension.valueM/pixels;
+export function calibratePlanFromSpan(plan:FloorPlanModel,valueM:number,a:Point,b:Point):FloorPlanModel|null{
+  if(!Number.isFinite(valueM)||valueM<=0||valueM>1000)return null;
+  const pixels=Math.hypot(b.x-a.x,b.y-a.y);
+  if(!Number.isFinite(pixels)||pixels<5)return null;
+  const metersPerPixel=valueM/pixels;
   if(!Number.isFinite(metersPerPixel)||metersPerPixel<=0||metersPerPixel>10)return null;
 
   const rooms=plan.rooms.map(room=>({
@@ -96,11 +92,6 @@ export function calibratePlanFromDimension(plan:FloorPlanModel,dimensionId:strin
     metersPerPixel,
     calibrationConfidence:1,
     rooms,
-    dimensions:(plan.dimensions??[]).map(item=>item.id===dimensionId?{
-      ...item,
-      reviewed:true,
-      provenance:manualProvenance(item.provenance),
-    }:item),
     quality:{
       ...plan.quality,
       needsCalibration:false,
@@ -108,4 +99,10 @@ export function calibratePlanFromDimension(plan:FloorPlanModel,dimensionId:strin
       warnings:plan.quality.warnings.filter(item=>!item.includes("مقياس")&&!item.includes("معاير")),
     },
   };
+}
+
+export function calibratePlanFromDimensionSpan(plan:FloorPlanModel,dimensionId:string,a:Point,b:Point):FloorPlanModel|null{
+  const dimension=(plan.dimensions??[]).find(item=>item.id===dimensionId);
+  if(!dimension?.reviewed||!dimension.valueM)return null;
+  return calibratePlanFromSpan(plan,dimension.valueM,a,b);
 }
