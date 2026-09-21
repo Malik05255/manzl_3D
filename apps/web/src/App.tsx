@@ -5,7 +5,7 @@ import { ApiError,activateFloor,applyProposal,askEngineer,clearProjectDraft,crea
 import type { KnownProject } from "./api";
 import { DEFAULT_PLAN_LAYERS,PlanCanvas,moveWallAndTopology } from "./PlanCanvas";
 import type { PlanLayerVisibility } from "./PlanCanvas";
-import { calibratePlanFromSpan,correctDimensionValue,dimensionWallCandidates,linkDimensionToWall } from "./dimensionGeometry";
+import { calibratePlanFromDimensionSpan,calibratePlanFromSpan,correctDimensionValue,dimensionWallCandidates,linkDimensionToWall } from "./dimensionGeometry";
 import { exportPlanJson,exportPlanPng,exportPlanSvg } from "./exportPlan";
 import { parsePlanBackup } from "./planBackup";
 import { addOpeningToWall,changeOpeningKind,findOpening,openingMetrics,positionOpening,removeOpening,resizeOpening } from "./openingGeometry";
@@ -144,7 +144,7 @@ function Processing({projectId,onReady,onHome}:{projectId:string;onReady:(p:Proj
 function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>void}){
   const[project,setProject]=useState(initialProject);const[plan,setPlan]=useState<FloorPlanModel>(initialProject.plan!);const[savedPlan,setSavedPlan]=useState<FloorPlanModel>(initialProject.plan!);const[undoStack,setUndoStack]=useState<FloorPlanModel[]>([]);const[redoStack,setRedoStack]=useState<FloorPlanModel[]>([]);
   const[selectedWall,setSelectedWall]=useState<string|null>(null);const[wallThicknessCm,setWallThicknessCm]=useState("");const[wallMoveCm,setWallMoveCm]=useState("10");const[selectedRoom,setSelectedRoom]=useState<string|null>(null);const[selectedOpening,setSelectedOpening]=useState<string|null>(null);const[selectedDimension,setSelectedDimension]=useState<string|null>(null);const[dimensionValue,setDimensionValue]=useState("");const[openingWidth,setOpeningWidth]=useState("");const[openingPosition,setOpeningPosition]=useState(50);const[exactName,setExactName]=useState("");const[exactWidth,setExactWidth]=useState("");const[exactHeight,setExactHeight]=useState("");const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
-  const[calibrating,setCalibrating]=useState(false);const[calibrationPoints,setCalibrationPoints]=useState<Point[]>([]);const[knownDistance,setKnownDistance]=useState("");
+  const[calibrating,setCalibrating]=useState(false);const[calibrationPoints,setCalibrationPoints]=useState<Point[]>([]);const[knownDistance,setKnownDistance]=useState("");const[calibrationDimensionId,setCalibrationDimensionId]=useState<string|null>(null);
   const[sourcePreview,setSourcePreview]=useState<string|null>(null);const[sourceOpacity,setSourceOpacity]=useState(.42);const[sourcePreviewNonce,setSourcePreviewNonce]=useState(0);const[sourcePageInput,setSourcePageInput]=useState(String(initialProject.plan?.source.page??1));const[pageSwitchBusy,setPageSwitchBusy]=useState(false);
   const[layerOpen,setLayerOpen]=useState(false);const[layers,setLayers]=useState<PlanLayerVisibility>({...DEFAULT_PLAN_LAYERS});
   const[floorSettingsOpen,setFloorSettingsOpen]=useState(false);const[floorName,setFloorName]=useState("");const[floorElevation,setFloorElevation]=useState("");const[floorHeight,setFloorHeight]=useState("");const[floorMetaBusy,setFloorMetaBusy]=useState(false);
@@ -439,6 +439,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     if(!dimension.valueM){setNotice("صحح قيمة البعد بالمتر أولًا.");return;}
     setKnownDistance(dimension.valueM.toFixed(3).replace(/0+$/,"").replace(/\.$/,""));
     setCalibrationPoints([]);
+    setCalibrationDimensionId(dimension.id);
     setCalibrating(true);
     setNotice("حدد طرفي خط البعد نفسه على المخطط. لن نفترض أن القيمة تخص طول الجدار كاملًا.");
   };
@@ -598,10 +599,13 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     if(calibrationPoints.length!==2)return;
     const meters=Number(knownDistance.replace(",","."));
     const [a,b]=calibrationPoints;
-    const next=calibratePlanFromSpan(plan,meters,a,b);
+    const next=calibrationDimensionId
+      ?calibratePlanFromDimensionSpan(plan,calibrationDimensionId,a,b)
+      :calibratePlanFromSpan(plan,meters,a,b);
     if(!next){setNotice("تعذر تثبيت المقياس. تحقق من المسافة الحقيقية ومن النقطتين المحددتين.");return;}
     applyLocalPlan(next);
-    setCalibrating(false);setCalibrationPoints([]);setKnownDistance("");setNotice("تم تثبيت المقياس من المسافة المحددة. احفظ المشروع لتثبيت المعايرة.");
+    setCalibrating(false);setCalibrationPoints([]);setKnownDistance("");setCalibrationDimensionId(null);
+    setNotice(calibrationDimensionId?"تم تثبيت المقياس وحفظ طرفي البعد المؤكد كدليل هندسي. احفظ المشروع لتثبيت المعايرة.":"تم تثبيت المقياس من المسافة المحددة. احفظ المشروع لتثبيت المعايرة.");
   };
   const discardRecoveredDraft=async()=>{
     setSaving(true);++draftGeneration.current;setNotice(null);
@@ -636,8 +640,8 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
           calibrationMode={calibrating} calibrationPoints={calibrationPoints}
           onCalibrationPoint={point=>setCalibrationPoints(points=>points.length<2?[...points,point]:points)}
           backgroundUrl={sourcePreview} backgroundOpacity={sourceOpacity} comparisonPlan={preview?plan:null} validationFindings={validationReport?.findings??[]} layers={layers} onAddWall={addManualWall}/>
-        {plan.quality.needsCalibration&&!calibrating&&<div className="inline-warning calibration-warning"><span>تعذر تثبيت المقياس تلقائيًا. ثبته مرة واحدة لتفعيل أوامر الأمتار بدقة.</span><button className="ghost" onClick={()=>{setCalibrating(true);setCalibrationPoints([]);}}>معايرة الآن</button></div>}
-        {calibrating&&<div className="calibration-bar"><div><strong>معايرة المقياس</strong><span>{calibrationPoints.length<2?`حدد نقطتين على بُعد معروف · ${calibrationPoints.length}/2`:"أدخل المسافة الحقيقية بين النقطتين"}</span></div>{calibrationPoints.length===2&&<input inputMode="decimal" value={knownDistance} onChange={e=>setKnownDistance(e.target.value)} placeholder="مثال: 4.20 م"/>}<button className="ghost" onClick={()=>{setCalibrating(false);setCalibrationPoints([]);setKnownDistance("");}}>إلغاء</button>{calibrationPoints.length===2&&<button className="primary small" onClick={applyCalibration}><Check size={16}/> تثبيت</button>}</div>}
+        {plan.quality.needsCalibration&&!calibrating&&<div className="inline-warning calibration-warning"><span>تعذر تثبيت المقياس تلقائيًا. ثبته مرة واحدة لتفعيل أوامر الأمتار بدقة.</span><button className="ghost" onClick={()=>{setCalibrationDimensionId(null);setKnownDistance("");setCalibrating(true);setCalibrationPoints([]);}}>معايرة الآن</button></div>}
+        {calibrating&&<div className="calibration-bar"><div><strong>معايرة المقياس</strong><span>{calibrationPoints.length<2?`حدد نقطتين على بُعد معروف · ${calibrationPoints.length}/2`:"أدخل المسافة الحقيقية بين النقطتين"}</span></div>{calibrationPoints.length===2&&<input inputMode="decimal" value={knownDistance} onChange={e=>setKnownDistance(e.target.value)} placeholder="مثال: 4.20 م"/>}<button className="ghost" onClick={()=>{setCalibrating(false);setCalibrationPoints([]);setKnownDistance("");setCalibrationDimensionId(null);}}>إلغاء</button>{calibrationPoints.length===2&&<button className="primary small" onClick={applyCalibration}><Check size={16}/> تثبيت</button>}</div>}
       </section>
       <aside className="ai-panel"><div className="ai-title"><div className="ai-avatar"><BrainCircuit size={22}/></div><div><strong>H Engineer</strong><span>يفهم الأثر قبل التنفيذ</span></div></div>
         {reviewItems.length>0&&<div className="reading-review-card"><div className="reading-review-head"><div><strong>مراجعة القراءة</strong><span>{reviewItems.length} عنصر منخفض الثقة يحتاج نظرة سريعة</span></div><span className="review-count">{reviewItems.length}</span></div><div className="reading-review-list">{reviewItems.slice(0,6).map(item=><button type="button" key={item.key} className={`reading-review-item ${selectedReviewItem?.key===item.key?"active":""}`} onClick={()=>focusReviewItem(item)}><span>{item.label}</span><small>{provenanceLabel(item.provenance)} · {Math.round(item.confidence*100)}%</small></button>)}</div>{selectedReviewItem&&<div className="reading-review-actions"><button className="primary small" onClick={confirmSelectedReading}><Check size={15}/> تأكيد القراءة</button>{selectedReviewItem.kind==="opening"&&<button className="delete-opening compact" onClick={deleteOpening}><Trash2 size={14}/> حذف العنصر</button>}</div>}<small className="review-note">التأكيد يسجل مراجعتك البشرية دون تغيير درجة ثقة الاستخراج الأصلية، ويمكن التراجع عنه قبل الحفظ.</small></div>}
