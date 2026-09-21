@@ -43,6 +43,29 @@ def set_rect(room:Room,box:tuple[float,float,float,float],mpp:float)->None:
         point.x=x; point.y=y
     room.areaM2=round(max(0,x2-x1)*max(0,y2-y1)*(mpp**2),2)
 
+def _polygon_area_px2(room:Room)->float:
+    if len(room.polygon)<3:
+        return 0.0
+    total=0.0
+    for index,point in enumerate(room.polygon):
+        other=room.polygon[(index+1)%len(room.polygon)]
+        total+=point.x*other.y-other.x*point.y
+    return abs(total)/2.0
+
+def move_room_boundary(room:Room,axis:str,old:float,new:float,tol:float,mpp:float)->bool:
+    moved=0
+    for point in room.polygon:
+        if axis=="x" and abs(point.x-old)<=tol:
+            point.x=new
+            moved+=1
+        elif axis=="y" and abs(point.y-old)<=tol:
+            point.y=new
+            moved+=1
+    if moved<2:
+        return False
+    room.areaM2=round(_polygon_area_px2(room)*(mpp**2),2)
+    return True
+
 def overlap(a1:float,a2:float,b1:float,b2:float)->float:
     return max(0.0,min(a2,b2)-max(a1,b1))
 
@@ -124,8 +147,8 @@ def apply_side(plan:FloorPlan,target:Room,side:str,delta_px:float,mpp:float)->tu
             return False,[],[]
         set_rect(target,(tx1,ty1,new,ty2),mpp)
         for room in neighbors:
-            nx1,ny1,nx2,ny2=bbox(room)
-            set_rect(room,(new,ny1,nx2,ny2),mpp)
+            if not move_room_boundary(room,"x",tx2,new,tol,mpp):
+                return False,[],[]
         moved=move_boundary(plan,side,tx2,new,(ty1,ty2),tol)
     elif side=="left":
         new=tx1-delta_px
@@ -133,8 +156,8 @@ def apply_side(plan:FloorPlan,target:Room,side:str,delta_px:float,mpp:float)->tu
             return False,[],[]
         set_rect(target,(new,ty1,tx2,ty2),mpp)
         for room in neighbors:
-            nx1,ny1,nx2,ny2=bbox(room)
-            set_rect(room,(nx1,ny1,new,ny2),mpp)
+            if not move_room_boundary(room,"x",tx1,new,tol,mpp):
+                return False,[],[]
         moved=move_boundary(plan,side,tx1,new,(ty1,ty2),tol)
     elif side=="bottom":
         new=ty2+delta_px
@@ -142,8 +165,8 @@ def apply_side(plan:FloorPlan,target:Room,side:str,delta_px:float,mpp:float)->tu
             return False,[],[]
         set_rect(target,(tx1,ty1,tx2,new),mpp)
         for room in neighbors:
-            nx1,ny1,nx2,ny2=bbox(room)
-            set_rect(room,(nx1,new,nx2,ny2),mpp)
+            if not move_room_boundary(room,"y",ty2,new,tol,mpp):
+                return False,[],[]
         moved=move_boundary(plan,side,ty2,new,(tx1,tx2),tol)
     else:
         new=ty1-delta_px
@@ -151,8 +174,8 @@ def apply_side(plan:FloorPlan,target:Room,side:str,delta_px:float,mpp:float)->tu
             return False,[],[]
         set_rect(target,(tx1,new,tx2,ty2),mpp)
         for room in neighbors:
-            nx1,ny1,nx2,ny2=bbox(room)
-            set_rect(room,(nx1,ny1,nx2,new),mpp)
+            if not move_room_boundary(room,"y",ty1,new,tol,mpp):
+                return False,[],[]
         moved=move_boundary(plan,side,ty1,new,(tx1,tx2),tol)
 
     amount=abs(delta_px*mpp)
