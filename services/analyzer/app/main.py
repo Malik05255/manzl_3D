@@ -10,6 +10,7 @@ from pydantic import BaseModel,HttpUrl
 from .cloud_ocr import extract_cloud_ocr_labels
 from .commands import find_target_room,parse_target_size
 from .document import decode_document_with_page,extract_pdf_text_lines,extract_pdf_vector_lines,pdf_page_count,preprocess
+from .dimensions import extract_dimension_evidence
 from .edits import build_proposals,build_resize_proposals
 from .models import CanonicalizeRequest,EditRequest,FloorPlan,ProposalResponse,ResizeRequest,ValidationReport,ValidationRequest
 from .ocr import _merge_labels,classify_text,extract_ocr_labels
@@ -144,6 +145,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
             walls=add_vector_wall_candidates(walls,vector_lines,h,w)
         except Exception:
             vector_lines=[]
+    dimensions=extract_dimension_evidence(labels,walls,w,h)
     scale,scale_confidence,scale_warnings=estimate_scale_with_diagnostics(labels,walls,w,h)
     doors=detect_doors(image,walls,scale)
     windows=detect_windows(image,walls,scale)
@@ -169,7 +171,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     result=assemble_plan(
         image,req.project_id,req.filename,req.mime_type,labels,walls,rooms,scale,scale_confidence,
         source_page=source_page,source_page_count=source_page_count,doors=doors,windows=windows,
-        scale_warnings=scale_warnings,analysis=analysis,
+        dimensions=dimensions,scale_warnings=scale_warnings,analysis=analysis,
     )
     return FloorPlan.model_validate(result)
 
