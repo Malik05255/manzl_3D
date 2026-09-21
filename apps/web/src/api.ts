@@ -88,6 +88,7 @@ export const askEngineer=(id:string,command:string)=>request<EditProposalRespons
 export const resizeRoomPrecisely=(id:string,roomId:string,widthM:number,heightM:number)=>request<EditProposalResponse>(`/v1/projects/${id}/geometry/resize-proposals`,{method:"POST",body:JSON.stringify({roomId,widthM,heightM})});
 export const validateProject=(id:string,plan:FloorPlanModel)=>request<ValidationReport>(`/v1/projects/${id}/validate`,{method:"POST",body:JSON.stringify({plan})});
 export const applyProposal=(id:string,payload:ApplyProposalRequest)=>request<ProjectView>(`/v1/projects/${id}/ai/apply`,{method:"POST",body:JSON.stringify(payload)});
+export const saveDraft=(id:string,plan:FloorPlanModel)=>request<ProjectView>(`/v1/projects/${id}/draft`,{method:"PUT",body:JSON.stringify({plan})});
 export function saveRevision(id:string,plan:FloorPlanModel,summary:string){
   const payload:SaveRevisionRequest={plan,summary};
   return request<ProjectView>(`/v1/projects/${id}/revisions`,{method:"POST",body:JSON.stringify(payload)});
