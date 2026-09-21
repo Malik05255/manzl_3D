@@ -329,24 +329,38 @@ def _parallel_window_evidence(
     gap_end=max(ax*ux+ay*uy,bx*ux+by*uy)
     nx=-uy
     ny=ux
+    wall_offset=(ax+bx)/2*nx+(ay+by)/2*ny
+    max_normal_distance=max(8.0,gap_px*.18)
     offsets=[]
     for x1,y1,x2,y2 in _hough_segments(roi,gap_px):
-        dx=float(x2-x1)
-        dy=float(y2-y1)
+        gx1=float(offset_x+x1); gy1=float(offset_y+y1)
+        gx2=float(offset_x+x2); gy2=float(offset_y+y2)
+        dx=gx2-gx1
+        dy=gy2-gy1
         length=math.hypot(dx,dy)
         if length<gap_px*0.42:
             continue
         angle=math.degrees(math.atan2(dy,dx))%180.0
         if _angle_delta_degrees(angle,wall_angle_deg)>8:
             continue
-        mx=offset_x+(x1+x2)/2
-        my=offset_y+(y1+y2)/2
-        projection=mx*ux+my*uy
-        # Evidence must actually cross the opening gap. Host-wall continuations
-        # outside the gap are not window glazing.
-        if projection<gap_start-gap_px*.08 or projection>gap_end+gap_px*.08:
+
+        first=gx1*ux+gy1*uy
+        second=gx2*ux+gy2*uy
+        line_start=min(first,second)
+        line_end=max(first,second)
+        shared=max(0.0,min(line_end,gap_end)-max(line_start,gap_start))
+        # Real glazing traverses a meaningful portion of the actual opening.
+        # A nearby annotation underline whose midpoint happens to land inside
+        # the gap should not become a window.
+        if shared<gap_length*.48:
             continue
-        offsets.append(mx*nx+my*ny)
+
+        mx=(gx1+gx2)/2
+        my=(gy1+gy2)/2
+        normal_offset=mx*nx+my*ny
+        if abs(normal_offset-wall_offset)>max_normal_distance:
+            continue
+        offsets.append(normal_offset)
 
     if not offsets:
         return 0
