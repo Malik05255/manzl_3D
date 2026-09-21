@@ -620,8 +620,10 @@ def _candidate_near_dimension_label(
         return False
     nx=-uy
     ny=ux
-    thickness=max(2.0,float(candidate.get("thicknessPx",4.0)))
-    normal_tolerance=max(18.0,min(48.0,min_side*.055,thickness*5.0))
+    # Dimension text is commonly offset well beyond the stroke thickness.
+    # Thin-line evidence is checked separately before quarantine, so do not
+    # shrink this text-to-line band merely because the line itself is thin.
+    normal_tolerance=max(18.0,min(48.0,min_side*.055))
     axial_margin=max(14.0,min(length*.18,min_side*.04))
 
     for label in labels:
