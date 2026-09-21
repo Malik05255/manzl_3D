@@ -4,8 +4,8 @@ export type AnalysisPhase = "created" | "upload" | "preprocess" | "ocr" | "geome
 export interface Point { x: number; y: number; }
 export type ElementProvenance = "opencv" | "pdf-vector" | "ocr" | "pdf-text" | "manual" | "ai" | "mixed";
 export type WallRole = "unknown" | "interior" | "exterior" | "structural";
-export interface Wall { id: string; a: Point; b: Point; thicknessPx: number; confidence: number; role?: WallRole; locked?: boolean; reviewed?: boolean; provenance?: ElementProvenance; }
-export interface Room { id: string; name: string; polygon: Point[]; confidence: number; areaM2?: number | null; boundaryWallIds?: string[]; reviewed?: boolean; provenance?: ElementProvenance; }
+export interface Wall { id: string; a: Point; b: Point; thicknessPx: number; confidence: number; heightM?: number | null; role?: WallRole; locked?: boolean; reviewed?: boolean; provenance?: ElementProvenance; }
+export interface Room { id: string; name: string; polygon: Point[]; confidence: number; areaM2?: number | null; ceilingHeightM?: number | null; boundaryWallIds?: string[]; reviewed?: boolean; provenance?: ElementProvenance; }
 export interface Opening {
   id: string;
   kind: "door" | "window";
@@ -13,6 +13,8 @@ export interface Opening {
   a: Point;
   b: Point;
   confidence: number;
+  heightM?: number | null;
+  sillHeightM?: number | null;
   reviewed?: boolean;
   provenance?: ElementProvenance;
 }
@@ -138,6 +140,7 @@ function fpWall(value:unknown):value is Wall{
     &&fpPoint(value.a)&&fpPoint(value.b)
     &&fpFinite(value.thicknessPx)&&value.thicknessPx>0&&value.thicknessPx<=200
     &&fpConfidence(value.confidence)
+    &&(value.heightM===undefined||value.heightM===null||(fpFinite(value.heightM)&&value.heightM>=0.5&&value.heightM<=20))
     &&(value.role===undefined||["unknown","interior","exterior","structural"].includes(String(value.role)))
     &&(value.locked===undefined||typeof value.locked==="boolean")
     &&fpElementMetadata(value);
@@ -150,6 +153,7 @@ function fpRoom(value:unknown):value is Room{
     &&value.polygon.every(fpPoint)
     &&fpConfidence(value.confidence)
     &&(value.areaM2===undefined||value.areaM2===null||(fpFinite(value.areaM2)&&value.areaM2>=0&&value.areaM2<=100000))
+    &&(value.ceilingHeightM===undefined||value.ceilingHeightM===null||(fpFinite(value.ceilingHeightM)&&value.ceilingHeightM>=0.5&&value.ceilingHeightM<=20))
     &&(value.boundaryWallIds===undefined||(Array.isArray(value.boundaryWallIds)&&value.boundaryWallIds.length<=500&&value.boundaryWallIds.every(item=>typeof item==="string"&&item.length>0&&item.length<=200)&&new Set(value.boundaryWallIds).size===value.boundaryWallIds.length))
     &&fpElementMetadata(value);
 }
@@ -160,6 +164,8 @@ function fpOpening(value:unknown):value is Opening{
     &&(value.wallId===undefined||value.wallId===null||typeof value.wallId==="string")
     &&fpPoint(value.a)&&fpPoint(value.b)
     &&fpConfidence(value.confidence)
+    &&(value.heightM===undefined||value.heightM===null||(fpFinite(value.heightM)&&value.heightM>=0.2&&value.heightM<=10))
+    &&(value.sillHeightM===undefined||value.sillHeightM===null||(fpFinite(value.sillHeightM)&&value.sillHeightM>=0&&value.sillHeightM<=10))
     &&fpElementMetadata(value);
 }
 function fpLabel(value:unknown):value is PlanLabel{
