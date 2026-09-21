@@ -27,6 +27,19 @@ export interface PlanLabel {
   reviewed?: boolean;
   provenance?: ElementProvenance;
 }
+export interface Dimension {
+  id: string;
+  sourceLabelId?: string | null;
+  text: string;
+  center: Point;
+  valueM?: number | null;
+  unit: "m" | "cm" | "mm" | "unknown";
+  orientation: "horizontal" | "vertical" | "unknown";
+  referenceWallId?: string | null;
+  confidence: number;
+  reviewed?: boolean;
+  provenance?: ElementProvenance;
+}
 export interface AnalysisMetadata {
   pipelineVersion: string;
   analyzedAt: string;
@@ -54,6 +67,7 @@ export interface FloorPlanModel {
   doors: Opening[];
   windows: Opening[];
   labels: PlanLabel[];
+  dimensions?: Dimension[];
   quality: FloorPlanQuality;
   source: { fileName: string; mimeType: string; page: number; pageCount?: number | null; };
   analysis?: AnalysisMetadata;
@@ -184,6 +198,19 @@ function fpLabel(value:unknown):value is PlanLabel{
     &&["room_name","dimension","note","unknown"].includes(String(value.kind))
     &&fpElementMetadata(value);
 }
+function fpDimension(value:unknown):value is Dimension{
+  return fpObject(value)
+    &&typeof value.id==="string"&&value.id.length>0
+    &&(value.sourceLabelId===undefined||value.sourceLabelId===null||typeof value.sourceLabelId==="string")
+    &&typeof value.text==="string"&&value.text.length<=500
+    &&fpPoint(value.center)
+    &&(value.valueM===undefined||value.valueM===null||(fpFinite(value.valueM)&&value.valueM>0&&value.valueM<=1000))
+    &&["m","cm","mm","unknown"].includes(String(value.unit))
+    &&["horizontal","vertical","unknown"].includes(String(value.orientation))
+    &&(value.referenceWallId===undefined||value.referenceWallId===null||typeof value.referenceWallId==="string")
+    &&fpConfidence(value.confidence)
+    &&fpElementMetadata(value);
+}
 
 export function floorPlanValidationError(value:unknown,expectedId?:string):string|null{
   if(!fpObject(value)||value.schemaVersion!==1)return "PLAN_SCHEMA";
@@ -198,6 +225,7 @@ export function floorPlanValidationError(value:unknown,expectedId?:string):strin
   if(!Array.isArray(value.doors)||value.doors.length>5000||!value.doors.every(fpOpening))return "PLAN_DOORS";
   if(!Array.isArray(value.windows)||value.windows.length>5000||!value.windows.every(fpOpening))return "PLAN_WINDOWS";
   if(!Array.isArray(value.labels)||value.labels.length>10000||!value.labels.every(fpLabel))return "PLAN_LABELS";
+  if(value.dimensions!==undefined&&(!Array.isArray(value.dimensions)||value.dimensions.length>10000||!value.dimensions.every(fpDimension)))return "PLAN_DIMENSIONS";
 
   if(!fpObject(value.quality))return "PLAN_QUALITY";
   const quality=value.quality;
@@ -219,6 +247,7 @@ export function floorPlanValidationError(value:unknown,expectedId?:string):strin
     ...value.rooms.map(item=>(item as Room).id),
     ...value.doors.map(item=>(item as Opening).id),
     ...value.windows.map(item=>(item as Opening).id),
+    ...(value.dimensions??[]).map(item=>(item as Dimension).id),
   ];
   if(new Set(ids).size!==ids.length)return "PLAN_DUPLICATE_IDS";
 
@@ -228,6 +257,9 @@ export function floorPlanValidationError(value:unknown,expectedId?:string):strin
   }
   for(const opening of [...value.doors,...value.windows] as Opening[]){
     if(opening.wallId&& !wallIds.has(opening.wallId))return "PLAN_OPENING_WALL";
+  }
+  for(const dimension of (value.dimensions??[]) as Dimension[]){
+    if(dimension.referenceWallId&& !wallIds.has(dimension.referenceWallId))return "PLAN_DIMENSION_WALL";
   }
   return null;
 }
