@@ -137,3 +137,40 @@ def enrich_walls_with_vector(walls:list[dict],vector_lines:list[dict])->list[dic
         else:
             result.append(wall)
     return result
+
+
+def rasterize_wall_mask(walls:list[dict],height:int,width:int,base_mask:np.ndarray|None=None)->np.ndarray:
+    """Build a room-separation barrier from canonical wall centerlines.
+
+    This intentionally draws host walls continuously across doors/windows:
+    openings remain semantic objects, while room extraction needs a closed
+    boundary to keep adjacent spaces separate.
+    """
+    if base_mask is None:
+        mask=np.zeros((height,width),dtype=np.uint8)
+    else:
+        if base_mask.shape[:2]!=(height,width):
+            raise ValueError("WALL_MASK_SHAPE")
+        mask=base_mask.copy()
+
+    for wall in walls:
+        try:
+            x1=int(round(float(wall["a"]["x"])))
+            y1=int(round(float(wall["a"]["y"])))
+            x2=int(round(float(wall["b"]["x"])))
+            y2=int(round(float(wall["b"]["y"])))
+            thickness=float(wall.get("thicknessPx",4.0))
+        except (KeyError,TypeError,ValueError):
+            continue
+        if math.hypot(x2-x1,y2-y1)<2:
+            continue
+        line_width=max(2,min(64,int(round(thickness))))
+        cv2.line(mask,(x1,y1),(x2,y2),255,line_width,lineType=cv2.LINE_8)
+
+    if walls:
+        join=max(3,min(15,int(round(np.median([
+            max(2.0,float(wall.get("thicknessPx",4.0)))
+            for wall in walls
+        ])))))
+        mask=cv2.morphologyEx(mask,cv2.MORPH_CLOSE,np.ones((join,join),np.uint8))
+    return mask
