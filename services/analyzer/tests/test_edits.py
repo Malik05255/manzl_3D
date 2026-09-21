@@ -1,5 +1,5 @@
 from app.commands import find_target_room,parse_target_size,resolve_target_size
-from app.edits import build_proposals
+from app.edits import build_proposals,build_resize_proposals
 from app.models import EditRequest,FloorPlan,Point,Quality,Room,Source,Wall
 
 
@@ -160,3 +160,13 @@ def test_bedroom_neighbor_is_not_shrunk_to_unusable_strip():
     response=build_proposals(request)
     assert not response.proposals
     assert "لا توجد مساحة" in (response.needsClarification or "")
+
+
+def test_direct_resize_uses_exact_room_id():
+    plan=sample_plan()
+    target=next(room for room in plan.rooms if room.id=="bed")
+    response=build_resize_proposals(plan,target,5.0,4.0,"تعديل دقيق")
+    assert response.proposals
+    preview=response.proposals[0].previewPlan
+    bed=next(room for room in preview.rooms if room.id=="bed")
+    assert round(room_width(bed,0.01),2)==5.0

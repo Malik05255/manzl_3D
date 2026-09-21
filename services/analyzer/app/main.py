@@ -6,8 +6,8 @@ from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,HttpUrl
 from .commands import find_target_room,parse_target_size
 from .document import decode_document_with_page,preprocess
-from .edits import build_proposals
-from .models import EditRequest,FloorPlan,ProposalResponse
+from .edits import build_proposals,build_resize_proposals
+from .models import EditRequest,FloorPlan,ProposalResponse,ResizeRequest
 from .ocr import extract_ocr_labels
 from .openings import detect_doors
 from .pipeline import assemble_plan
@@ -105,3 +105,13 @@ async def proposals(req:EditRequest,x_manzil_internal:str|None=Header(default=No
     result=build_proposals(normalized_request)
     result.command=req.command
     return result
+
+
+@app.post("/v1/edit/resize-proposals",response_model=ProposalResponse)
+async def resize_proposals(req:ResizeRequest,x_manzil_internal:str|None=Header(default=None)):
+    authorize(x_manzil_internal)
+    target=next((room for room in req.plan.rooms if room.id==req.room_id),None)
+    if target is None:
+        return ProposalResponse(command="تعديل دقيق",proposals=[],needsClarification="الغرفة المحددة لم تعد موجودة في المخطط.")
+    command=f"عدل {target.name} إلى {req.width_m:g}×{req.height_m:g}"
+    return build_resize_proposals(req.plan,target,req.width_m,req.height_m,command)

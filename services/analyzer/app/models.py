@@ -69,6 +69,13 @@ class EditRequest(BaseModel):
     command: str
     plan: FloorPlan
 
+class ResizeRequest(BaseModel):
+    project_id: str
+    room_id: str
+    width_m: float = Field(gt=0.5, le=50)
+    height_m: float = Field(gt=0.5, le=50)
+    plan: FloorPlan
+
 class Impact(BaseModel):
     kind: Literal["room_resize", "wall_move", "door_move", "warning", "info"]
     text: str
