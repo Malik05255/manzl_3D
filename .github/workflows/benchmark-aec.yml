@@ -100,6 +100,41 @@ jobs:
             cat benchmark-output/aec15/score.txt >> "$GITHUB_STEP_SUMMARY"
             echo '~~~' >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ -f benchmark-output/aec15/report.json ]; then
+            python - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          report=json.loads(Path("benchmark-output/aec15/report.json").read_text(encoding="utf-8"))
+          target=Path(os.environ["GITHUB_STEP_SUMMARY"])
+          with target.open("a",encoding="utf-8") as out:
+              classes=report.get("classes",{})
+              if classes:
+                  out.write("\n### Object classes\n\n")
+                  out.write("| Class | TP | FP | FN | P | R | F1 |\n")
+                  out.write("|---|---:|---:|---:|---:|---:|---:|\n")
+                  for name,item in classes.items():
+                      out.write(
+                          f"| {name} | {item.get('tp',0)} | {item.get('fp',0)} | "
+                          f"{item.get('fn',0)} | {item.get('precision',0):.3f} | "
+                          f"{item.get('recall',0):.3f} | {item.get('f1',0):.3f} |\n"
+                      )
+
+              sheets=report.get("sheets",{})
+              if sheets:
+                  out.write("\n### Per-sheet diagnostics\n\n")
+                  out.write("| Sheet | Objects F1 | Wall F1 | Area px F1 | Area inst F1 | Macro F1 |\n")
+                  out.write("|---|---:|---:|---:|---:|---:|\n")
+                  for name,item in sheets.items():
+                      out.write(
+                          f"| {name} | {item.get('objectMicro',{}).get('f1',0):.3f} | "
+                          f"{item.get('wallPixel',{}).get('f1',0):.3f} | "
+                          f"{item.get('areaPixel',{}).get('f1',0):.3f} | "
+                          f"{item.get('areaInstance',{}).get('f1',0):.3f} | "
+                          f"{item.get('macroF1',0):.3f} |\n"
+                      )
+          PY
+          fi
 
       - name: Upload benchmark artifacts
         if: always()
