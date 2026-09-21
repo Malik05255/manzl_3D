@@ -70,6 +70,10 @@ jobs:
           Path("benchmark-output/symbol-model-info.json").write_text(
               json.dumps(info,indent=2),encoding="utf-8"
           )
+          with Path(os.environ["GITHUB_ENV"]).open("a",encoding="utf-8") as env:
+              env.write("SYMBOL_ONNX_MODEL=/tmp/floorcad-symbols.onnx\n")
+              env.write("SYMBOL_ONNX_CLASSES="+json.dumps(classes,separators=(",",":"))+"\n")
+              env.write("SYMBOL_MIN_CONFIDENCE=0.55\n")
           print(json.dumps(info,indent=2))
           PY
 
@@ -77,9 +81,6 @@ jobs:
         working-directory: services/analyzer
         env:
           PYTHONPATH: .
-          SYMBOL_ONNX_MODEL: /tmp/floorcad-symbols.onnx
-          SYMBOL_ONNX_CLASSES: '["wall","window","bay_window","blind_window","single_door","double_door","sliding_door","opening_symbol","railing","stair","elevator","escalator","bath","bath_tub","toilet","squat_toilet","urinal","sink","gas_stove","refrigerator","washing_machine","bed","bedside_cupboard","sofa","chair","table","wardrobe","tv_cabinet","half_height_cabinet","high_cabinet","parking","class_31","class_32","class_34","class_35"]'
-          SYMBOL_MIN_CONFIDENCE: "0.55"
         run: |
           python - <<'PY'
           import cv2, numpy as np
@@ -96,9 +97,6 @@ jobs:
         working-directory: services/analyzer
         env:
           PYTHONPATH: .
-          SYMBOL_ONNX_MODEL: /tmp/floorcad-symbols.onnx
-          SYMBOL_ONNX_CLASSES: '["wall","window","bay_window","blind_window","single_door","double_door","sliding_door","opening_symbol","railing","stair","elevator","escalator","bath","bath_tub","toilet","squat_toilet","urinal","sink","gas_stove","refrigerator","washing_machine","bed","bedside_cupboard","sofa","chair","table","wardrobe","tv_cabinet","half_height_cabinet","high_cabinet","parking","class_31","class_32","class_34","class_35"]'
-          SYMBOL_MIN_CONFIDENCE: "0.55"
         run: |
           mkdir -p ../../benchmark-output/aec15
           set -o pipefail
