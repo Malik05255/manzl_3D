@@ -9,13 +9,13 @@ from .cloud_ocr import extract_cloud_ocr_labels
 from .commands import find_target_room,parse_target_size
 from .document import decode_document_with_page,extract_pdf_text_lines,extract_pdf_vector_lines,pdf_page_count,preprocess
 from .edits import build_proposals,build_resize_proposals
-from .models import EditRequest,FloorPlan,ProposalResponse,ResizeRequest,ValidationReport,ValidationRequest
+from .models import CanonicalizeRequest,EditRequest,FloorPlan,ProposalResponse,ResizeRequest,ValidationReport,ValidationRequest
 from .ocr import _merge_labels,classify_text,extract_ocr_labels
 from .openings import detect_doors,detect_windows,normalize_opening_hosts
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
-from .topology import classify_wall_roles,link_room_boundaries
+from .topology import canonicalize_plan,classify_wall_roles,link_room_boundaries
 from .semantic import normalize_edit_semantics
 from .walls import detect_walls,enrich_walls_with_vector
 from .validation import validate_plan
@@ -173,3 +173,9 @@ async def resize_proposals(req:ResizeRequest,x_manzil_internal:str|None=Header(d
 async def validate(req:ValidationRequest,x_manzil_internal:str|None=Header(default=None)):
     authorize(x_manzil_internal)
     return validate_plan(req.plan)
+
+
+@app.post("/v1/canonicalize",response_model=FloorPlan)
+async def canonicalize(req:CanonicalizeRequest,x_manzil_internal:str|None=Header(default=None)):
+    authorize(x_manzil_internal)
+    return canonicalize_plan(req.plan)
