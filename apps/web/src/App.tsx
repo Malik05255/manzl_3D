@@ -30,7 +30,8 @@ function provenanceLabel(value?:ElementProvenance){
   const labels:Record<ElementProvenance,string>={
     "opencv":"OpenCV",
     "pdf-vector":"PDF متجهي",
-    "ocr":"OCR",
+    "ocr":"OCR محلي",
+    "cloud-ocr":"OCR سحابي",
     "pdf-text":"نص PDF",
     "manual":"يدوي",
     "ai":"H Engineer",
