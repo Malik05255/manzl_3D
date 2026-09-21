@@ -7,18 +7,43 @@ on:
         description: "Number of released AEC sheets to evaluate (1-15)"
         required: true
         default: "15"
+        type: string
+      dataset_repository:
+        description: "Repository containing the licensed AEC-Geometric-Bench dataset"
+        required: true
+        default: "KamaiEnterprises/aec-geometric-bench"
+        type: string
+      dataset_ref:
+        description: "Dataset git ref"
+        required: true
+        default: "main"
+        type: string
+      license_confirmed:
+        description: "I confirm this benchmark run is permitted by the dataset licence"
+        required: true
+        default: false
+        type: boolean
 
 jobs:
   benchmark:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
+      - name: Check dataset licence confirmation
+        run: |
+          if [ "${{ inputs.license_confirmed }}" != "true" ]; then
+            echo "Dataset licence confirmation is required."
+            exit 1
+          fi
+
       - name: Checkout Manzil H
         uses: actions/checkout@v4
 
       - name: Checkout AEC-Geometric-Bench
         uses: actions/checkout@v4
         with:
-          repository: KamaiEnterprises/aec-geometric-bench
+          repository: ${{ inputs.dataset_repository }}
+          ref: ${{ inputs.dataset_ref }}
           path: external/aec-geometric-bench
 
       - uses: actions/setup-python@v5
@@ -34,14 +59,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r services/analyzer/requirements.txt shapely
 
-      - name: Run Manzil H on released construction drawings
-        working-directory: services/analyzer
-        env:
-          SYMBOL_DETECTOR_URL: ${{ secrets.SYMBOL_DETECTOR_URL }}
-          SYMBOL_DETECTOR_TOKEN: ${{ secrets.SYMBOL_DETECTOR_TOKEN }}
-          SYMBOL_MIN_CONFIDENCE: "0.78"
+      - name: Validate limit and record source revisions
         run: |
-          set -o pipefail
           LIMIT="${{ inputs.limit }}"
           case "$LIMIT" in
             ''|*[!0-9]*) echo "limit must be an integer from 1 to 15"; exit 2 ;;
@@ -50,31 +69,48 @@ jobs:
             echo "limit must be from 1 to 15"
             exit 2
           fi
-          mkdir -p ../../benchmark-output/aec15
+          mkdir -p benchmark-output/aec15
+          git rev-parse HEAD > benchmark-output/manzil-commit.txt
+          git -C external/aec-geometric-bench rev-parse HEAD > benchmark-output/dataset-commit.txt
+
+      - name: Run Manzil H on released construction drawings
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+          SYMBOL_DETECTOR_URL: ${{ secrets.SYMBOL_DETECTOR_URL }}
+          SYMBOL_DETECTOR_TOKEN: ${{ secrets.SYMBOL_DETECTOR_TOKEN }}
+          SYMBOL_MIN_CONFIDENCE: "0.78"
+        run: |
+          set -o pipefail
           PYTHONPATH=. python -m app.aec_benchmark \
             --dataset ../../external/aec-geometric-bench/dataset \
-            --output ../../benchmark-output/aec15 \
-            --limit "$LIMIT" \
+            --output ../../benchmark-output/aec15/predictions \
+            --limit "${{ inputs.limit }}" \
             --scorer ../../external/aec-geometric-bench/scoring/score.py \
-            | tee ../../benchmark-output/aec15-score.txt
+            --report-json ../../benchmark-output/aec15/report.json \
+            | tee ../../benchmark-output/aec15/score.txt
 
       - name: Publish score in workflow summary
         if: always()
         run: |
-          if [ -f benchmark-output/aec15-score.txt ]; then
+          if [ -f benchmark-output/aec15/score.txt ]; then
             echo "## Manzil H — AEC-Geometric-Bench" >> "$GITHUB_STEP_SUMMARY"
             echo >> "$GITHUB_STEP_SUMMARY"
-            echo '```text' >> "$GITHUB_STEP_SUMMARY"
-            cat benchmark-output/aec15-score.txt >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo '~~~text' >> "$GITHUB_STEP_SUMMARY"
+            cat benchmark-output/aec15/score.txt >> "$GITHUB_STEP_SUMMARY"
+            echo '~~~' >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload benchmark artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: manzil-aec15-benchmark
+          name: manzil-aec15-${{ github.sha }}
           path: |
-            benchmark-output/aec15
-            benchmark-output/aec15-score.txt
+            benchmark-output/aec15/score.txt
+            benchmark-output/aec15/report.json
+            benchmark-output/manzil-commit.txt
+            benchmark-output/dataset-commit.txt
+            benchmark-output/aec15/predictions/*.json
           if-no-files-found: warn
+          retention-days: 30
