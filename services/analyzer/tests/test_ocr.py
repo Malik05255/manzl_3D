@@ -1,4 +1,4 @@
-from app.ocr import _merge_labels,classify_text,order_line_words
+from app.ocr import _merge_labels,_restore_rotated_labels,classify_text,order_line_words
 
 
 def test_arabic_line_is_ordered_right_to_left():
@@ -41,3 +41,34 @@ def test_dimension_pass_replaces_lower_confidence_duplicate():
     merged=_merge_labels(primary,secondary,12)
     assert len(merged)==1
     assert merged[0]["confidence"]==0.91
+
+
+def test_dimension_classification_supports_cm_and_mm():
+    assert classify_text("420 cm")=="dimension"
+    assert classify_text("420 سم")=="dimension"
+    assert classify_text("4200 mm")=="dimension"
+    assert classify_text("4200 مم")=="dimension"
+
+
+def test_clockwise_ocr_coordinates_restore_to_original_image():
+    labels=[{
+        "id":"rotated",
+        "text":"4.20 m",
+        "center":{"x":79.0,"y":30.0},
+        "confidence":0.9,
+        "kind":"dimension",
+    }]
+    restored=_restore_rotated_labels(labels,original_h=100,original_w=200,direction="cw")
+    assert restored[0]["center"]=={"x":30.0,"y":20.0}
+
+
+def test_counterclockwise_ocr_coordinates_restore_to_original_image():
+    labels=[{
+        "id":"rotated",
+        "text":"4.20 m",
+        "center":{"x":20.0,"y":169.0},
+        "confidence":0.9,
+        "kind":"dimension",
+    }]
+    restored=_restore_rotated_labels(labels,original_h=100,original_w=200,direction="ccw")
+    assert restored[0]["center"]=={"x":30.0,"y":20.0}
