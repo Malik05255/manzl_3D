@@ -60,12 +60,38 @@ def _plan_likeness_score(image:np.ndarray)->float:
             if dx>=dy*5 or dy>=dx*5:
                 long_lines+=1
 
-    # Plans usually contain many long orthogonal segments but do not fill the page with ink.
+    # A real plan can also have wings, ramps or site geometry at arbitrary angles.
+    # Count only materially long strokes here so text-heavy notes do not score like plans.
+    edges=cv2.Canny(gray,55,155)
+    general=cv2.HoughLinesP(
+        edges,
+        1,
+        np.pi/180,
+        threshold=max(24,min(h,w)//24),
+        minLineLength=max(42,min(h,w)//8),
+        maxLineGap=max(6,min(h,w)//90),
+    )
+    arbitrary_long_lines=0
+    angle_buckets=set()
+    if general is not None:
+        for x1,y1,x2,y2 in general[:,0]:
+            dx=float(x2-x1)
+            dy=float(y2-y1)
+            length=float((dx*dx+dy*dy)**0.5)
+            if length<max(42,min(h,w)//8):
+                continue
+            arbitrary_long_lines+=1
+            angle=(float(np.degrees(np.arctan2(dy,dx)))+180.0)%180.0
+            angle_buckets.add(int(round(angle/10.0)))
+
+    # Orthogonal evidence remains the strongest signal, while arbitrary-angle
+    # structural geometry helps slanted plans without letting ordinary text dominate.
     density_bonus=min(line_ratio*240.0,18.0)
     line_bonus=min(long_lines,60)*0.55
+    arbitrary_bonus=min(arbitrary_long_lines,80)*0.13+min(len(angle_buckets),10)*0.35
     ink_bonus=min(ink_ratio,0.16)*20.0
     dense_penalty=max(0.0,ink_ratio-0.35)*45.0
-    return line_bonus+density_bonus+ink_bonus-dense_penalty
+    return line_bonus+arbitrary_bonus+density_bonus+ink_bonus-dense_penalty
 
 
 def _order_quad(points:np.ndarray)->np.ndarray:
