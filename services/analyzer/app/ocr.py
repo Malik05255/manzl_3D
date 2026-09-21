@@ -9,6 +9,19 @@ from pytesseract import Output
 
 ROOM_WORDS=("غرفة","نوم","صالة","صاله","مجلس","مطبخ","حمام","دورة","ممر","مدخل","مستودع","غسيل","معيشة","living","bedroom","kitchen","bath","hall","majlis","corridor")
 
+def _arabic_letter_count(value:str)->int:
+    return sum(1 for ch in value if "\u0600"<=ch<="\u06ff")
+
+def _latin_letter_count(value:str)->int:
+    return sum(1 for ch in value if ("a"<=ch.lower()<="z"))
+
+def order_line_words(words:list[dict])->list[dict]:
+    combined=" ".join(str(word.get("text","")) for word in words)
+    arabic=_arabic_letter_count(combined)
+    latin=_latin_letter_count(combined)
+    rtl=arabic>latin and arabic>0
+    return sorted(words,key=lambda word:word["x"],reverse=rtl)
+
 def normalize_digits(text:str)->str:
     table=str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹","01234567890123456789")
     return text.translate(table).replace("٫",".").replace(",",".")
@@ -35,7 +48,7 @@ def extract_ocr_labels(image:np.ndarray)->list[dict]:
         lines[key].append({"text":text,"conf":conf,"x":int(data["left"][i]),"y":int(data["top"][i]),"w":int(data["width"][i]),"h":int(data["height"][i])})
     labels=[]
     for idx,words in enumerate(lines.values(),start=1):
-        words.sort(key=lambda w:w["x"])
+        words=order_line_words(words)
         text=" ".join(w["text"] for w in words).strip()
         if not text: continue
         x1=min(w["x"] for w in words); y1=min(w["y"] for w in words)
