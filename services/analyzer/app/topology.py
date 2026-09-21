@@ -123,10 +123,38 @@ def classify_wall_roles(walls:list,rooms:list)->list:
             _set_wall_value(wall,"locked",False)
         return walls
 
-    xs=[_point(point)[0] for point in all_points]
-    ys=[_point(point)[1] for point in all_points]
-    min_x,max_x=min(xs),max(xs)
-    min_y,max_y=min(ys),max(ys)
+    def convex_hull(points):
+        unique=sorted(set((_point(point) for point in points)))
+        if len(unique)<=2:
+            return unique
+
+        def cross(origin,a,b):
+            return (a[0]-origin[0])*(b[1]-origin[1])-(a[1]-origin[1])*(b[0]-origin[0])
+
+        lower=[]
+        for point in unique:
+            while len(lower)>=2 and cross(lower[-2],lower[-1],point)<=0:
+                lower.pop()
+            lower.append(point)
+        upper=[]
+        for point in reversed(unique):
+            while len(upper)>=2 and cross(upper[-2],upper[-1],point)<=0:
+                upper.pop()
+            upper.append(point)
+        return lower[:-1]+upper[:-1]
+
+    hull=convex_hull(all_points)
+
+    def on_outer_hull(wall):
+        if len(hull)<2:
+            return False
+        for index,a in enumerate(hull):
+            b=hull[(index+1)%len(hull)]
+            edge_a={"x":a[0],"y":a[1]}
+            edge_b={"x":b[0],"y":b[1]}
+            if _edge_wall_score(edge_a,edge_b,wall)>=0.30:
+                return True
+        return False
 
     for wall in walls:
         wall_id=str(_wall_value(wall,"id"))
@@ -136,17 +164,7 @@ def classify_wall_roles(walls:list,rooms:list)->list:
             _set_wall_value(wall,"locked",False)
             continue
 
-        ax,ay=_point(_wall_value(wall,"a"))
-        bx,by=_point(_wall_value(wall,"b"))
-        vertical=abs(ax-bx)<=abs(ay-by)
-        axis=(ax+bx)/2 if vertical else (ay+by)/2
-        thickness=float(_wall_value(wall,"thicknessPx"))
-        tolerance=max(16.0,min(48.0,thickness*4.0))
-        on_envelope=(
-            (vertical and (abs(axis-min_x)<=tolerance or abs(axis-max_x)<=tolerance))
-            or ((not vertical) and (abs(axis-min_y)<=tolerance or abs(axis-max_y)<=tolerance))
-        )
-        if count==1 and on_envelope:
+        if count==1 and on_outer_hull(wall):
             _set_wall_value(wall,"role","exterior")
             _set_wall_value(wall,"locked",True)
         else:
