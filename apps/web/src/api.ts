@@ -114,6 +114,8 @@ export function uploadSource(projectId:string,file:File,onProgress:(value:number
   });
 }
 
+export const retryAnalysis=(id:string)=>request<ProjectView>(`/v1/projects/${id}/retry-analysis`,{method:"POST"});
+
 export async function getProject(id:string){
   const project=await request<ProjectView>(`/v1/projects/${id}`);
   rememberLastProjectId(id);
