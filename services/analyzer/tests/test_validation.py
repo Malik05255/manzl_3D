@@ -176,3 +176,12 @@ def test_missing_room_boundary_wall_is_critical():
     assert finding.severity=="critical"
     assert finding.roomIds==["a"]
     assert finding.wallIds==["missing-wall"]
+
+
+def test_incomplete_room_boundary_emits_warning():
+    plan=base_plan()
+    plan.walls=plan.walls[:2]
+    report=validate_plan(plan)
+    finding=next(item for item in report.findings if item.code=="room_boundary_incomplete")
+    assert finding.severity=="warning"
+    assert finding.roomIds
