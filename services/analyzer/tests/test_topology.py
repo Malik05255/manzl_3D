@@ -1,5 +1,5 @@
 from app.models import FloorPlan,Point,Quality,Room,Source,Wall
-from app.topology import canonicalize_plan,classify_wall_roles,link_room_boundaries,relink_plan_boundaries
+from app.topology import canonicalize_plan,classify_wall_roles,link_room_boundaries,relink_plan_boundaries,room_boundary_coverage
 
 
 def test_links_rectangular_room_to_four_nearby_walls():
@@ -112,3 +112,20 @@ def test_canonicalize_refreshes_area_and_boundaries_without_overwriting_user_met
     assert top.provenance=="mixed"
     assert plan.rooms[0].areaM2==999
     assert plan.rooms[0].boundaryWallIds==["deleted"]
+
+
+def test_boundary_coverage_detects_missing_room_sides():
+    room={
+        "id":"room-1","name":"غرفة","polygon":[
+            {"x":110.0,"y":110.0},{"x":490.0,"y":110.0},
+            {"x":490.0,"y":490.0},{"x":110.0,"y":490.0},
+        ],"boundaryWallIds":[],
+    }
+    complete=[
+        {"id":"top","a":{"x":100.0,"y":100.0},"b":{"x":500.0,"y":100.0},"thicknessPx":10.0},
+        {"id":"right","a":{"x":500.0,"y":100.0},"b":{"x":500.0,"y":500.0},"thicknessPx":10.0},
+        {"id":"bottom","a":{"x":100.0,"y":500.0},"b":{"x":500.0,"y":500.0},"thicknessPx":10.0},
+        {"id":"left","a":{"x":100.0,"y":100.0},"b":{"x":100.0,"y":500.0},"thicknessPx":10.0},
+    ]
+    assert room_boundary_coverage(room,complete)>.95
+    assert room_boundary_coverage(room,complete[:2])<.60
