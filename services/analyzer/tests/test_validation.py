@@ -9,7 +9,15 @@ def base_plan():
         heightPx=700,
         metersPerPixel=0.01,
         calibrationConfidence=1,
-        walls=[],
+        walls=[
+            __import__("app.models",fromlist=["Wall"]).Wall(id="left",a=Point(x=100,y=100),b=Point(x=100,y=500),thicknessPx=10,confidence=.9),
+            __import__("app.models",fromlist=["Wall"]).Wall(id="top",a=Point(x=100,y=100),b=Point(x=500,y=100),thicknessPx=10,confidence=.9),
+            __import__("app.models",fromlist=["Wall"]).Wall(id="bottom-left",a=Point(x=100,y=500),b=Point(x=500,y=500),thicknessPx=10,confidence=.9),
+            __import__("app.models",fromlist=["Wall"]).Wall(id="shared",a=Point(x=500,y=100),b=Point(x=500,y=500),thicknessPx=10,confidence=.9),
+            __import__("app.models",fromlist=["Wall"]).Wall(id="top-right",a=Point(x=500,y=100),b=Point(x=900,y=100),thicknessPx=10,confidence=.9),
+            __import__("app.models",fromlist=["Wall"]).Wall(id="bottom-right",a=Point(x=500,y=500),b=Point(x=900,y=500),thicknessPx=10,confidence=.9),
+            __import__("app.models",fromlist=["Wall"]).Wall(id="right",a=Point(x=900,y=100),b=Point(x=900,y=500),thicknessPx=10,confidence=.9),
+        ],
         rooms=[
             Room(
                 id="a",
