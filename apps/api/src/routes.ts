@@ -1,6 +1,6 @@
 import type { ApplyProposalRequest,EditProposalResponse,FloorPlanModel,SaveRevisionRequest,ValidationReport } from "@manzil/contracts";
 import { createProjectAccess,hasProjectAccess } from "./access";
-import { getProjectRow,persistPlan,projectView } from "./db";
+import { getProjectRow,persistDraft,persistPlan,projectView } from "./db";
 import { cleanName,json } from "./http";
 import type { Env,ProjectRow } from "./types";
 
@@ -126,6 +126,18 @@ export async function route(request:Request,env:Env):Promise<Response>{
     headers.set("cache-control","private, max-age=300");
     headers.set("content-length",String(object.size));
     return new Response(object.body,{headers});
+  }
+
+  const draftMatch=path.match(/^\/v1\/projects\/([^/]+)\/draft$/);
+  if(draftMatch&&request.method==="PUT"){
+    const id=draftMatch[1];
+    const secured=await protectedRow(request,env,id);
+    if(secured instanceof Response) return secured;
+    const body=await request.json<{plan?:FloorPlanModel}>();
+    if(!body.plan||body.plan.id!==id||body.plan.schemaVersion!==1) return json({error:"صيغة المسودة غير صالحة"},400);
+    await persistDraft(env,id,body.plan);
+    const row=await getProjectRow(env,id);
+    return json(await projectView(env,row!,false));
   }
 
   const revision=path.match(/^\/v1\/projects\/([^/]+)\/revisions$/);
