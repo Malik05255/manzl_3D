@@ -63,6 +63,10 @@ export function snapAxis(value:number,metersPerPixel?:number|null,stepM=.05){
   return Math.round(value/stepPx)*stepPx;
 }
 
+function symbolLabel(kind:string){
+  return ({sink:"مغسلة",toilet:"مرحاض",bathtub:"بانيو",shower:"دش",cooktop:"موقد",stairs:"درج"} as Record<string,string>)[kind]??kind;
+}
+
 function polygonArea(points:Point[]){
   let sum=0;
   for(let i=0;i<points.length;i++){
@@ -560,6 +564,19 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
           return <g key={o.id} className={readonly||calibrationMode||measureMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode||measureMode||drawWallMode||effectivePan)return;event.stopPropagation();onSelectDimension?.(null);onSelectOpening?.(o.id);}}>
             {!readonly&&!calibrationMode&&<line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="transparent" strokeWidth={18}/>}
             <line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke={stroke} strokeWidth={selectedOpeningId===o.id?6:severity==="critical"?5:3} strokeLinecap="round" strokeDasharray={severity&&!selectedOpeningId?"9 5":uncertain&&!selectedOpeningId?"7 5":undefined}/>
+          </g>;
+        })}
+        {layerState.openings&&(renderPlan.symbols??[]).map(symbol=>{
+          const uncertain=layerState.uncertainty&&!symbol.reviewed&&symbol.confidence<.86;
+          const stroke=uncertain?"#d97706":"#0f766e";
+          const width=Math.max(1,symbol.b.x-symbol.a.x);
+          const height=Math.max(1,symbol.b.y-symbol.a.y);
+          return <g key={symbol.id} pointerEvents="none">
+            <rect x={symbol.a.x} y={symbol.a.y} width={width} height={height} rx={4}
+              fill={uncertain?"rgba(217,119,6,.07)":"rgba(15,118,110,.07)"}
+              stroke={stroke} strokeWidth={2} strokeDasharray={uncertain?"7 5":undefined}/>
+            <text x={(symbol.a.x+symbol.b.x)/2} y={Math.max(12,symbol.a.y-5)} textAnchor="middle"
+              fill={stroke} fontSize={11} fontWeight={700}>{symbolLabel(symbol.kind)}</text>
           </g>;
         })}
         {layerState.labels&&renderPlan.labels.filter(label=>label.kind!=="dimension"||!(renderPlan.dimensions??[]).some(item=>item.sourceLabelId===label.id)).map(label=>{
