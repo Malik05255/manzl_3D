@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import cv2
 import httpx
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,HttpUrl
@@ -21,6 +22,7 @@ class AnalyzeRequest(BaseModel):
     filename:str
     mime_type:str
     callback_url:HttpUrl|None=None
+    preview_url:HttpUrl|None=None
 
 def authorize(token:str|None):
     expected=os.getenv("INTERNAL_TOKEN","")
@@ -34,6 +36,24 @@ async def progress(url:HttpUrl|None,project_id:str,phase:str,value:int,message:s
             await client.post(str(url),headers={"x-manzil-internal":os.getenv("INTERNAL_TOKEN","")},json={
                 "project_id":project_id,"status":"analyzing","phase":phase,"progress":value,"message":message
             })
+    except Exception:
+        pass
+
+async def upload_preview(url:HttpUrl|None,image):
+    if not url: return
+    ok,encoded=cv2.imencode(".webp",image,[cv2.IMWRITE_WEBP_QUALITY,88])
+    if not ok: return
+    try:
+        async with httpx.AsyncClient(timeout=45) as client:
+            response=await client.put(
+                str(url),
+                headers={
+                    "x-manzil-internal":os.getenv("INTERNAL_TOKEN",""),
+                    "content-type":"image/webp",
+                },
+                content=encoded.tobytes(),
+            )
+            response.raise_for_status()
     except Exception:
         pass
 
@@ -54,6 +74,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
 
     image=decode_document(data,req.mime_type)
     h,w=image.shape[:2]
+    await upload_preview(req.preview_url,image)
     _,ink=preprocess(image)
 
     await progress(req.callback_url,req.project_id,"ocr",35,"قراءة النصوص والأبعاد")
