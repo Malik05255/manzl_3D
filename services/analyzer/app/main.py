@@ -14,7 +14,7 @@ from .ocr import _merge_labels,classify_text,extract_ocr_labels
 from .openings import detect_doors,detect_windows
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
-from .scale import estimate_scale
+from .scale import estimate_scale_with_diagnostics
 from .topology import classify_wall_roles,link_room_boundaries
 from .semantic import normalize_edit_semantics
 from .walls import detect_walls,enrich_walls_with_vector
@@ -133,7 +133,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
             walls=enrich_walls_with_vector(walls,vector_lines)
         except Exception:
             pass
-    scale,scale_confidence=estimate_scale(labels,walls,w,h)
+    scale,scale_confidence,scale_warnings=estimate_scale_with_diagnostics(labels,walls,w,h)
     doors=detect_doors(image,walls,scale)
     windows=detect_windows(image,walls,scale)
 
@@ -143,7 +143,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     classify_wall_roles(walls,rooms)
 
     await progress(req.callback_url,req.project_id,"validation",93,"التحقق من جودة النتيجة")
-    result=assemble_plan(image,req.project_id,req.filename,req.mime_type,labels,walls,rooms,scale,scale_confidence,source_page=source_page,source_page_count=source_page_count,doors=doors,windows=windows)
+    result=assemble_plan(image,req.project_id,req.filename,req.mime_type,labels,walls,rooms,scale,scale_confidence,source_page=source_page,source_page_count=source_page_count,doors=doors,windows=windows,scale_warnings=scale_warnings)
     return FloorPlan.model_validate(result)
 
 @app.post("/v1/edit/proposals",response_model=ProposalResponse)
