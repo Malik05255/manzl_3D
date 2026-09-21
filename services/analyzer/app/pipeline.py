@@ -57,6 +57,15 @@ def assemble_plan(image:np.ndarray,project_id:str,filename:str,mime_type:str,lab
         warnings.append("تغطية حدود بعض الغرف بالجدران منخفضة؛ راجع الجدران أو أكمل الأجزاء الناقصة.")
     if walls and wall_confidence<0.72:
         warnings.append("متوسط ثقة الجدران منخفض؛ راجع الخطوط المكتشفة قبل التعديل الهندسي.")
+    quarantined_vectors=[
+        wall for wall in walls
+        if str(wall.get("provenance",""))=="pdf-vector"
+        and float(wall.get("confidence",0.0))<.70
+    ]
+    if quarantined_vectors:
+        warnings.append(
+            f"تم حفظ {len(quarantined_vectors)} خط PDF منخفض الثقة للمراجعة دون استخدامه تلقائيًا في إغلاق الغرف."
+        )
     warnings.append("العناصر منخفضة الثقة لا تُثبت تلقائيًا؛ يجب تأكيد الأبواب والنوافذ بصريًا.")
 
     return {
