@@ -8,7 +8,8 @@ interface Props{
   onSelectWall?:(id:string|null)=>void;
   selectedRoomId?:string|null;
   onSelectRoom?:(id:string|null)=>void;
-  onPlanChange?:(plan:FloorPlanModel)=>void;
+  onPlanChange?:(plan:FloorPlanModel,recordHistory?:boolean)=>void;
+  onPlanCommit?:(basePlan:FloorPlanModel)=>void;
   readonly?:boolean;
   calibrationMode?:boolean;
   calibrationPoints?:Point[];
@@ -17,7 +18,7 @@ interface Props{
   backgroundOpacity?:number;
   comparisonPlan?:FloorPlanModel|null;
 }
-type DragState={wallId:string;startClient:Point;original:Wall}|null;
+type DragState={wallId:string;startClient:Point;original:Wall;basePlan:FloorPlanModel;changed:boolean}|null;
 
 function overlap(a1:number,a2:number,b1:number,b2:number){
   return Math.max(0,Math.min(a2,b2)-Math.max(a1,b1));
@@ -47,7 +48,7 @@ function roomVisualMetrics(room:FloorPlanModel["rooms"][number],metersPerPixel?:
   };
 }
 
-function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall):FloorPlanModel{
+export function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall):FloorPlanModel{
   const vertical=Math.abs(original.a.x-original.b.x)<=Math.abs(original.a.y-original.b.y);
   const oldAxis=vertical?(original.a.x+original.b.x)/2:(original.a.y+original.b.y)/2;
   const desired=vertical?(next.a.x+next.b.x)/2:(next.a.y+next.b.y)/2;
@@ -125,7 +126,7 @@ function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall):FloorP
   };
 }
 
-export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSelectRoom,onPlanChange,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint,backgroundUrl=null,backgroundOpacity=.38,comparisonPlan=null}:Props){
+export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSelectRoom,onPlanChange,onPlanCommit,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint,backgroundUrl=null,backgroundOpacity=.38,comparisonPlan=null}:Props){
   const[zoom,setZoom]=useState(1);
   const[drag,setDrag]=useState<DragState>(null);
   const svgRef=useRef<SVGSVGElement|null>(null);
@@ -152,7 +153,13 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
     const candidate:Wall=horizontal
       ?{...drag.original,a:{...drag.original.a,y:drag.original.a.y+d.y},b:{...drag.original.b,y:drag.original.b.y+d.y}}
       :{...drag.original,a:{...drag.original.a,x:drag.original.a.x+d.x},b:{...drag.original.b,x:drag.original.b.x+d.x}};
-    onPlanChange(moveWallAndTopology(plan,drag.original,candidate));
+    const next=moveWallAndTopology(drag.basePlan,drag.original,candidate);
+    onPlanChange(next,false);
+    if(!drag.changed&&Math.hypot(d.x,d.y)>.5)setDrag(current=>current?{...current,changed:true}:current);
+  };
+  const finishDrag=()=>{
+    if(drag?.changed)onPlanCommit?.(drag.basePlan);
+    setDrag(null);
   };
 
   const addCalibrationPoint=(event:React.PointerEvent<SVGSVGElement>)=>{
@@ -173,7 +180,7 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
       <button className="icon-button" onClick={()=>setZoom(z=>Math.max(z-.15,.45))} aria-label="تصغير"><Minus size={18}/></button>
       <button className="icon-button" onClick={()=>setZoom(1)} aria-label="إعادة الضبط"><RotateCcw size={18}/></button>
     </div>
-    <div className="canvas-viewport" onWheel={wheelZoom} onPointerMove={move} onPointerUp={()=>setDrag(null)} onPointerCancel={()=>setDrag(null)}>
+    <div className="canvas-viewport" onWheel={wheelZoom} onPointerMove={move} onPointerUp={finishDrag} onPointerCancel={finishDrag}>
       <div className="plan-zoom-stage" style={zoomStageStyle}>
       <svg ref={svgRef} className="plan-svg" viewBox={viewBox} onPointerDown={addCalibrationPoint}>
         <rect width={plan.widthPx} height={plan.heightPx} fill="#fff"/>
@@ -217,7 +224,7 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
           stroke={selectedWallId===wall.id?"#2563eb":"#0f172a"}
           strokeWidth={Math.max(wall.thicknessPx,selectedWallId===wall.id?5:3)}
           strokeLinecap="round" className={readonly||calibrationMode?undefined:"editable-wall"}
-          onPointerDown={e=>{if(readonly||calibrationMode)return;e.currentTarget.setPointerCapture(e.pointerId);onSelectWall?.(wall.id);setDrag({wallId:wall.id,startClient:{x:e.clientX,y:e.clientY},original:wall});}}
+          onPointerDown={e=>{if(readonly||calibrationMode)return;e.currentTarget.setPointerCapture(e.pointerId);onSelectWall?.(wall.id);setDrag({wallId:wall.id,startClient:{x:e.clientX,y:e.clientY},original:wall,basePlan:plan,changed:false});}}
         />)}
         {plan.doors.map(o=><line key={o.id} x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="#0ea5e9" strokeWidth={4}/>)}
         {plan.windows.map(o=><line key={o.id} x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="#38bdf8" strokeWidth={3}/>)}

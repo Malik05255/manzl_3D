@@ -113,10 +113,17 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     await draftChain.current.catch(()=>undefined);
     await enqueueDraft(plan,project.revision,generation);
   };
-  const applyLocalPlan=(next:FloorPlanModel)=>{
-    setUndoStack(stack=>[...stack.slice(-49),plan]);
-    setRedoStack([]);
+  const applyLocalPlan=(next:FloorPlanModel,recordHistory=true)=>{
+    if(recordHistory){
+      setUndoStack(stack=>[...stack.slice(-49),plan]);
+      setRedoStack([]);
+    }
     setPlan(next);
+  };
+  const commitTransientPlan=(basePlan:FloorPlanModel)=>{
+    if(JSON.stringify(basePlan)===JSON.stringify(plan))return;
+    setUndoStack(stack=>[...stack.slice(-49),basePlan]);
+    setRedoStack([]);
   };
   const undoLocal=()=>{
     const previous=undoStack.at(-1);
@@ -223,7 +230,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     <header className="editor-header"><Brand compact/><div className="project-name"><FileText size={17}/><strong>{project.name}</strong></div><div className="editor-actions"><button className="ghost" onClick={openHistory}><Clock3 size={17}/> النسخ</button><button className="ghost" onClick={onHome}><ArrowLeft size={17}/> الرئيسية</button><button className="ghost" disabled={!undoStack.length} onClick={undoLocal}><Undo2 size={17}/> تراجع</button><button className="ghost" disabled={!redoStack.length} onClick={redoLocal}><Redo2 size={17}/> إعادة</button><button className="primary small" disabled={!dirty||saving} onClick={save}><Save size={17}/> حفظ</button></div></header>
     <div className="editor-workspace">
       <section className="plan-panel"><div className="panel-title"><div><strong>منطقة التعديل</strong><span>اسحب جدارًا لتحريكه أو استخدم H Engineer</span></div><div className="panel-status"><span className={`draft-pill ${draftState}`}>{draftState==="saving"?"حفظ...":draftState==="saved"?"مسودة سحابية":draftState==="error"?"تعذر الحفظ":"سحابي"}</span><button className="validate-chip export-chip" onClick={()=>setExportOpen(true)}><Download size={14}/> تصدير</button>{sourcePreview&&<label className="overlay-control"><span>الأصل</span><input type="range" min="0" max=".85" step=".05" value={sourceOpacity} onChange={e=>setSourceOpacity(Number(e.target.value))}/></label>}<button className="validate-chip" disabled={validationBusy} onClick={runValidation}>{validationBusy?<LoaderCircle className="spin" size={14}/>:<ShieldCheck size={14}/>} فحص</button><div className="quality-pill">جودة التحليل {Math.round(plan.quality.overall*100)}%</div></div></div>
-        <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)} selectedWallId={selectedWall} onSelectWall={id=>{setSelectedWall(id);if(id)setSelectedRoom(null);}} selectedRoomId={selectedRoom} onSelectRoom={selectRoom} onPlanChange={applyLocalPlan}
+        <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)} selectedWallId={selectedWall} onSelectWall={id=>{setSelectedWall(id);if(id)setSelectedRoom(null);}} selectedRoomId={selectedRoom} onSelectRoom={selectRoom} onPlanChange={applyLocalPlan} onPlanCommit={commitTransientPlan}
           calibrationMode={calibrating} calibrationPoints={calibrationPoints}
           onCalibrationPoint={point=>setCalibrationPoints(points=>points.length<2?[...points,point]:points)}
           backgroundUrl={sourcePreview} backgroundOpacity={sourceOpacity} comparisonPlan={preview?plan:null}/>
