@@ -38,10 +38,19 @@ def test_floorplan_converts_to_aec_prediction_frame():
                 "b":{"x":750.0,"y":100.0},
             }
         ],
+        "symbols":[
+            {
+                "id":"fixture",
+                "kind":"toilet",
+                "a":{"x":700.0,"y":250.0},
+                "b":{"x":760.0,"y":330.0},
+                "confidence":.95,
+            }
+        ],
     }
     prediction=plan_to_aec_prediction(plan,sheet="sheet_01",width=2000,height=1000)
     assert prediction["sheet"]=="sheet_01"
-    assert {item["class"] for item in prediction["objects"]}=={"Single Swing Door","Window"}
+    assert {item["class"] for item in prediction["objects"]}=={"Single Swing Door","Window","Toilet"}
     assert prediction["areas"][0][0]==[200.0,200.0]
     assert len(prediction["walls"][0])==4
     assert prediction["objects"][0]["bbox"][0]<600
