@@ -7,6 +7,7 @@ import numpy as np
 
 from .edit_geometry import bbox,is_rectangular_room,minimum_clear_span_m
 from .models import FloorPlan,Point,ValidationFinding,ValidationReport
+from .topology import room_boundary_coverage
 
 
 def _rect_overlap_area(a,b)->float:
@@ -218,6 +219,17 @@ def validate_plan(plan:FloorPlan)->ValidationReport:
                 text=f"{room.name} تتجاوز حدود صفحة المخطط.",
                 roomIds=[room.id],
             ))
+
+        if plan.walls:
+            coverage=room_boundary_coverage(room,plan.walls)
+            if coverage<0.68:
+                findings.append(ValidationFinding(
+                    code="room_boundary_incomplete",
+                    severity="warning",
+                    text=f"حوالي {coverage*100:.0f}% فقط من حدود {room.name} مرتبطة بجدران واضحة؛ راجع الاستخراج أو أكمل الجدران.",
+                    roomIds=[room.id],
+                    wallIds=list(room.boundaryWallIds),
+                ))
 
         if mpp and mpp>0:
             width=width_px*mpp
