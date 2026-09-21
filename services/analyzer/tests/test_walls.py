@@ -436,3 +436,56 @@ def test_thick_vector_wall_near_dimension_text_keeps_high_confidence():
     result=add_vector_wall_candidates([],vectors,900,1200,labels=labels)
     wall=next(item for item in result if item["a"]["y"]==item["b"]["y"]==180.0)
     assert wall["confidence"]>=.90
+
+
+
+def test_dimension_span_quarantines_thin_wall_even_when_label_is_far():
+    walls=[{
+        "id":"dimension-line",
+        "a":{"x":100.0,"y":220.0},
+        "b":{"x":500.0,"y":220.0},
+        "thicknessPx":2.5,
+        "confidence":.82,
+        "provenance":"opencv",
+    }]
+    labels=[{
+        "text":"4.00 m",
+        "center":{"x":300.0,"y":120.0},
+        "confidence":.97,
+        "kind":"dimension",
+    }]
+    dimensions=[{
+        "valueM":4.0,
+        "unit":"m",
+        "spanA":{"x":100.0,"y":220.0},
+        "spanB":{"x":500.0,"y":220.0},
+        "confidence":.95,
+    }]
+    quarantined=quarantine_dimension_aligned_walls(
+        walls,labels,800,1000,dimensions=dimensions,
+    )
+    assert quarantined=={"dimension-line"}
+    assert walls[0]["confidence"]<=.64
+
+
+def test_dimension_span_does_not_quarantine_thick_real_wall():
+    walls=[{
+        "id":"real-wall",
+        "a":{"x":100.0,"y":220.0},
+        "b":{"x":500.0,"y":220.0},
+        "thicknessPx":14.0,
+        "confidence":.91,
+        "provenance":"opencv",
+    }]
+    dimensions=[{
+        "valueM":4.0,
+        "unit":"m",
+        "spanA":{"x":100.0,"y":220.0},
+        "spanB":{"x":500.0,"y":220.0},
+        "confidence":.95,
+    }]
+    quarantined=quarantine_dimension_aligned_walls(
+        walls,[],800,1000,dimensions=dimensions,
+    )
+    assert quarantined==set()
+    assert walls[0]["confidence"]==.91
