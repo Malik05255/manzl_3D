@@ -75,6 +75,15 @@ def _wall_dicts(plan:FloorPlan)->list[dict]:
     ]
 
 
+def _prefer_existing_name(room:Room,detected_name:str)->str:
+    current=room.name.strip()
+    normalized=current.replace(" ","")
+    generic=normalized.startswith("غرفة") and normalized[4:].isdigit()
+    if room.reviewed or (current and not generic):
+        return current
+    return detected_name.strip() or current
+
+
 def _carry_room_identity(plan:FloorPlan,detected:list[dict])->list[Room]:
     old=list(plan.rooms)
     scored=[]
@@ -102,7 +111,7 @@ def _carry_room_identity(plan:FloorPlan,detected:list[dict])->list[Room]:
     for index,item in enumerate(detected):
         matched=old[matches[index]] if index in matches else None
         if matched is not None:
-            name=matched.name if matched.reviewed or matched.name.strip() else str(item.get("name") or matched.name)
+            name=_prefer_existing_name(matched,str(item.get("name") or ""))
             item={
                 **item,
                 "id":matched.id,
@@ -135,7 +144,7 @@ def build_room_rebuild_proposal(plan:FloorPlan,command:str)->ProposalResponse:
         )
 
     mask=rasterize_wall_mask(_wall_dicts(plan),plan.heightPx,plan.widthPx)
-    detected=detect_rooms(mask,_room_labels(plan),plan.metersPerPixel)
+    detected=detect_rooms(mask,_room_labels(plan),plan.metersPerPixel,min_area_ratio=0.0015,max_area_ratio=0.88)
     if not detected:
         return ProposalResponse(
             command=command,
