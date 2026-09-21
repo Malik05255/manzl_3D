@@ -1,25 +1,60 @@
 from __future__ import annotations
+
 import math
+
 import cv2
 import numpy as np
 
 
-def _orientation(wall:dict)->str:
-    dx=abs(wall["b"]["x"]-wall["a"]["x"])
-    dy=abs(wall["b"]["y"]-wall["a"]["y"])
-    return "h" if dx>=dy else "v"
+def _point(item:dict)->tuple[float,float]:
+    return float(item["x"]),float(item["y"])
 
 
-def _ordered_segment(wall:dict)->tuple[float,float,float]:
-    if _orientation(wall)=="h":
-        start=min(wall["a"]["x"],wall["b"]["x"])
-        end=max(wall["a"]["x"],wall["b"]["x"])
-        axis=(wall["a"]["y"]+wall["b"]["y"])/2
-    else:
-        start=min(wall["a"]["y"],wall["b"]["y"])
-        end=max(wall["a"]["y"],wall["b"]["y"])
-        axis=(wall["a"]["x"]+wall["b"]["x"])/2
-    return start,end,axis
+def _segment_geometry(item:dict)->tuple[float,float,float,float,float]:
+    ax,ay=_point(item["a"])
+    bx,by=_point(item["b"])
+    dx=bx-ax
+    dy=by-ay
+    length=math.hypot(dx,dy)
+    if length<=1e-9:
+        return 0.0,0.0,0.0,0.0,0.0
+    ux=dx/length
+    uy=dy/length
+    if ux<0 or (abs(ux)<1e-9 and uy<0):
+        ux=-ux
+        uy=-uy
+    nx=-uy
+    ny=ux
+    return length,ux,uy,nx,ny
+
+
+def _angle_difference(left:dict,right:dict)->float:
+    llen,lux,luy,_,_=_segment_geometry(left)
+    rlen,rux,ruy,_,_=_segment_geometry(right)
+    if llen<=1e-9 or rlen<=1e-9:
+        return 180.0
+    cosine=max(-1.0,min(1.0,abs(lux*rux+luy*ruy)))
+    return math.degrees(math.acos(cosine))
+
+
+def _projection_interval(item:dict,ux:float,uy:float)->tuple[float,float]:
+    ax,ay=_point(item["a"])
+    bx,by=_point(item["b"])
+    first=ax*ux+ay*uy
+    second=bx*ux+by*uy
+    return min(first,second),max(first,second)
+
+
+def _line_offset(item:dict,nx:float,ny:float)->float:
+    ax,ay=_point(item["a"])
+    bx,by=_point(item["b"])
+    return ((ax+bx)/2)*nx+((ay+by)/2)*ny
+
+
+def _point_from_frame(t:float,offset:float,ux:float,uy:float)->dict:
+    nx=-uy
+    ny=ux
+    return {"x":float(ux*t+nx*offset),"y":float(uy*t+ny*offset)}
 
 
 def _door_gap_limits(image:np.ndarray,meters_per_pixel:float|None)->tuple[float,float,float]:
@@ -29,6 +64,7 @@ def _door_gap_limits(image:np.ndarray,meters_per_pixel:float|None)->tuple[float,
         return 0.65/meters_per_pixel,1.80/meters_per_pixel,max(5.0,0.10/meters_per_pixel)
     return base*0.018,base*0.11,max(5.0,base*0.006)
 
+
 def _window_gap_limits(image:np.ndarray,meters_per_pixel:float|None)->tuple[float,float,float]:
     h,w=image.shape[:2]
     base=float(min(h,w))
@@ -37,88 +73,138 @@ def _window_gap_limits(image:np.ndarray,meters_per_pixel:float|None)->tuple[floa
     return base*0.015,base*0.18,max(5.0,base*0.006)
 
 
-def _diagonal_evidence(image:np.ndarray,a:dict,b:dict,gap_px:float,orientation:str)->int:
-    h,w=image.shape[:2]
-    cx=(a["x"]+b["x"])/2
-    cy=(a["y"]+b["y"])/2
-    radius=max(18,int(round(gap_px*0.95)))
-    x1=max(0,int(cx-radius)); x2=min(w,int(cx+radius))
-    y1=max(0,int(cy-radius)); y2=min(h,int(cy+radius))
-    roi=image[y1:y2,x1:x2]
-    if roi.size==0:
-        return 0
+def _angle_delta_degrees(angle:float,reference:float)->float:
+    delta=abs((angle-reference)%180.0)
+    return min(delta,180.0-delta)
 
+
+def _opening_roi(image:np.ndarray,a:dict,b:dict,gap_px:float)->tuple[np.ndarray,int,int]:
+    h,w=image.shape[:2]
+    cx=(float(a["x"])+float(b["x"]))/2
+    cy=(float(a["y"])+float(b["y"]))/2
+    radius=max(20,int(round(gap_px*1.05)))
+    x1=max(0,int(math.floor(cx-radius)))
+    x2=min(w,int(math.ceil(cx+radius)))
+    y1=max(0,int(math.floor(cy-radius)))
+    y2=min(h,int(math.ceil(cy+radius)))
+    return image[y1:y2,x1:x2],x1,y1
+
+
+def _hough_segments(roi:np.ndarray,gap_px:float)->list[tuple[int,int,int,int]]:
+    if roi.size==0:
+        return []
     gray=cv2.cvtColor(roi,cv2.COLOR_BGR2GRAY)
-    edges=cv2.Canny(gray,60,160)
+    edges=cv2.Canny(gray,55,155)
     raw=cv2.HoughLinesP(
         edges,
         1,
-        np.pi/180,
-        threshold=max(10,int(gap_px*0.20)),
-        minLineLength=max(8,int(gap_px*0.30)),
+        np.pi/360,
+        threshold=max(8,int(gap_px*0.16)),
+        minLineLength=max(7,int(gap_px*0.25)),
         maxLineGap=max(3,int(gap_px*0.10)),
     )
-    if raw is None:
-        return 0
+    return [] if raw is None else [tuple(map(int,item)) for item in raw[:,0]]
 
+
+def _door_leaf_evidence(
+    image:np.ndarray,
+    a:dict,
+    b:dict,
+    gap_px:float,
+    wall_angle_deg:float,
+)->int:
+    roi,_,_=_opening_roi(image,a,b,gap_px)
     evidence=0
-    for x1l,y1l,x2l,y2l in raw[:,0]:
-        dx=abs(int(x2l)-int(x1l))
-        dy=abs(int(y2l)-int(y1l))
+    for x1,y1,x2,y2 in _hough_segments(roi,gap_px):
+        dx=float(x2-x1)
+        dy=float(y2-y1)
         length=math.hypot(dx,dy)
-        if length<gap_px*0.28 or length>gap_px*1.65:
+        if length<gap_px*0.28 or length>gap_px*1.75:
             continue
-        angle=math.degrees(math.atan2(dy,dx+1e-9))
-        # Door leaves / swing geometry create a strong non-axis-aligned stroke near the wall gap.
-        if 18<=angle<=72:
+        angle=math.degrees(math.atan2(dy,dx))%180.0
+        delta=_angle_delta_degrees(angle,wall_angle_deg)
+        if 18<=delta<=82:
             evidence+=1
     return evidence
 
 
-def _parallel_window_evidence(image:np.ndarray,a:dict,b:dict,gap_px:float,orientation:str)->int:
-    h,w=image.shape[:2]
-    margin=max(1,int(round(gap_px*0.06)))
-    band=max(8,int(round(gap_px*0.28)))
-
-    if orientation=="h":
-        x1=max(0,int(min(a["x"],b["x"])+margin))
-        x2=min(w,int(max(a["x"],b["x"])-margin))
-        cy=int(round((a["y"]+b["y"])/2))
-        y1=max(0,cy-band); y2=min(h,cy+band)
-    else:
-        y1=max(0,int(min(a["y"],b["y"])+margin))
-        y2=min(h,int(max(a["y"],b["y"])-margin))
-        cx=int(round((a["x"]+b["x"])/2))
-        x1=max(0,cx-band); x2=min(w,cx+band)
-
-    if x2-x1<8 or y2-y1<8:
+def _door_arc_evidence(image:np.ndarray,a:dict,b:dict,gap_px:float)->int:
+    roi,_,_=_opening_roi(image,a,b,gap_px)
+    if roi.size==0:
         return 0
-    roi=image[y1:y2,x1:x2]
     gray=cv2.cvtColor(roi,cv2.COLOR_BGR2GRAY)
     edges=cv2.Canny(gray,55,150)
-    raw=cv2.HoughLinesP(
-        edges,
-        1,
-        np.pi/180,
-        threshold=max(8,int(gap_px*0.18)),
-        minLineLength=max(7,int(gap_px*0.48)),
-        maxLineGap=max(3,int(gap_px*0.08)),
-    )
-    if raw is None:
-        return 0
-
+    contours,_=cv2.findContours(edges,cv2.RETR_LIST,cv2.CHAIN_APPROX_NONE)
     evidence=0
-    for x1l,y1l,x2l,y2l in raw[:,0]:
-        dx=abs(int(x2l)-int(x1l))
-        dy=abs(int(y2l)-int(y1l))
-        length=math.hypot(dx,dy)
-        if length<gap_px*0.48:
+    for contour in contours:
+        perimeter=cv2.arcLength(contour,False)
+        if perimeter<gap_px*.35 or perimeter>gap_px*3.8:
             continue
-        if orientation=="h" and dx>=max(6,dy*5):
+        x,y,w,h=cv2.boundingRect(contour)
+        if min(w,h)<max(5,gap_px*.18):
+            continue
+        aspect=max(w,h)/max(1.0,min(w,h))
+        if aspect>3.2:
+            continue
+        if len(contour)>=8:
             evidence+=1
-        elif orientation=="v" and dy>=max(6,dx*5):
+    return min(evidence,2)
+
+
+def _parallel_window_evidence(
+    image:np.ndarray,
+    a:dict,
+    b:dict,
+    gap_px:float,
+    wall_angle_deg:float,
+)->int:
+    roi,_,_=_opening_roi(image,a,b,gap_px)
+    evidence=0
+    for x1,y1,x2,y2 in _hough_segments(roi,gap_px):
+        dx=float(x2-x1)
+        dy=float(y2-y1)
+        length=math.hypot(dx,dy)
+        if length<gap_px*0.42:
+            continue
+        angle=math.degrees(math.atan2(dy,dx))%180.0
+        if _angle_delta_degrees(angle,wall_angle_deg)<=8:
             evidence+=1
     return evidence
+
+
+def _gap_between_walls(
+    left:dict,
+    right:dict,
+    axis_tol:float,
+)->tuple[dict,dict,float,float,float,float,float,float]|None:
+    if _angle_difference(left,right)>5.0:
+        return None
+    length,ux,uy,nx,ny=_segment_geometry(left)
+    if length<=1e-9:
+        return None
+
+    ls,le=_projection_interval(left,ux,uy)
+    rs,re=_projection_interval(right,ux,uy)
+    lo=_line_offset(left,nx,ny)
+    ro=_line_offset(right,nx,ny)
+    if abs(lo-ro)>axis_tol:
+        return None
+
+    first,second=left,right
+    fs,fe=ls,le
+    ss,se=rs,re
+    fo,so=lo,ro
+    if rs<ls:
+        first,second=right,left
+        fs,fe=rs,re
+        ss,se=ls,le
+        fo,so=ro,lo
+
+    gap=ss-fe
+    if gap<=0:
+        return None
+    offset=(fo+so)/2
+    return first,second,fs,fe,ss,se,gap,offset
 
 
 def _dedupe(openings:list[dict],distance:float)->list[dict]:
@@ -138,45 +224,39 @@ def _dedupe(openings:list[dict],distance:float)->list[dict]:
     return result
 
 
-def detect_doors(image:np.ndarray,walls:list[dict],meters_per_pixel:float|None)->list[dict]:
+def detect_doors(
+    image:np.ndarray,
+    walls:list[dict],
+    meters_per_pixel:float|None,
+)->list[dict]:
     min_gap,max_gap,axis_tol=_door_gap_limits(image,meters_per_pixel)
     candidates=[]
 
     for index,left in enumerate(walls):
-        orientation=_orientation(left)
-        ls,le,la=_ordered_segment(left)
+        length,ux,uy,_,_=_segment_geometry(left)
+        if length<=1e-9:
+            continue
+        wall_angle=math.degrees(math.atan2(uy,ux))%180.0
         for right in walls[index+1:]:
-            if _orientation(right)!=orientation:
+            gap_data=_gap_between_walls(left,right,axis_tol)
+            if gap_data is None:
                 continue
-            rs,re,ra=_ordered_segment(right)
-            if abs(la-ra)>axis_tol:
-                continue
-
-            first,second=(left,right)
-            fs,fe,fa=(ls,le,la)
-            ss,se,sa=(rs,re,ra)
-            if rs<ls:
-                first,second=(right,left)
-                fs,fe,fa=(rs,re,ra)
-                ss,se,sa=(ls,le,la)
-
-            gap=ss-fe
+            first,second,fs,fe,ss,se,gap,offset=gap_data
             if gap<min_gap or gap>max_gap:
                 continue
+            a=_point_from_frame(fe,offset,ux,uy)
+            b=_point_from_frame(ss,offset,ux,uy)
 
-            axis=(fa+sa)/2
-            if orientation=="h":
-                a={"x":float(fe),"y":float(axis)}
-                b={"x":float(ss),"y":float(axis)}
-            else:
-                a={"x":float(axis),"y":float(fe)}
-                b={"x":float(axis),"y":float(ss)}
-
-            evidence=_diagonal_evidence(image,a,b,gap,orientation)
-            if evidence<1:
+            leaf_evidence=_door_leaf_evidence(image,a,b,gap,wall_angle)
+            arc_evidence=_door_arc_evidence(image,a,b,gap)
+            if leaf_evidence<1 and arc_evidence<1:
                 continue
 
-            confidence=min(0.93,0.69+0.07*evidence+(0.05 if meters_per_pixel else 0.0))
+            evidence=leaf_evidence+arc_evidence
+            confidence=min(
+                0.95,
+                0.69+0.065*leaf_evidence+0.035*arc_evidence+(0.05 if meters_per_pixel else 0.0),
+            )
             if confidence<0.76:
                 continue
 
@@ -194,54 +274,44 @@ def detect_doors(image:np.ndarray,walls:list[dict],meters_per_pixel:float|None)-
                 "provenance":"opencv",
             })
 
-    dedupe_distance=max(min_gap*0.6,8.0)
-    result=_dedupe(candidates,dedupe_distance)
+    result=_dedupe(candidates,max(min_gap*0.6,8.0))
     for index,item in enumerate(result,start=1):
         item["id"]=f"door-{index}"
     return result
 
 
-def detect_windows(image:np.ndarray,walls:list[dict],meters_per_pixel:float|None)->list[dict]:
+def detect_windows(
+    image:np.ndarray,
+    walls:list[dict],
+    meters_per_pixel:float|None,
+)->list[dict]:
     min_gap,max_gap,axis_tol=_window_gap_limits(image,meters_per_pixel)
     candidates=[]
 
     for index,left in enumerate(walls):
-        orientation=_orientation(left)
-        ls,le,la=_ordered_segment(left)
+        length,ux,uy,_,_=_segment_geometry(left)
+        if length<=1e-9:
+            continue
+        wall_angle=math.degrees(math.atan2(uy,ux))%180.0
         for right in walls[index+1:]:
-            if _orientation(right)!=orientation:
+            gap_data=_gap_between_walls(left,right,axis_tol)
+            if gap_data is None:
                 continue
-            rs,re,ra=_ordered_segment(right)
-            if abs(la-ra)>axis_tol:
-                continue
-
-            first,second=(left,right)
-            fs,fe,fa=(ls,le,la)
-            ss,se,sa=(rs,re,ra)
-            if rs<ls:
-                first,second=(right,left)
-                fs,fe,fa=(rs,re,ra)
-                ss,se,sa=(ls,le,la)
-
-            gap=ss-fe
+            first,second,fs,fe,ss,se,gap,offset=gap_data
             if gap<min_gap or gap>max_gap:
                 continue
+            a=_point_from_frame(fe,offset,ux,uy)
+            b=_point_from_frame(ss,offset,ux,uy)
 
-            axis=(fa+sa)/2
-            if orientation=="h":
-                a={"x":float(fe),"y":float(axis)}
-                b={"x":float(ss),"y":float(axis)}
-            else:
-                a={"x":float(axis),"y":float(fe)}
-                b={"x":float(axis),"y":float(ss)}
-
-            if _diagonal_evidence(image,a,b,gap,orientation)>0:
+            leaf_evidence=_door_leaf_evidence(image,a,b,gap,wall_angle)
+            arc_evidence=_door_arc_evidence(image,a,b,gap)
+            if leaf_evidence>0 or arc_evidence>0:
                 continue
-            evidence=_parallel_window_evidence(image,a,b,gap,orientation)
+            evidence=_parallel_window_evidence(image,a,b,gap,wall_angle)
             if evidence<2:
                 continue
 
-            confidence=min(0.94,0.70+0.055*evidence+(0.04 if meters_per_pixel else 0.0))
+            confidence=min(0.95,0.70+0.055*evidence+(0.04 if meters_per_pixel else 0.0))
             if confidence<0.80:
                 continue
 
@@ -267,20 +337,37 @@ def detect_windows(image:np.ndarray,walls:list[dict],meters_per_pixel:float|None
 
 def _endpoint_distance(wall:dict,point:dict)->float:
     return min(
-        math.hypot(float(wall["a"]["x"])-float(point["x"]),float(wall["a"]["y"])-float(point["y"])),
-        math.hypot(float(wall["b"]["x"])-float(point["x"]),float(wall["b"]["y"])-float(point["y"])),
+        math.hypot(
+            float(wall["a"]["x"])-float(point["x"]),
+            float(wall["a"]["y"])-float(point["y"]),
+        ),
+        math.hypot(
+            float(wall["b"]["x"])-float(point["x"]),
+            float(wall["b"]["y"])-float(point["y"]),
+        ),
     )
 
 
-def _axis_distance(wall:dict,opening:dict)->float:
-    orientation=_orientation(wall)
-    _,_,axis=_ordered_segment(wall)
-    cx=(float(opening["a"]["x"])+float(opening["b"]["x"]))/2
-    cy=(float(opening["a"]["y"])+float(opening["b"]["y"]))/2
-    return abs((cy if orientation=="h" else cx)-axis)
+def _point_line_metrics(point:dict,wall:dict)->tuple[float,float]:
+    ax,ay=_point(wall["a"])
+    bx,by=_point(wall["b"])
+    px,py=_point(point)
+    vx=bx-ax
+    vy=by-ay
+    length_sq=vx*vx+vy*vy
+    if length_sq<=1e-9:
+        return math.hypot(px-ax,py-ay),0.0
+    t=((px-ax)*vx+(py-ay)*vy)/length_sq
+    cx=ax+max(0.0,min(1.0,t))*vx
+    cy=ay+max(0.0,min(1.0,t))*vy
+    return math.hypot(px-cx,py-cy),t
 
 
-def normalize_opening_hosts(walls:list[dict],doors:list[dict],windows:list[dict])->tuple[list[dict],list[dict],list[dict]]:
+def normalize_opening_hosts(
+    walls:list[dict],
+    doors:list[dict],
+    windows:list[dict],
+)->tuple[list[dict],list[dict],list[dict]]:
     openings=[*doors,*windows]
     if not walls or not openings:
         return walls,doors,windows
@@ -299,21 +386,24 @@ def normalize_opening_hosts(walls:list[dict],doors:list[dict],windows:list[dict]
         return root
 
     def union(left:str,right:str):
-        a=find(left); b=find(right)
+        a=find(left)
+        b=find(right)
         if a!=b:
             parent[b]=a
 
     for opening in openings:
-        opening_orientation="h" if abs(float(opening["b"]["x"])-float(opening["a"]["x"]))>=abs(float(opening["b"]["y"])-float(opening["a"]["y"])) else "v"
         nearby=[]
         for wall in walls:
-            if _orientation(wall)!=opening_orientation:
+            if _angle_difference(wall,opening)>6.0:
                 continue
             tolerance=max(10.0,float(wall.get("thicknessPx",4.0))*3.0)
-            if _axis_distance(wall,opening)>tolerance:
+            cx=(float(opening["a"]["x"])+float(opening["b"]["x"]))/2
+            cy=(float(opening["a"]["y"])+float(opening["b"]["y"]))/2
+            distance,_=_point_line_metrics({"x":cx,"y":cy},wall)
+            if distance>tolerance:
                 continue
-            touches_a=_endpoint_distance(wall,opening["a"])<=tolerance*1.4
-            touches_b=_endpoint_distance(wall,opening["b"])<=tolerance*1.4
+            touches_a=_endpoint_distance(wall,opening["a"])<=tolerance*1.5
+            touches_b=_endpoint_distance(wall,opening["b"])<=tolerance*1.5
             if touches_a or touches_b:
                 nearby.append(str(wall["id"]))
         if len(nearby)>=2:
@@ -332,30 +422,50 @@ def normalize_opening_hosts(walls:list[dict],doors:list[dict],windows:list[dict]
             normalized.append(group[0])
             continue
 
-        orientation=_orientation(group[0])
-        lengths=[
-            max(1.0,abs(_ordered_segment(wall)[1]-_ordered_segment(wall)[0]))
-            for wall in group
-        ]
         canonical=max(
             group,
-            key=lambda wall:(abs(_ordered_segment(wall)[1]-_ordered_segment(wall)[0]),str(wall["id"])),
+            key=lambda wall:(math.hypot(
+                float(wall["b"]["x"])-float(wall["a"]["x"]),
+                float(wall["b"]["y"])-float(wall["a"]["y"]),
+            ),str(wall["id"])),
         )
-        total_length=sum(lengths)
-        axis=sum(_ordered_segment(wall)[2]*length for wall,length in zip(group,lengths))/max(total_length,1.0)
-        start=min(_ordered_segment(wall)[0] for wall in group)
-        end=max(_ordered_segment(wall)[1] for wall in group)
-        thickness=sum(float(wall.get("thicknessPx",4.0))*length for wall,length in zip(group,lengths))/max(total_length,1.0)
-        confidence=sum(float(wall.get("confidence",0.0))*length for wall,length in zip(group,lengths))/max(total_length,1.0)
-        provenances={wall.get("provenance") for wall in group if wall.get("provenance")}
+        length,ux,uy,nx,ny=_segment_geometry(canonical)
+        if length<=1e-9:
+            normalized.extend(group)
+            continue
+
+        weighted=[]
+        starts=[]
+        ends=[]
+        for wall in group:
+            wall_length,*_=_segment_geometry(wall)
+            start,end=_projection_interval(wall,ux,uy)
+            offset=_line_offset(wall,nx,ny)
+            weighted.append((max(1.0,wall_length),offset,wall))
+            starts.append(start)
+            ends.append(end)
+
+        total_length=sum(item[0] for item in weighted)
+        offset=sum(weight*value for weight,value,_ in weighted)/max(total_length,1.0)
+        start=min(starts)
+        end=max(ends)
+        thickness=sum(
+            float(wall.get("thicknessPx",4.0))*weight
+            for weight,_,wall in weighted
+        )/max(total_length,1.0)
+        confidence=sum(
+            float(wall.get("confidence",0.0))*weight
+            for weight,_,wall in weighted
+        )/max(total_length,1.0)
+        provenances={wall.get("provenance") for _,_,wall in weighted if wall.get("provenance")}
         provenance=next(iter(provenances)) if len(provenances)==1 else "mixed"
         merged={
             **canonical,
-            "a":{"x":float(start),"y":float(axis)} if orientation=="h" else {"x":float(axis),"y":float(start)},
-            "b":{"x":float(end),"y":float(axis)} if orientation=="h" else {"x":float(axis),"y":float(end)},
+            "a":_point_from_frame(start,offset,ux,uy),
+            "b":_point_from_frame(end,offset,ux,uy),
             "thicknessPx":round(thickness,2),
             "confidence":round(max(0.0,min(1.0,confidence)),3),
-            "reviewed":all(bool(wall.get("reviewed",False)) for wall in group),
+            "reviewed":all(bool(wall.get("reviewed",False)) for _,_,wall in weighted),
             "provenance":provenance or "opencv",
         }
         normalized.append(merged)
@@ -370,23 +480,17 @@ def normalize_opening_hosts(walls:list[dict],doors:list[dict],windows:list[dict]
             opening["wallId"]=replacement[wall_id]
             continue
 
-        # Last-resort host lookup for a detected gap whose original chosen segment
-        # was removed by another opening in the same collinear wall chain.
-        opening_orientation="h" if abs(float(opening["b"]["x"])-float(opening["a"]["x"]))>=abs(float(opening["b"]["y"])-float(opening["a"]["y"])) else "v"
-        cx=(float(opening["a"]["x"])+float(opening["b"]["x"]))/2
-        cy=(float(opening["a"]["y"])+float(opening["b"]["y"]))/2
         best=None
         for candidate in normalized_by_id.values():
-            if _orientation(candidate)!=opening_orientation:
+            if _angle_difference(candidate,opening)>6.0:
                 continue
-            start,end,axis=_ordered_segment(candidate)
-            position=cx if opening_orientation=="h" else cy
-            perpendicular=abs((cy if opening_orientation=="h" else cx)-axis)
             tolerance=max(10.0,float(candidate.get("thicknessPx",4.0))*3.0)
-            if start-tolerance<=position<=end+tolerance and perpendicular<=tolerance:
-                score=perpendicular
-                if best is None or score<best[0]:
-                    best=(score,str(candidate["id"]))
+            cx=(float(opening["a"]["x"])+float(opening["b"]["x"]))/2
+            cy=(float(opening["a"]["y"])+float(opening["b"]["y"]))/2
+            distance,t=_point_line_metrics({"x":cx,"y":cy},candidate)
+            if distance<=tolerance and -.08<=t<=1.08:
+                if best is None or distance<best[0]:
+                    best=(distance,str(candidate["id"]))
         if best is not None:
             opening["wallId"]=best[1]
 
