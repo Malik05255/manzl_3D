@@ -17,6 +17,8 @@ ALIASES={
     "wash basin":"sink",
     "washbasin":"sink",
     "toilet":"toilet",
+    "squat toilet":"toilet",
+    "squat_toilet":"toilet",
     "wc":"toilet",
     "water closet":"toilet",
     "bathtub":"bathtub",
