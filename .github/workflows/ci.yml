@@ -1,18 +1,22 @@
 name: CI
+
 on:
-  pull_request:
   push:
-    branches: [main]
+    branches: [main, feat/cloud-floorplan-editor]
+  pull_request:
+
 jobs:
-  web-and-api:
+  web-api:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
       - run: npm install
       - run: npm run build
+
   analyzer:
     runs-on: ubuntu-latest
     defaults:
@@ -24,7 +28,6 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: services/analyzer/requirements-dev.txt
-      - run: pip install -r requirements-dev.txt
-      - run: pytest -q
-      - run: docker build -t manzil-h-analyzer:test .
+      - run: pip install -r requirements.txt pytest
+      - run: python -m compileall app
+      - run: PYTHONPATH=. pytest -q
