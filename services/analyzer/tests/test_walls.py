@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.walls import _collapse_parallel_wall_bands,_estimate_thickness,_merge_axis_lines,_merge_near_collinear_candidates,add_vector_wall_candidates,enrich_walls_with_vector,rasterize_wall_mask
+from app.walls import _collapse_parallel_wall_bands,_estimate_thickness,_merge_axis_lines,_merge_near_collinear_candidates,add_vector_wall_candidates,enrich_walls_with_vector,quarantine_dimension_aligned_walls,rasterize_wall_mask
 
 
 def test_estimates_filled_horizontal_wall_thickness():
@@ -350,3 +350,44 @@ def test_high_confidence_pdf_vector_remains_in_trusted_room_barrier():
         min_pdf_vector_confidence=.70,
     )
     assert trusted[100,200]>0
+
+
+
+def test_thin_dimension_aligned_raster_wall_is_quarantined():
+    walls=[{
+        "id":"thin-line",
+        "a":{"x":100.0,"y":100.0},
+        "b":{"x":500.0,"y":100.0},
+        "thicknessPx":2.5,
+        "confidence":.80,
+        "provenance":"opencv",
+    }]
+    labels=[{
+        "text":"4.00 m",
+        "center":{"x":300.0,"y":82.0},
+        "confidence":.96,
+        "kind":"dimension",
+    }]
+    quarantined=quarantine_dimension_aligned_walls(walls,labels,800,1000)
+    assert quarantined=={"thin-line"}
+    assert walls[0]["confidence"]<=.64
+
+
+def test_thick_wall_near_dimension_label_is_not_quarantined():
+    walls=[{
+        "id":"real-wall",
+        "a":{"x":100.0,"y":100.0},
+        "b":{"x":500.0,"y":100.0},
+        "thicknessPx":14.0,
+        "confidence":.90,
+        "provenance":"opencv",
+    }]
+    labels=[{
+        "text":"4.00 m",
+        "center":{"x":300.0,"y":82.0},
+        "confidence":.96,
+        "kind":"dimension",
+    }]
+    quarantined=quarantine_dimension_aligned_walls(walls,labels,800,1000)
+    assert quarantined==set()
+    assert walls[0]["confidence"]==.90
