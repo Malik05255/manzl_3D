@@ -298,3 +298,55 @@ def test_parallel_wall_band_collapse_does_not_bridge_opening_gap():
         (250,104,400,104),
     ])
     assert len(collapsed)==2
+
+
+
+def test_dimension_aligned_vector_candidate_is_quarantined():
+    vectors=[
+        {"a":{"x":100.0,"y":100.0},"b":{"x":500.0,"y":100.0},"widthPx":1.5},
+        {"a":{"x":100.0,"y":112.0},"b":{"x":500.0,"y":112.0},"widthPx":1.5},
+    ]
+    labels=[{
+        "text":"4.00 m",
+        "center":{"x":300.0,"y":84.0},
+        "confidence":.96,
+        "kind":"dimension",
+    }]
+    result=add_vector_wall_candidates([],vectors,800,1000,labels=labels)
+    assert len(result)==1
+    assert result[0]["provenance"]=="pdf-vector"
+    assert result[0]["confidence"]<=.64
+
+
+def test_room_barrier_skips_quarantined_pdf_vector_but_keeps_wall_in_model():
+    wall={
+        "id":"dimension-like",
+        "a":{"x":50.0,"y":100.0},
+        "b":{"x":350.0,"y":100.0},
+        "thicknessPx":10.0,
+        "confidence":.64,
+        "provenance":"pdf-vector",
+    }
+    unrestricted=rasterize_wall_mask([wall],220,420)
+    trusted=rasterize_wall_mask(
+        [wall],220,420,
+        min_pdf_vector_confidence=.70,
+    )
+    assert unrestricted[100,200]>0
+    assert trusted[100,200]==0
+
+
+def test_high_confidence_pdf_vector_remains_in_trusted_room_barrier():
+    wall={
+        "id":"wall-vector",
+        "a":{"x":50.0,"y":100.0},
+        "b":{"x":350.0,"y":100.0},
+        "thicknessPx":10.0,
+        "confidence":.95,
+        "provenance":"pdf-vector",
+    }
+    trusted=rasterize_wall_mask(
+        [wall],220,420,
+        min_pdf_vector_confidence=.70,
+    )
+    assert trusted[100,200]>0
