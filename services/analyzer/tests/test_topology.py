@@ -161,3 +161,54 @@ def test_canonicalize_clears_stale_dimension_references():
     assert canonical.dimensions[0].referenceWallId is None
     assert canonical.dimensions[0].orientation=="unknown"
     assert canonical.dimensions[0].sourceLabelId is None
+
+
+def test_classifies_slanted_hull_walls_as_exterior():
+    rooms=[{
+        "id":"diamond",
+        "polygon":[
+            {"x":300.0,"y":110.0},
+            {"x":490.0,"y":300.0},
+            {"x":300.0,"y":490.0},
+            {"x":110.0,"y":300.0},
+        ],
+        "boundaryWallIds":["ne","se","sw","nw"],
+    }]
+    walls=[
+        {"id":"ne","a":{"x":300.0,"y":100.0},"b":{"x":500.0,"y":300.0},"thicknessPx":10.0,"confidence":.9},
+        {"id":"se","a":{"x":500.0,"y":300.0},"b":{"x":300.0,"y":500.0},"thicknessPx":10.0,"confidence":.9},
+        {"id":"sw","a":{"x":300.0,"y":500.0},"b":{"x":100.0,"y":300.0},"thicknessPx":10.0,"confidence":.9},
+        {"id":"nw","a":{"x":100.0,"y":300.0},"b":{"x":300.0,"y":100.0},"thicknessPx":10.0,"confidence":.9},
+    ]
+    classify_wall_roles(walls,rooms)
+    assert {wall["role"] for wall in walls}=={"exterior"}
+    assert all(wall["locked"] for wall in walls)
+
+
+def test_shared_slanted_wall_remains_interior():
+    rooms=[
+        {
+            "id":"upper",
+            "polygon":[
+                {"x":100.0,"y":100.0},{"x":500.0,"y":100.0},{"x":300.0,"y":300.0},
+            ],
+            "boundaryWallIds":["shared"],
+        },
+        {
+            "id":"lower",
+            "polygon":[
+                {"x":100.0,"y":500.0},{"x":300.0,"y":300.0},{"x":500.0,"y":500.0},
+            ],
+            "boundaryWallIds":["shared"],
+        },
+    ]
+    walls=[{
+        "id":"shared",
+        "a":{"x":100.0,"y":100.0},
+        "b":{"x":300.0,"y":300.0},
+        "thicknessPx":10.0,
+        "confidence":.9,
+    }]
+    classify_wall_roles(walls,rooms)
+    assert walls[0]["role"]=="interior"
+    assert walls[0]["locked"] is False
