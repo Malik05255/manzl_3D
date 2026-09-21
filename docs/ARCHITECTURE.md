@@ -17,7 +17,7 @@ Cloudflare Worker
 Managed Analyzer
    ├─ protected source pull
    ├─ PDF / image normalization
-   ├─ Arabic + English OCR
+   ├─ Arabic + English OCR (Tesseract + optional Google Vision in parallel)
    ├─ walls + rooms
    ├─ metric calibration
    ├─ confidence validation
@@ -49,9 +49,11 @@ Command
 
 - لا يوجد تعديل بالمتر إذا لم يثبت المقياس.
 - الاكتشاف منخفض الثقة لا يتحول إلى عنصر مؤكد.
-- `confidence` تبقى درجة الاستخراج الآلي الأصلية، بينما `reviewed` يسجل مراجعة المستخدم و`provenance` يسجل مصدر العنصر مثل OpenCV أو OCR أو PDF native أو manual/AI.
+- `confidence` تبقى درجة الاستخراج الآلي الأصلية، بينما `reviewed` يسجل مراجعة المستخدم و`provenance` يسجل مصدر العنصر مثل OpenCV أو OCR محلي أو `cloud-ocr` أو PDF native أو manual/AI.
+- OCR السحابي اختياري ويعمل داخل الـAnalyzer فقط؛ المفتاح لا يمر إلى الـPWA. النتائج تدمج مع OCR المحلي حسب الموقع والنص والثقة، وتبقى طبقة نص PDF الأصلية ذات الأولوية عندما تكون متاحة.
 - لا نخترع بابًا أو نافذة عند عدم كفاية الدليل.
 - كل اعتماد ينتج Revision جديدة.
+- بيانات الطابق (الاسم والمنسوب والارتفاع) تحفظ داخل Snapshot الـRevision أيضًا، لذلك الاستعادة تعيد حالة الطابق وليس الرسم وحده.
 - لا يعتمد Manual Save أو H Engineer أي تغيير يضيف مشكلة حرجة جديدة مقارنة بالحالة المرجعية؛ نتيجة الفحص تُعاد للواجهة وتُحدد الغرف المتأثرة بصريًا.
 - Validator يفحص room self-intersection وتداخل المضلعات غير المستطيلة، إضافة إلى اتصال الفتحات والجدران والأبعاد والمساحات.
 - الحفظ يستخدم optimistic revision checks وفهرسًا فريدًا لمنع تبادل الكتابة بين تبويبين أو جهازين على نفس المشروع.
