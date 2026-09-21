@@ -5,10 +5,10 @@ import httpx
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,HttpUrl
 from .commands import find_target_room,parse_target_size
-from .document import decode_document_with_page,preprocess
+from .document import decode_document_with_page,extract_pdf_text_lines,preprocess
 from .edits import build_proposals,build_resize_proposals
 from .models import EditRequest,FloorPlan,ProposalResponse,ResizeRequest,ValidationReport,ValidationRequest
-from .ocr import extract_ocr_labels
+from .ocr import _merge_labels,classify_text,extract_ocr_labels
 from .openings import detect_doors,detect_windows
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
@@ -83,6 +83,24 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
 
     await progress(req.callback_url,req.project_id,"ocr",35,"قراءة النصوص والأبعاد")
     labels=extract_ocr_labels(image)
+    if req.mime_type=="application/pdf":
+        try:
+            native_lines=extract_pdf_text_lines(data,source_page)
+            native_labels=[
+                {
+                    "id":f"pdf-text-{index}",
+                    "text":item["text"],
+                    "center":item["center"],
+                    "confidence":0.995,
+                    "kind":classify_text(item["text"]),
+                }
+                for index,item in enumerate(native_lines,start=1)
+            ]
+            if native_labels:
+                distance=max(12.0,min(image.shape[:2])*0.012)
+                labels=_merge_labels(labels,native_labels,distance)
+        except Exception:
+            pass
 
     await progress(req.callback_url,req.project_id,"geometry",58,"استخراج الجدران والهندسة")
     walls,wall_mask=detect_walls(ink)
