@@ -371,7 +371,13 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(!object) return json({error:"تعذر تحميل النسخة"},500);
     const plan=await object.json<FloorPlanModel>();
     if(plan.id!==id||plan.schemaVersion!==1) return json({error:"النسخة المخزنة غير صالحة"},500);
-    try{await persistPlan(env,id,plan,`استعادة النسخة ${revisionNumber}`,secured.revision,undefined,item.preview_key);}
+    let restorePreviewKey=item.preview_key;
+    if(!restorePreviewKey){
+      const floorPreview=await env.DB.prepare("SELECT preview_key FROM project_floors WHERE project_id=? AND source_page=?")
+        .bind(id,plan.source.page).first<{preview_key:string|null}>();
+      restorePreviewKey=floorPreview?.preview_key??null;
+    }
+    try{await persistPlan(env,id,plan,`استعادة النسخة ${revisionNumber}`,secured.revision,undefined,restorePreviewKey);}
     catch(error){if(error instanceof Error&&error.message==="STALE_REVISION") return json({error:"تغير المشروع أثناء الاستعادة. أعد تحميله وحاول مرة أخرى."},409);throw error;}
     const row=await getProjectRow(env,id);
     return json(await projectView(env,row!,true));
