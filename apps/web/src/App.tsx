@@ -127,7 +127,7 @@ function Upload({onStarted,onBack}:{onStarted:(p:ProjectView)=>void;onBack:()=>v
 function Processing({projectId,onReady,onHome}:{projectId:string;onReady:(p:ProjectView)=>void;onHome:()=>void}){
   const[project,setProject]=useState<ProjectView|null>(null);const[retryBusy,setRetryBusy]=useState(false);const[retryNonce,setRetryNonce]=useState(0);const[retryError,setRetryError]=useState<string|null>(null);
   useEffect(()=>{let alive=true;const poll=async()=>{try{const next=await getProject(projectId);if(!alive)return;setProject(next);if(next.status==="ready"&&next.plan){onReady(next);return;}if(next.status==="error")return;}catch{}if(alive)window.setTimeout(poll,1200);};poll();return()=>{alive=false;};},[projectId,onReady,retryNonce]);
-  const retry=async()=>{setRetryBusy(true);setRetryError(null);try{const next=await retryAnalysis(projectId);setProject(next);setRetryNonce(value=>value+1);}catch(e){setRetryError(e instanceof Error?e.message:"تعذر إعادة التحليل");}finally{setRetryBusy(false);}};
+  const retry=async()=>{if(!project)return;setRetryBusy(true);setRetryError(null);try{const next=await retryAnalysis(projectId,project.revision);setProject(next);setRetryNonce(value=>value+1);}catch(e){setRetryError(e instanceof Error?e.message:"تعذر إعادة التحليل");}finally{setRetryBusy(false);}};
   const progress=Math.max(0,Math.min(100,project?.progress??10));
   return <main className="processing-page"><Brand/><section className="processing-card">
     <div className="progress-ring" style={{"--p":`${progress*3.6}deg`} as React.CSSProperties}><div><strong>{progress}%</strong><span>تحليل حقيقي</span></div></div>
@@ -480,7 +480,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     setPageSwitchBusy(true);setNotice(`جارٍ تحليل الصفحة ${page} من ${pageCount} لأول مرة...`);
     try{
       const baselineRevision=project.revision;
-      await retryAnalysis(project.id,page);
+      await retryAnalysis(project.id,project.revision,page);
       let fresh:ProjectView|null=null;
       for(let attempt=0;attempt<140;attempt++){
         await new Promise(resolve=>window.setTimeout(resolve,1200));
