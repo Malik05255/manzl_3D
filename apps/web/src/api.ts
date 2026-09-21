@@ -131,7 +131,7 @@ export async function getProjectPreview(id:string):Promise<string|null>{
   if(!response.ok)throw new Error("تعذر تحميل المخطط الأصلي");
   return URL.createObjectURL(await response.blob());
 }
-export const askEngineer=(id:string,command:string,targetRoomId?:string|null)=>request<EditProposalResponse>(`/v1/projects/${id}/ai/proposals`,{method:"POST",body:JSON.stringify({command,targetRoomId:targetRoomId??null})});
+export const askEngineer=(id:string,command:string,context?:{targetRoomId?:string|null;targetWallId?:string|null;targetOpeningId?:string|null})=>request<EditProposalResponse>(`/v1/projects/${id}/ai/proposals`,{method:"POST",body:JSON.stringify({command,targetRoomId:context?.targetRoomId??null,targetWallId:context?.targetWallId??null,targetOpeningId:context?.targetOpeningId??null})});
 export const resizeRoomPrecisely=(id:string,roomId:string,widthM:number,heightM:number)=>request<EditProposalResponse>(`/v1/projects/${id}/geometry/resize-proposals`,{method:"POST",body:JSON.stringify({roomId,widthM,heightM})});
 export const validateProject=(id:string,plan:FloorPlanModel)=>request<ValidationReport>(`/v1/projects/${id}/validate`,{method:"POST",body:JSON.stringify({plan})});
 export async function applyProposal(id:string,payload:ApplyProposalRequest){const project=await request<ProjectView>(`/v1/projects/${id}/ai/apply`,{method:"POST",body:JSON.stringify(payload)});rememberKnownProject(project);return project;}
