@@ -223,6 +223,33 @@ export async function route(request:Request,env:Env):Promise<Response>{
     return json(await projectView(env,row!,false),202);
   }
 
+  const activateFloor=path.match(/^\/v1\/projects\/([^/]+)\/floors\/([^/]+)\/activate$/);
+  if(activateFloor&&request.method==="POST"){
+    const id=activateFloor[1];
+    const floorId=decodeURIComponent(activateFloor[2]);
+    const secured=await protectedRow(request,env,id);
+    if(secured instanceof Response) return secured;
+    if(analysisBusy(secured)) return json({error:"تحليل المصدر جارٍ الآن. انتظر اكتماله قبل تبديل الطابق."},409);
+    if(secured.draft_key) return json({error:"يوجد مسودة تلقائية غير مثبتة. احفظها أو تجاهلها قبل تبديل الطابق."},409);
+    const body:{expectedRevision?:number}=await request.json<{expectedRevision?:number}>().catch(()=>({}));
+    const expectedRevision=Number(body.expectedRevision);
+    if(!Number.isInteger(expectedRevision)||expectedRevision<0) return json({error:"رقم النسخة المرجعية غير صالح"},400);
+    if(expectedRevision!==secured.revision) return json({error:"تغير المشروع في مكان آخر. حدّث المشروع قبل تبديل الطابق."},409);
+
+    const floor=await env.DB.prepare("SELECT id,plan_key,preview_key,source_page FROM project_floors WHERE id=? AND project_id=?")
+      .bind(floorId,id).first<{id:string;plan_key:string;preview_key:string|null;source_page:number}>();
+    if(!floor) return json({error:"الطابق المطلوب غير موجود"},404);
+    if(secured.active_floor_id===floor.id) return json(await projectView(env,secured,true));
+
+    const now=new Date().toISOString();
+    const nextRevision=secured.revision+1;
+    const updated=await env.DB.prepare("UPDATE projects SET plan_key=?, preview_key=?, active_floor_id=?, draft_key=NULL, revision=?, status='ready', phase='ready', progress=100, message=?, error=NULL, updated_at=? WHERE id=? AND revision=? AND status NOT IN ('queued','analyzing')")
+      .bind(floor.plan_key,floor.preview_key,floor.id,nextRevision,`تم فتح الصفحة ${floor.source_page}`,now,id,secured.revision).run();
+    if((updated.meta.changes??0)<1) return json({error:"تغير المشروع أثناء تبديل الطابق. حدّثه وحاول مرة أخرى."},409);
+    const row=await getProjectRow(env,id);
+    return json(await projectView(env,row!,true));
+  }
+
   const projectMatch=path.match(/^\/v1\/projects\/([^/]+)$/);
   if(projectMatch&&request.method==="GET"){
     const secured=await protectedRow(request,env,projectMatch[1]);
@@ -258,6 +285,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
     try{await persistDraft(env,id,plan,expectedRevision);}
     catch(error){
       if(error instanceof Error&&error.message==="ANALYSIS_IN_PROGRESS") return json({error:"تحليل المصدر جارٍ الآن. انتظر حتى يكتمل قبل حفظ المسودة."},409);
+      if(error instanceof Error&&error.message==="STALE_FLOOR") return json({error:"تم فتح طابق آخر في المشروع. أعد تحميل المشروع قبل حفظ هذه المسودة."},409);
       if(error instanceof Error&&error.message==="STALE_DRAFT") return json({error:"المسودة متقادمة بعد حفظ نسخة أحدث"},409);
       throw error;
     }
@@ -284,12 +312,14 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const id=revision[1];
     const secured=await protectedRow(request,env,id);
     if(secured instanceof Response) return secured;
-    const result=await env.DB.prepare("SELECT revision, summary, created_at FROM revisions WHERE project_id=? ORDER BY revision DESC LIMIT 50")
-      .bind(id).all<{revision:number;summary:string;created_at:string}>();
+    const result=await env.DB.prepare("SELECT revision, summary, created_at, source_page, floor_id FROM revisions WHERE project_id=? ORDER BY revision DESC LIMIT 50")
+      .bind(id).all<{revision:number;summary:string;created_at:string;source_page:number|null;floor_id:string|null}>();
     return json({items:(result.results??[]).map(item=>({
       revision:item.revision,
       summary:item.summary,
-      createdAt:item.created_at
+      createdAt:item.created_at,
+      sourcePage:item.source_page,
+      floorId:item.floor_id,
     }))});
   }
   if(revision&&request.method==="POST"){
@@ -333,14 +363,14 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(analysisBusy(secured)) return json({error:"تحليل المصدر جارٍ الآن. لا يمكن استعادة نسخة أثناء التحليل."},409);
     const revisionNumber=Number(restoreRevision[2]);
     if(!Number.isInteger(revisionNumber)||revisionNumber<1) return json({error:"رقم النسخة غير صالح"},400);
-    const item=await env.DB.prepare("SELECT plan_key FROM revisions WHERE project_id=? AND revision=?")
-      .bind(id,revisionNumber).first<{plan_key:string}>();
+    const item=await env.DB.prepare("SELECT plan_key, preview_key FROM revisions WHERE project_id=? AND revision=?")
+      .bind(id,revisionNumber).first<{plan_key:string;preview_key:string|null}>();
     if(!item?.plan_key) return json({error:"النسخة غير موجودة"},404);
     const object=await env.ASSETS.get(item.plan_key);
     if(!object) return json({error:"تعذر تحميل النسخة"},500);
     const plan=await object.json<FloorPlanModel>();
     if(plan.id!==id||plan.schemaVersion!==1) return json({error:"النسخة المخزنة غير صالحة"},500);
-    try{await persistPlan(env,id,plan,`استعادة النسخة ${revisionNumber}`,secured.revision);}
+    try{await persistPlan(env,id,plan,`استعادة النسخة ${revisionNumber}`,secured.revision,undefined,item.preview_key);}
     catch(error){if(error instanceof Error&&error.message==="STALE_REVISION") return json({error:"تغير المشروع أثناء الاستعادة. أعد تحميله وحاول مرة أخرى."},409);throw error;}
     const row=await getProjectRow(env,id);
     return json(await projectView(env,row!,true));
