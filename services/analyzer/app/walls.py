@@ -671,7 +671,10 @@ def _thin_matching_vector(
         vo=((vax+vbx)/2)*nx+((vay+vby)/2)*ny
         shared=max(0.0,min(we,ve)-max(ws,vs))
         overlap=shared/max(1.0,min(wlen,ve-vs))
-        axis_tol=max(5.0,stroke*2.5)
+        # Raster Hough may emit several centre lines across the same thin PDF
+        # dimension stroke after antialiasing/text contamination. Allow a small
+        # page-relative normal band so all duplicates are quarantined together.
+        axis_tol=max(8.0,min(20.0,min_side*.020),stroke*2.5)
         if overlap>=.60 and abs(vo-wo)<=axis_tol:
             return True
     return False
