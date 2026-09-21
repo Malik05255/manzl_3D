@@ -66,6 +66,144 @@ def _plan_likeness_score(image:np.ndarray)->float:
     return line_bonus+density_bonus+ink_bonus-dense_penalty
 
 
+def _order_quad(points:np.ndarray)->np.ndarray:
+    pts=np.asarray(points,dtype=np.float32).reshape(4,2)
+    sums=pts.sum(axis=1)
+    diffs=np.diff(pts,axis=1).reshape(-1)
+    return np.array([
+        pts[np.argmin(sums)],
+        pts[np.argmin(diffs)],
+        pts[np.argmax(sums)],
+        pts[np.argmax(diffs)],
+    ],dtype=np.float32)
+
+
+def _detect_document_quad(image:np.ndarray)->np.ndarray|None:
+    h,w=image.shape[:2]
+    longest=max(h,w)
+    scale=min(1.0,1400.0/max(1,longest))
+    preview=cv2.resize(image,None,fx=scale,fy=scale,interpolation=cv2.INTER_AREA) if scale<1 else image.copy()
+    gray=cv2.cvtColor(preview,cv2.COLOR_BGR2GRAY)
+    gray=cv2.GaussianBlur(gray,(5,5),0)
+    edges=cv2.Canny(gray,45,135)
+    edges=cv2.dilate(edges,np.ones((3,3),np.uint8),iterations=1)
+    contours,_=cv2.findContours(edges,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
+    page_area=float(preview.shape[0]*preview.shape[1])
+
+    best=None
+    best_area=0.0
+    for contour in sorted(contours,key=cv2.contourArea,reverse=True)[:30]:
+        perimeter=cv2.arcLength(contour,True)
+        approx=cv2.approxPolyDP(contour,0.018*perimeter,True)
+        if len(approx)!=4 or not cv2.isContourConvex(approx):
+            continue
+        area=float(cv2.contourArea(approx))
+        if area<page_area*0.38:
+            continue
+        x,y,rw,rh=cv2.boundingRect(approx)
+        if rw<preview.shape[1]*0.45 or rh<preview.shape[0]*0.45:
+            continue
+        if area>best_area:
+            best_area=area
+            best=approx.reshape(4,2).astype(np.float32)
+
+    if best is None:
+        return None
+    return _order_quad(best/scale)
+
+
+def _warp_quad(image:np.ndarray,quad:np.ndarray)->np.ndarray:
+    ordered=_order_quad(quad)
+    tl,tr,br,bl=ordered
+    width_top=np.linalg.norm(tr-tl)
+    width_bottom=np.linalg.norm(br-bl)
+    height_left=np.linalg.norm(bl-tl)
+    height_right=np.linalg.norm(br-tr)
+    width=int(round(max(width_top,width_bottom)))
+    height=int(round(max(height_left,height_right)))
+    if width<120 or height<120:
+        return image
+
+    destination=np.array([
+        [0,0],
+        [width-1,0],
+        [width-1,height-1],
+        [0,height-1],
+    ],dtype=np.float32)
+    matrix=cv2.getPerspectiveTransform(ordered,destination)
+    return cv2.warpPerspective(
+        image,matrix,(width,height),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255,255,255),
+    )
+
+
+def _deskew_angle(image:np.ndarray)->float:
+    gray=cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
+    edges=cv2.Canny(gray,60,170)
+    h,w=gray.shape[:2]
+    raw=cv2.HoughLinesP(
+        edges,1,np.pi/180,
+        threshold=max(50,min(h,w)//12),
+        minLineLength=max(60,min(h,w)//7),
+        maxLineGap=max(8,min(h,w)//120),
+    )
+    if raw is None:
+        return 0.0
+    angles=[]
+    weights=[]
+    for x1,y1,x2,y2 in raw[:,0]:
+        dx=float(x2-x1); dy=float(y2-y1)
+        length=float((dx*dx+dy*dy)**0.5)
+        if length<40:
+            continue
+        angle=float(np.degrees(np.arctan2(dy,dx)))
+        while angle>45:
+            angle-=90
+        while angle<-45:
+            angle+=90
+        if abs(angle)<=10:
+            angles.append(angle)
+            weights.append(length)
+    if not angles:
+        return 0.0
+    order=np.argsort(angles)
+    angles_arr=np.array(angles)[order]
+    weights_arr=np.array(weights)[order]
+    cutoff=weights_arr.sum()/2
+    index=int(np.searchsorted(np.cumsum(weights_arr),cutoff))
+    return float(angles_arr[min(index,len(angles_arr)-1)])
+
+
+def _rotate_keep_bounds(image:np.ndarray,angle:float)->np.ndarray:
+    if abs(angle)<0.35:
+        return image
+    h,w=image.shape[:2]
+    center=(w/2.0,h/2.0)
+    matrix=cv2.getRotationMatrix2D(center,-angle,1.0)
+    cos=abs(matrix[0,0]); sin=abs(matrix[0,1])
+    new_w=int(round(h*sin+w*cos))
+    new_h=int(round(h*cos+w*sin))
+    matrix[0,2]+=new_w/2-center[0]
+    matrix[1,2]+=new_h/2-center[1]
+    return cv2.warpAffine(
+        image,matrix,(new_w,new_h),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255,255,255),
+    )
+
+
+def normalize_raster_document(image:np.ndarray)->np.ndarray:
+    quad=_detect_document_quad(image)
+    normalized=_warp_quad(image,quad) if quad is not None else image
+    angle=_deskew_angle(normalized)
+    if abs(angle)<=8:
+        normalized=_rotate_keep_bounds(normalized,angle)
+    return normalized
+
+
 def _candidate_page_indexes(page_count:int)->list[int]:
     configured=int(os.getenv("PDF_PAGE_SCAN_LIMIT","40") or "40")
     limit=max(1,min(configured,100))
@@ -100,7 +238,7 @@ def decode_document_with_page(data:bytes,mime_type:str)->tuple[np.ndarray,int]:
     image=cv2.imdecode(raw,cv2.IMREAD_COLOR)
     if image is None:
         raise ValueError("IMAGE_DECODE_FAILED")
-    return image,1
+    return normalize_raster_document(image),1
 
 
 def decode_document(data:bytes,mime_type:str)->np.ndarray:

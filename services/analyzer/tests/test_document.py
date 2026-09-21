@@ -2,7 +2,7 @@ import fitz
 import numpy as np
 import cv2
 
-from app.document import _plan_likeness_score,decode_document_with_page
+from app.document import _order_quad,_plan_likeness_score,_warp_quad,decode_document_with_page
 
 
 def test_plan_likeness_prefers_orthogonal_geometry():
@@ -38,3 +38,15 @@ def test_pdf_selects_floorplan_like_page():
     image,page=decode_document_with_page(data,"application/pdf")
     assert page==2
     assert image.shape[0]>0 and image.shape[1]>0
+
+
+def test_orders_and_warps_document_quad():
+    image=np.full((320,420,3),220,dtype=np.uint8)
+    quad=np.array([[70,45],[360,70],[330,275],[45,250]],dtype=np.float32)
+    cv2.fillConvexPoly(image,quad.astype(np.int32),(255,255,255))
+    cv2.polylines(image,[quad.astype(np.int32)],True,(0,0,0),5)
+    ordered=_order_quad(quad[[2,0,3,1]])
+    assert ordered.shape==(4,2)
+    warped=_warp_quad(image,quad)
+    assert warped.shape[0]>180
+    assert warped.shape[1]>250
