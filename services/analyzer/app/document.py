@@ -319,8 +319,9 @@ def extract_pdf_vector_lines(data:bytes,page_number:int,render_scale:float=PDF_R
                     elif dy>=max(3.0,dx*8.0):
                         x=(a["x"]+b["x"])/2
                         a={"x":x,"y":min(a["y"],b["y"])}; b={"x":x,"y":max(a["y"],b["y"])}
-                    else:
-                        continue
+                    # Keep genuine diagonal CAD strokes too. Wall extraction decides
+                    # later whether a line is wall evidence, so dimension/guide lines
+                    # are not promoted here merely because they are diagonal.
                     result.append({"a":a,"b":b,"widthPx":round(width,2)})
         return result
     finally:
