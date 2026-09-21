@@ -23,6 +23,7 @@ class Room(BaseModel):
     polygon: list[Point]
     confidence: float = Field(ge=0, le=1)
     areaM2: float | None = None
+    boundaryWallIds: list[str] = Field(default_factory=list)
     reviewed: bool = False
     provenance: ElementProvenance | None = None
 
