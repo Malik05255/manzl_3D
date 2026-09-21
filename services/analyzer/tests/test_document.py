@@ -139,3 +139,17 @@ def test_pdf_native_vector_lines_preserve_diagonal_geometry():
     assert diagonal["a"]["y"]==60*PDF_RENDER_SCALE
     assert diagonal["b"]["x"]==300*PDF_RENDER_SCALE
     assert diagonal["b"]["y"]==220*PDF_RENDER_SCALE
+
+
+def test_plan_likeness_recognizes_slanted_structural_geometry():
+    notes=np.full((600,600,3),255,dtype=np.uint8)
+    for index,text in enumerate(["GENERAL NOTES","MATERIALS","SPECIFICATIONS","REVISION"]):
+        cv2.putText(notes,text,(60,120+index*90),cv2.FONT_HERSHEY_SIMPLEX,.8,(0,0,0),2)
+
+    slanted=np.full((600,600,3),255,dtype=np.uint8)
+    diamond=np.array([[300,70],[530,300],[300,530],[70,300]],dtype=np.int32)
+    cv2.polylines(slanted,[diamond],True,(0,0,0),7)
+    cv2.line(slanted,(185,185),(415,415),(0,0,0),6)
+    cv2.line(slanted,(415,185),(185,415),(0,0,0),6)
+
+    assert _plan_likeness_score(slanted)>_plan_likeness_score(notes)
