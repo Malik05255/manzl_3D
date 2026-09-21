@@ -7,6 +7,7 @@ class Point(BaseModel):
     y: float
 
 ElementProvenance = Literal["opencv","pdf-vector","ocr","pdf-text","manual","ai","mixed"]
+WallRole = Literal["unknown","interior","exterior","structural"]
 
 class Wall(BaseModel):
     id: str
@@ -14,6 +15,8 @@ class Wall(BaseModel):
     b: Point
     thicknessPx: float = 4.0
     confidence: float = Field(ge=0, le=1)
+    role: WallRole = "unknown"
+    locked: bool = False
     reviewed: bool = False
     provenance: ElementProvenance | None = None
 
