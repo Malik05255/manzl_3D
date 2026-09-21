@@ -28,7 +28,7 @@ export function createManualWall(plan:FloorPlanModel,a:Point,b:Point):FloorPlanM
   while(existing.has(`wall-manual-${index}`))index+=1;
 
   const inferred=median(plan.walls.map(wall=>wall.thicknessPx).filter(value=>Number.isFinite(value)&&value>0));
-  const metricDefault=plan.metersPerPixel?.valueOf()?(.15/plan.metersPerPixel!):null;
+  const metricDefault=plan.metersPerPixel&&plan.metersPerPixel>0 ? .15/plan.metersPerPixel : null;
   const thicknessPx=Math.max(2,Math.min(200,inferred??metricDefault??8));
 
   const wall:Wall={
