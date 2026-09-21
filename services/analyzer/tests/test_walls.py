@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.walls import _estimate_thickness,enrich_walls_with_vector
+from app.walls import _estimate_thickness,enrich_walls_with_vector,rasterize_wall_mask
 
 
 def test_estimates_filled_horizontal_wall_thickness():
@@ -50,3 +50,25 @@ def test_unrelated_vector_line_does_not_boost_wall_confidence():
     }]
     enriched=enrich_walls_with_vector(detected,vectors)
     assert enriched[0]["confidence"]==0.80
+
+
+def test_rasterized_canonical_wall_closes_detected_opening_gap():
+    base=np.zeros((220,420),dtype=np.uint8)
+    cv2.line(base,(20,100),(160,100),255,8)
+    cv2.line(base,(260,100),(400,100),255,8)
+    walls=[{
+        "id":"canonical",
+        "a":{"x":20.0,"y":100.0},
+        "b":{"x":400.0,"y":100.0},
+        "thicknessPx":8.0,
+        "confidence":.9,
+    }]
+    barrier=rasterize_wall_mask(walls,220,420,base)
+    assert barrier[100,210]>0
+    assert barrier[100,100]>0
+
+
+def test_rasterized_wall_mask_rejects_wrong_base_shape():
+    import pytest
+    with pytest.raises(ValueError,match="WALL_MASK_SHAPE"):
+        rasterize_wall_mask([],200,300,np.zeros((100,100),dtype=np.uint8))
