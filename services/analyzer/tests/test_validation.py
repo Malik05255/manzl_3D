@@ -262,3 +262,57 @@ def test_unconfirmed_dimension_without_span_does_not_assume_full_wall_length():
     )]
     report=validate_plan(plan)
     assert not any(item.code=="source_dimension_mismatch" for item in report.findings)
+
+
+
+def test_small_unlabeled_pdf_vector_enclosure_is_flagged():
+    plan=base_plan()
+    from app.models import Room,Wall
+    plan.walls=[
+        Wall(id="top",a=Point(x=100,y=100),b=Point(x=180,y=100),thicknessPx=8,confidence=.95,provenance="pdf-vector"),
+        Wall(id="right",a=Point(x=180,y=100),b=Point(x=180,y=180),thicknessPx=8,confidence=.95,provenance="pdf-vector"),
+        Wall(id="bottom",a=Point(x=100,y=180),b=Point(x=180,y=180),thicknessPx=8,confidence=.95,provenance="pdf-vector"),
+        Wall(id="left",a=Point(x=100,y=100),b=Point(x=100,y=180),thicknessPx=8,confidence=.95,provenance="pdf-vector"),
+    ]
+    plan.rooms=[Room(
+        id="micro",
+        name="غرفة 1",
+        polygon=[
+            Point(x=100,y=100),Point(x=180,y=100),
+            Point(x=180,y=180),Point(x=100,y=180),
+        ],
+        confidence=.60,
+        areaM2=.64,
+        boundaryWallIds=["top","right","bottom","left"],
+        provenance="opencv",
+    )]
+    report=validate_plan(plan)
+    finding=next(item for item in report.findings if item.code=="room_vector_enclosure_unverified")
+    assert finding.severity=="warning"
+    assert finding.roomIds==["micro"]
+    assert set(finding.wallIds)=={"top","right","bottom","left"}
+
+
+def test_named_small_pdf_vector_room_does_not_get_unverified_enclosure_warning():
+    plan=base_plan()
+    from app.models import Room,Wall
+    plan.walls=[
+        Wall(id="top",a=Point(x=100,y=100),b=Point(x=180,y=100),thicknessPx=8,confidence=.95,provenance="pdf-vector"),
+        Wall(id="right",a=Point(x=180,y=100),b=Point(x=180,y=180),thicknessPx=8,confidence=.95,provenance="pdf-vector"),
+        Wall(id="bottom",a=Point(x=100,y=180),b=Point(x=180,y=180),thicknessPx=8,confidence=.95,provenance="pdf-vector"),
+        Wall(id="left",a=Point(x=100,y=100),b=Point(x=100,y=180),thicknessPx=8,confidence=.95,provenance="pdf-vector"),
+    ]
+    plan.rooms=[Room(
+        id="bath",
+        name="حمام",
+        polygon=[
+            Point(x=100,y=100),Point(x=180,y=100),
+            Point(x=180,y=180),Point(x=100,y=180),
+        ],
+        confidence=.88,
+        areaM2=.64,
+        boundaryWallIds=["top","right","bottom","left"],
+        provenance="mixed",
+    )]
+    report=validate_plan(plan)
+    assert not any(item.code=="room_vector_enclosure_unverified" for item in report.findings)
