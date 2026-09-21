@@ -6,10 +6,14 @@ export const json=(data:unknown,status=200,headers:HeadersInit={})=>new Response
 });
 
 export function withCors(env:Env,request:Request,response:Response){
-  const origin=request.headers.get("origin")??"";
-  const allowed=!env.ALLOWED_ORIGIN||env.ALLOWED_ORIGIN==="*"||origin===env.ALLOWED_ORIGIN;
+  const origin=request.headers.get("origin")?.trim()??"";
+  const configured=env.ALLOWED_ORIGIN?.trim()??"";
+  const requestOrigin=new URL(request.url).origin;
+  const allowed=!origin
+    ||configured==="*"
+    ||(configured?origin===configured:origin===requestOrigin);
   const headers=new Headers(response.headers);
-  if(allowed) headers.set("access-control-allow-origin",env.ALLOWED_ORIGIN==="*"?"*":(origin||env.ALLOWED_ORIGIN||"*"));
+  if(origin&&allowed) headers.set("access-control-allow-origin",configured==="*"?"*":origin);
   headers.set("access-control-allow-methods","GET,POST,PUT,DELETE,OPTIONS");
   headers.set("access-control-allow-headers","content-type,authorization");
   headers.set("vary","Origin");

@@ -46,6 +46,6 @@ PYTHONPATH=. pytest -q
 docker build -t manzil-h-analyzer .
 ```
 
-أنشئ D1 وR2 وQueue، ثم انسخ `apps/api/wrangler.jsonc.example` إلى `wrangler.jsonc`. ضع نفس `INTERNAL_TOKEN` في Worker وAnalyzer.
+أنشئ D1 وR2 وQueue، ثم انسخ `apps/api/wrangler.jsonc.example` إلى `wrangler.jsonc`. ضع نفس `INTERNAL_TOKEN` في Worker وAnalyzer، واضبط `ALLOWED_ORIGIN` على رابط واجهة الويب. إذا لم تضبطه فالـAPI يسمح افتراضيًا بطلبات نفس الأصل فقط.
 
 > التصميم Free-first، لكن حصص الخدمات المجانية قابلة للتغيير. نموذج المشروع نفسه غير مربوط بمزود AI واحد.
