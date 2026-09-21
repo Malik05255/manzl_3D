@@ -131,6 +131,7 @@ export interface ValidationFinding {
   roomIds: string[];
   wallIds?: string[];
   openingIds?: string[];
+  dimensionIds?: string[];
 }
 export interface ValidationReport {
   score: number;
