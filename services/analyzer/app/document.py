@@ -4,6 +4,8 @@ import cv2
 import fitz
 import numpy as np
 
+PDF_RENDER_SCALE=2.4
+
 
 def _pixmap_to_bgr(pix:fitz.Pixmap)->np.ndarray:
     image=np.frombuffer(pix.samples,dtype=np.uint8).reshape(pix.height,pix.width,pix.n)
@@ -231,6 +233,45 @@ def _candidate_page_indexes(page_count:int)->list[int]:
     return sorted(set(int(value) for value in points))
 
 
+def extract_pdf_text_lines(data:bytes,page_number:int,render_scale:float=PDF_RENDER_SCALE)->list[dict]:
+    document=fitz.open(stream=data,filetype="pdf")
+    try:
+        if document.page_count<1:
+            return []
+        index=max(0,min(document.page_count-1,page_number-1))
+        page=document.load_page(index)
+        payload=page.get_text("dict")
+        result=[]
+        for block in payload.get("blocks",[]):
+            if block.get("type")!=0:
+                continue
+            for line in block.get("lines",[]):
+                spans=line.get("spans",[])
+                text=" ".join(
+                    str(span.get("text","")).strip()
+                    for span in spans
+                    if str(span.get("text","")).strip()
+                ).strip()
+                if not text:
+                    continue
+                bbox=line.get("bbox")
+                if not bbox or len(bbox)!=4:
+                    continue
+                rect=fitz.Rect(*bbox)
+                if page.rotation:
+                    rect=rect*page.rotation_matrix
+                result.append({
+                    "text":text,
+                    "center":{
+                        "x":float((rect.x0+rect.x1)/2*render_scale),
+                        "y":float((rect.y0+rect.y1)/2*render_scale),
+                    },
+                })
+        return result
+    finally:
+        document.close()
+
+
 def decode_document_with_page(data:bytes,mime_type:str)->tuple[np.ndarray,int]:
     if mime_type=="application/pdf":
         document=fitz.open(stream=data,filetype="pdf")
@@ -247,7 +288,7 @@ def decode_document_with_page(data:bytes,mime_type:str)->tuple[np.ndarray,int]:
                     best_score=score
                     best_index=index
 
-            image=_render_page(document.load_page(best_index),2.4)
+            image=_render_page(document.load_page(best_index),PDF_RENDER_SCALE)
             return image,best_index+1
         finally:
             document.close()
