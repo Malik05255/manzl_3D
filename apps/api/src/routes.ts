@@ -133,6 +133,28 @@ export async function route(request:Request,env:Env):Promise<Response>{
     return json({ok:true},202);
   }
 
+  const retryAnalysis=path.match(/^\/v1\/projects\/([^/]+)\/retry-analysis$/);
+  if(retryAnalysis&&request.method==="POST"){
+    const id=retryAnalysis[1];
+    const secured=await protectedRow(request,env,id);
+    if(secured instanceof Response) return secured;
+    if(!secured.source_key) return json({error:"لا يوجد ملف مصدر لإعادة التحليل"},409);
+    if(["queued","analyzing"].includes(secured.status)) return json({error:"التحليل جارٍ بالفعل"},409);
+
+    const source=await env.ASSETS.head(secured.source_key);
+    if(!source) return json({error:"تعذر العثور على ملف المصدر"},404);
+    const mimeType=source.httpMetadata?.contentType??"";
+    if(!["application/pdf","image/png","image/jpeg","image/webp"].includes(mimeType)) return json({error:"نوع الملف المصدر غير مدعوم"},415);
+
+    const fileName=secured.source_key.split("/").at(-1)??"source";
+    const now=new Date().toISOString();
+    await env.DB.prepare("UPDATE projects SET status='queued', phase='upload', progress=10, message=?, error=NULL, updated_at=? WHERE id=?")
+      .bind("تمت إعادة جدولة التحليل السحابي",now,id).run();
+    await env.ANALYZE_QUEUE.send({projectId:id,sourceKey:secured.source_key,fileName,mimeType});
+    const row=await getProjectRow(env,id);
+    return json(await projectView(env,row!,false),202);
+  }
+
   const projectMatch=path.match(/^\/v1\/projects\/([^/]+)$/);
   if(projectMatch&&request.method==="GET"){
     const secured=await protectedRow(request,env,projectMatch[1]);
