@@ -15,11 +15,19 @@ export function clonePlanForProject(plan:FloorPlanModel,projectId:string):FloorP
     ...plan,
     id:projectId,
     walls:plan.walls.map(item=>({...item,a:{...item.a},b:{...item.b}})),
-    rooms:plan.rooms.map(item=>({...item,polygon:item.polygon.map(point=>({...point}))})),
+    rooms:plan.rooms.map(item=>({...item,polygon:item.polygon.map(point=>({...point})),boundaryWallIds:item.boundaryWallIds?[...item.boundaryWallIds]:item.boundaryWallIds})),
     doors:plan.doors.map(item=>({...item,a:{...item.a},b:{...item.b}})),
     windows:plan.windows.map(item=>({...item,a:{...item.a},b:{...item.b}})),
     labels:plan.labels.map(item=>({...item,center:{...item.center}})),
+    dimensions:plan.dimensions?.map(item=>({
+      ...item,
+      center:{...item.center},
+      spanA:item.spanA?{...item.spanA}:item.spanA,
+      spanB:item.spanB?{...item.spanB}:item.spanB,
+    })),
+    symbols:plan.symbols?.map(item=>({...item,a:{...item.a},b:{...item.b}})),
     quality:{...plan.quality,warnings:[...plan.quality.warnings]},
     source:{...plan.source},
+    analysis:plan.analysis?{...plan.analysis,engines:[...plan.analysis.engines]}:plan.analysis,
   };
 }
