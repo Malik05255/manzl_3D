@@ -29,7 +29,7 @@ def parse_target_size(command:str)->tuple[float,float]|None:
 def _named_value(text:str,words:tuple[str,...])->float|None:
     alternatives="|".join(re.escape(word) for word in words)
     match=re.search(
-        rf"(?:{alternatives}).{0,45}?(\d+(?:\.\d+)?)\s*(?:متر|م)?(?=\s|$|[،,.])",
+        rf"(?:{alternatives}).{{0,45}}?(\d+(?:\.\d+)?)\s*(?:متر|م)?(?=\s|$|[،,.])",
         text,
     )
     if not match:
