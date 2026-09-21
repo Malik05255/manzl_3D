@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .models import FloorPlan
+from .topology import relink_plan_boundaries
 
 
 def _changed_wall(before,after)->bool:
@@ -62,4 +63,4 @@ def mark_ai_changes(before:FloorPlan,after:FloorPlan)->FloorPlan:
         if _changed_opening(previous,item):
             item.provenance=_ai_value(previous.provenance)
 
-    return after
+    return relink_plan_boundaries(after)
