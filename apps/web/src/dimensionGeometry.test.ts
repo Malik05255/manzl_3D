@@ -66,6 +66,7 @@ describe("dimension geometry",()=>{
 
   it("calibrates the whole plan from a reviewed linked dimension without moving geometry",()=>{
     const source=plan();
+    source.dimensions![0].reviewed=true;
     const beforeWall=JSON.stringify(source.walls[0]);
     const next=calibratePlanFromDimension(source,"dimension-1")!;
     expect(next.metersPerPixel).toBeCloseTo(.0125,6);
@@ -76,8 +77,9 @@ describe("dimension geometry",()=>{
     expect(JSON.stringify(next.walls[0])).toBe(beforeWall);
   });
 
-  it("refuses calibration when the dimension is not linked to a wall",()=>{
+  it("refuses calibration before human review",()=>{\n    const source=plan();\n    expect(calibratePlanFromDimension(source,"dimension-1")).toBeNull();\n  });\n\n  it("refuses calibration when the dimension is not linked to a wall",()=>{
     const source=plan();
+    source.dimensions![0].reviewed=true;
     source.dimensions![0].referenceWallId=null;
     expect(calibratePlanFromDimension(source,"dimension-1")).toBeNull();
   });
