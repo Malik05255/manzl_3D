@@ -4,6 +4,7 @@ from .commands import find_target_room,normalize_arabic,parse_merge_rooms,resize
 from .edit_geometry import absorb_neighbor,adjacent,apply_side,bbox,is_orthogonal_room,is_rectangular_room,merge_neighbor,minimum_clear_span_m
 from .element_edits import build_selected_element_proposals
 from .models import EditRequest,FloorPlan,Impact,Proposal,ProposalResponse,Room
+from .provenance import mark_ai_changes
 from .validation import validate_plan
 
 SERVICE_ROOM_WORDS=("حمام","دوره مياه","دورة مياه","مطبخ","درج","مصعد","غسيل")
@@ -50,6 +51,7 @@ def _absorb_service_alternative(plan:FloorPlan,target:Room,target_w:float,target
         ok,impacts=absorb_neighbor(candidate,candidate_target,service,side,delta,mpp)
         if not ok:
             continue
+        mark_ai_changes(plan,candidate)
         validation=validate_plan(candidate)
         if any(item.severity=="critical" for item in validation.findings):
             continue
@@ -161,6 +163,7 @@ def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:fl
         else:
             title=f"التعديل باتجاه {dirs}"
 
+        mark_ai_changes(plan,candidate)
         validation=validate_plan(candidate)
         if any(finding.severity=="critical" for finding in validation.findings):
             continue
@@ -251,6 +254,7 @@ def build_merge_proposal(plan:FloorPlan,source:Room,target:Room,command:str)->Pr
             needsClarification="لا يمكن دمج الغرفتين تلقائيًا دون إنشاء شكل غير منتظم أو فراغ غير مغطى. استخدم التعديل اليدوي لهذه الحالة.",
         )
 
+    mark_ai_changes(plan,candidate)
     validation=validate_plan(candidate)
     if any(item.severity=="critical" for item in validation.findings):
         return ProposalResponse(command=command,proposals=[],needsClarification="نتيجة الدمج تسببت في تعارض هندسي، لذلك لم يتم اقتراحها.")
