@@ -40,7 +40,7 @@ describe("opening geometry",()=>{
     expect(window.provenance).toBe("manual");
   });
 
-  it("can correct opening type and remove it",()=>{
+  it("marks corrected extracted openings as reviewed mixed provenance",()=>{\n    const source=plan();\n    source.doors[0].provenance="opencv";\n    source.doors[0].reviewed=false;\n    const next=resizeOpening(source,"d",1.0)!;\n    expect(next.doors[0].reviewed).toBe(true);\n    expect(next.doors[0].provenance).toBe("mixed");\n  });\n\n  it("can correct opening type and remove it",()=>{
     const changed=changeOpeningKind(plan(),"d","window")!;
     expect(changed.doors).toHaveLength(0);
     expect(changed.windows[0].kind).toBe("window");
