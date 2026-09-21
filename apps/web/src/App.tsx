@@ -42,6 +42,14 @@ function manualProvenance(value?:ElementProvenance):ElementProvenance{
   return value?"mixed":"manual";
 }
 
+function openingHostProtected(plan:FloorPlanModel,openingId:string|null){
+  if(!openingId)return false;
+  const opening=[...plan.doors,...plan.windows].find(item=>item.id===openingId);
+  if(!opening?.wallId)return false;
+  const wall=plan.walls.find(item=>item.id===opening.wallId);
+  return Boolean(wall?.locked||wall?.role==="structural");
+}
+
 function Brand({compact=false}:{compact?:boolean}){return <div className={`brand ${compact?"brand-compact":""}`}><img src="/icon.svg" alt=""/><div><strong>منزل H</strong>{!compact&&<span>محرر المخططات الذكي</span>}</div></div>;}
 function UpdateBanner({onInstall}:{onInstall:()=>void}){return <div className="update-banner"><span>يتوفر إصدار أحدث من منزل H.</span><button onClick={onInstall}>تثبيت التحديث</button></div>;}
 
@@ -301,6 +309,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   };
   const updateOpeningWidth=()=>{
     if(!selectedOpening)return;
+    if(openingHostProtected(plan,selectedOpening)){setNotice("الفتحة على جدار محمي. فك حماية الجدار أولًا.");return;}
     const width=Number(openingWidth.replace(",","."));
     const next=resizeOpening(plan,selectedOpening,width);
     if(!next){setNotice("تعذر تطبيق العرض المطلوب على هذا الجدار.");return;}
@@ -318,18 +327,21 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   };
   const updateOpeningPosition=(position:number)=>{
     if(!selectedOpening)return;
+    if(openingHostProtected(plan,selectedOpening)){setNotice("الفتحة على جدار محمي. فك حماية الجدار أولًا.");return;}
     const next=positionOpening(plan,selectedOpening,position);
     if(!next)return;
     applyLocalPlan(next,false);setOpeningPosition(position);
   };
   const updateOpeningKind=(kind:Opening["kind"])=>{
     if(!selectedOpening)return;
+    if(openingHostProtected(plan,selectedOpening)){setNotice("الفتحة على جدار محمي. فك حماية الجدار أولًا.");return;}
     const next=changeOpeningKind(plan,selectedOpening,kind);
     if(!next)return;
     applyLocalPlan(next);setNotice(kind==="door"?"تم تصحيح الفتحة إلى باب.":"تم تصحيح الفتحة إلى نافذة.");
   };
   const deleteOpening=()=>{
     if(!selectedOpening)return;
+    if(openingHostProtected(plan,selectedOpening)){setNotice("الفتحة على جدار محمي. فك حماية الجدار أولًا.");return;}
     applyLocalPlan(removeOpening(plan,selectedOpening));setSelectedOpening(null);setOpeningWidth("");setNotice("تم حذف الفتحة محليًا. يمكنك التراجع قبل الحفظ.");
   };
   const focusReviewItem=(item:{kind:"room"|"wall"|"opening";id:string})=>{
