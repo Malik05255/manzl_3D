@@ -39,3 +39,34 @@ def test_nms_keeps_highest_confidence_duplicate():
     assert len(result)==2
     assert result[0]["confidence"]==.91
     assert result[1]["a"]["x"]==100.0
+
+
+def test_accepts_normalized_xyxy_boxes():
+    result=normalize_symbol_response({
+        "predictions":[
+            {"name":"toilet","bbox":[.10,.20,.30,.55],"score":.92,"normalized":True},
+        ]
+    },1000,800)
+    assert len(result)==1
+    assert result[0]["a"]=={"x":100.0,"y":160.0}
+    assert result[0]["b"]=={"x":300.0,"y":440.00000000000006}
+
+
+def test_accepts_xywh_and_center_box_formats():
+    result=normalize_symbol_response([
+        {"label":"sink","bbox":[100,120,80,40],"bbox_format":"xywh","confidence":.90},
+        {"label":"cooktop","bbox":[300,220,100,60],"bbox_format":"cxcywh","confidence":.91},
+    ],800,600)
+    assert len(result)==2
+    by_kind={item["kind"]:item for item in result}
+    assert by_kind["sink"]["a"]=={"x":100.0,"y":120.0}
+    assert by_kind["sink"]["b"]=={"x":180.0,"y":160.0}
+    assert by_kind["cooktop"]["a"]=={"x":250.0,"y":190.0}
+    assert by_kind["cooktop"]["b"]=={"x":350.0,"y":250.0}
+
+
+def test_rejects_page_sized_symbol_detection():
+    result=normalize_symbol_response([
+        {"label":"toilet","bbox":[0,0,950,780],"confidence":.99},
+    ],1000,800)
+    assert result==[]
