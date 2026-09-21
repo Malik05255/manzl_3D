@@ -112,3 +112,38 @@ def test_semantic_payload_can_use_selected_room_when_name_is_omitted():
     },request)
     assert clarification is None
     assert normalized=="عدل غرفة النوم إلى 5×4"
+
+
+def test_selected_opening_semantic_payload_is_canonicalized():
+    request=sample_request("وسعها شوي")
+    request.target_opening_id="door-1"
+    request.plan.doors=[]
+    from app.models import Opening
+    request.plan.doors.append(Opening(
+        id="door-1",kind="door",wallId=None,
+        a=Point(x=100,y=100),b=Point(x=190,y=100),confidence=.9,
+    ))
+    normalized,clarification=_canonical_from_payload({
+        "action":"opening_resize",
+        "amount_m":1.1,
+        "needs_clarification":"",
+    },request)
+    assert clarification is None
+    assert normalized=="اجعل عرض الفتحة المحددة 1.1 متر"
+
+
+def test_selected_wall_semantic_payload_is_canonicalized():
+    request=sample_request("حركه شوي")
+    request.target_wall_id="wall-1"
+    from app.models import Wall
+    request.plan.walls=[Wall(
+        id="wall-1",a=Point(x=100,y=100),b=Point(x=100,y=500),thicknessPx=10,confidence=.9,
+    )]
+    normalized,clarification=_canonical_from_payload({
+        "action":"wall_move",
+        "amount_m":0.3,
+        "direction":"right",
+        "needs_clarification":"",
+    },request)
+    assert clarification is None
+    assert normalized=="حرك الجدار المحدد 0.3 متر يمين"
