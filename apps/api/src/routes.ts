@@ -224,6 +224,43 @@ export async function route(request:Request,env:Env):Promise<Response>{
     return json(await projectView(env,row!,false),202);
   }
 
+  const floorMetadata=path.match(/^\/v1\/projects\/([^/]+)\/floors\/([^/]+)$/);
+  if(floorMetadata&&request.method==="PATCH"){
+    const id=floorMetadata[1];
+    const floorId=decodeURIComponent(floorMetadata[2]);
+    const secured=await protectedRow(request,env,id);
+    if(secured instanceof Response) return secured;
+    if(analysisBusy(secured)) return json({error:"تحليل المصدر جارٍ الآن. انتظر اكتماله قبل تعديل بيانات الطابق."},409);
+    if(secured.draft_key) return json({error:"احفظ المسودة أو تجاهلها قبل تعديل بيانات الطابق."},409);
+    const body=await request.json<{expectedRevision?:number;name?:string;elevationM?:number|null;heightM?:number|null}>().catch(()=>({}));
+    if(!Number.isInteger(body.expectedRevision)||body.expectedRevision!==secured.revision) return json({error:"تغير المشروع. أعد تحميله قبل تعديل بيانات الطابق."},409);
+
+    const floor=await env.DB.prepare("SELECT id,name,elevation_m,height_m FROM project_floors WHERE id=? AND project_id=?")
+      .bind(floorId,id).first<{id:string;name:string;elevation_m:number|null;height_m:number|null}>();
+    if(!floor) return json({error:"الطابق المطلوب غير موجود"},404);
+
+    const nextName=body.name===undefined?floor.name:cleanName(body.name);
+    if(!nextName) return json({error:"اسم الطابق مطلوب"},400);
+    const nextElevation=body.elevationM===undefined?floor.elevation_m:body.elevationM;
+    const nextHeight=body.heightM===undefined?floor.height_m:body.heightM;
+    if(nextElevation!==null&&(!Number.isFinite(nextElevation)||nextElevation<-500||nextElevation>10000)) return json({error:"منسوب الطابق غير صالح"},400);
+    if(nextHeight!==null&&(!Number.isFinite(nextHeight)||nextHeight<0.5||nextHeight>20)) return json({error:"ارتفاع الطابق يجب أن يكون بين 0.5 و20 متر"},400);
+
+    if(nextName===floor.name&&nextElevation===floor.elevation_m&&nextHeight===floor.height_m) return json(await projectView(env,secured,true));
+
+    const now=new Date().toISOString();
+    const nextRevision=secured.revision+1;
+    const results=await env.DB.batch([
+      env.DB.prepare("UPDATE projects SET revision=?, message=?, updated_at=? WHERE id=? AND revision=? AND status NOT IN ('queued','analyzing')")
+        .bind(nextRevision,"تم تحديث بيانات الطابق",now,id,secured.revision),
+      env.DB.prepare("UPDATE project_floors SET name=?, elevation_m=?, height_m=?, updated_at=? WHERE id=? AND project_id=? AND EXISTS (SELECT 1 FROM projects WHERE id=? AND revision=?)")
+        .bind(nextName,nextElevation,nextHeight,now,floorId,id,id,nextRevision),
+    ]);
+    if((results[0]?.meta.changes??0)<1||(results[1]?.meta.changes??0)<1) return json({error:"تغير المشروع أثناء تحديث بيانات الطابق. حدّثه وحاول مرة أخرى."},409);
+    const row=await getProjectRow(env,id);
+    return json(await projectView(env,row!,true));
+  }
+
   const activateFloor=path.match(/^\/v1\/projects\/([^/]+)\/floors\/([^/]+)\/activate$/);
   if(activateFloor&&request.method==="POST"){
     const id=activateFloor[1];
