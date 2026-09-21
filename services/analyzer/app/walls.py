@@ -765,6 +765,45 @@ def quarantine_dimension_aligned_walls(
 
         wall["confidence"]=min(float(wall.get("confidence",0.0)),0.64)
         quarantined.add(wall_id)
+
+    # Raster Hough can emit several nearly-parallel centre lines from the same
+    # thin dimension stroke. Once one line has explicit dimension evidence,
+    # quarantine its tight collinear family as a unit so a sibling cannot still
+    # become a room barrier.
+    if quarantined:
+        seed_by_id={
+            str(wall.get("id","")):wall
+            for wall in walls
+            if str(wall.get("id","")) in quarantined
+        }
+        band_tol=max(10.0,min(26.0,min_side*.026))
+        changed=True
+        while changed:
+            changed=False
+            for wall in walls:
+                wall_id=str(wall.get("id",""))
+                if not wall_id or wall_id in quarantined:
+                    continue
+                for seed in seed_by_id.values():
+                    if _angle_difference(wall,seed)>4.0:
+                        continue
+                    ss,se,so,slen,ux,uy=_frame(seed)
+                    wax,way=_point(wall["a"])
+                    wbx,wby=_point(wall["b"])
+                    nx=-uy
+                    ny=ux
+                    ws=min(wax*ux+way*uy,wbx*ux+wby*uy)
+                    we=max(wax*ux+way*uy,wbx*ux+wby*uy)
+                    wo=((wax+wbx)/2)*nx+((way+wby)/2)*ny
+                    shared=max(0.0,min(se,we)-max(ss,ws))
+                    overlap=shared/max(1.0,min(slen,we-ws))
+                    if overlap<.62 or abs(wo-so)>band_tol:
+                        continue
+                    wall["confidence"]=min(float(wall.get("confidence",0.0)),0.64)
+                    quarantined.add(wall_id)
+                    seed_by_id[wall_id]=wall
+                    changed=True
+                    break
     return quarantined
 
 
