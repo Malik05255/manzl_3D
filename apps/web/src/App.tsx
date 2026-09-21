@@ -428,7 +428,8 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   const calibrateFromSelectedDimension=()=>{
     if(!selectedDimension)return;
     const dimension=(plan.dimensions??[]).find(item=>item.id===selectedDimension);
-    if(!dimension?.reviewed){setNotice("أكد قراءة هذا البعد أولًا قبل استخدامه لمعايرة المقياس.");return;}\n    if(!dimension.valueM||!dimension.referenceWallId){setNotice("هذا البعد غير مرتبط بجدار واضح. استخدم المعايرة اليدوية أو اختر بعدًا مرتبطًا بجدار.");return;}
+    if(!dimension?.reviewed){setNotice("أكد قراءة هذا البعد أولًا قبل استخدامه لمعايرة المقياس.");return;}
+    if(!dimension.valueM||!dimension.referenceWallId){setNotice("هذا البعد غير مرتبط بجدار واضح. استخدم المعايرة اليدوية أو اختر بعدًا مرتبطًا بجدار.");return;}
     const wall=plan.walls.find(item=>item.id===dimension.referenceWallId);
     if(!wall){setNotice("الجدار المرتبط بالبعد لم يعد موجودًا.");return;}
     const next=calibratePlanFromDimension(plan,selectedDimension);
