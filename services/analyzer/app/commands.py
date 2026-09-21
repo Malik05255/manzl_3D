@@ -154,3 +154,46 @@ def parse_merge_rooms(command:str,rooms:list)->tuple[object,object]|None:
     if " مع " in f" {between} " or "ادمج" in text:
         return first,second
     return None
+
+
+def resize_neighbor_constraints(command:str,rooms:list,target)->tuple[set[str],set[str]]:
+    text=normalize_arabic(command)
+    preferred:set[str]=set()
+    excluded:set[str]=set()
+    preferred_markers=("على حساب","من مساحه","خذ من","اقتطع من","خصم من")
+    excluded_markers=("بدون تغيير","دون تغيير","لا تغير","لا تصغر","لا تعدل","ما تغير","لا تمس","بدون المساس")
+
+    for room in rooms:
+        if room.id==target.id:
+            continue
+        name=normalize_arabic(room.name)
+        if not name:
+            continue
+        index=text.find(name)
+        if index<0:
+            continue
+        prefix=text[max(0,index-42):index]
+        local=text[max(0,index-55):min(len(text),index+len(name)+20)]
+        if any(marker in prefix or marker in local for marker in excluded_markers):
+            excluded.add(room.id)
+            continue
+        if any(marker in prefix for marker in preferred_markers):
+            preferred.add(room.id)
+
+    # Common phrasing: "... على حساب الصالة". If there is only one non-target
+    # room explicitly named after a preference marker, treat it as a hard constraint.
+    if not preferred:
+        for marker in preferred_markers:
+            marker_index=text.find(marker)
+            if marker_index<0:
+                continue
+            tail=text[marker_index+len(marker):]
+            matches=[
+                room for room in rooms
+                if room.id!=target.id and normalize_arabic(room.name) and normalize_arabic(room.name) in tail
+            ]
+            if len(matches)==1:
+                preferred.add(matches[0].id)
+                break
+
+    return preferred,excluded

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from itertools import product
-from .commands import find_target_room,normalize_arabic,parse_merge_rooms,resolve_target_size
+from .commands import find_target_room,normalize_arabic,parse_merge_rooms,resize_neighbor_constraints,resolve_target_size
 from .edit_geometry import absorb_neighbor,adjacent,apply_side,bbox,is_rectangular_room,merge_neighbor,minimum_clear_span_m
 from .models import EditRequest,FloorPlan,Impact,Proposal,ProposalResponse,Room
 from .validation import validate_plan
@@ -22,6 +22,7 @@ def _absorb_service_alternative(plan:FloorPlan,target:Room,target_w:float,target
     x1,y1,x2,y2=bbox(target)
     current_w=(x2-x1)*mpp
     current_h=(y2-y1)*mpp
+    preferred_neighbors,excluded_neighbors=resize_neighbor_constraints(command,plan.rooms,target)
     dx=(target_w-current_w)/mpp
     dy=(target_h-current_h)/mpp
 
@@ -123,6 +124,15 @@ def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:fl
             continue
 
         affected=list(dict.fromkeys(affected))
+        affected_ids={
+            room.id for room in candidate.rooms
+            if any(normalize_arabic(room.name)==normalize_arabic(name) for name in affected)
+        }
+        if excluded_neighbors & affected_ids:
+            continue
+        if preferred_neighbors and not preferred_neighbors.issubset(affected_ids):
+            continue
+
         dirs=" + ".join(direction[s] for s in (x_side,y_side) if s) or "بدون تحريك"
         summary=f"تصبح {target.name} {target_w:g}×{target_h:g} م"
         if affected:
@@ -155,6 +165,8 @@ def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:fl
         warnings=list(dict.fromkeys(warnings))
         validation_penalty=max(0.0,1.0-validation.score)*0.35
         penalty=0.14*len(service_rooms)+0.04*max(0,len(affected)-1)+validation_penalty
+        if preferred_neighbors:
+            penalty=max(0.0,penalty-0.10)
         confidence=max(0.55,min(0.95,plan.quality.overall-penalty))
         proposal=Proposal(
             id=proposal_id,
@@ -176,9 +188,26 @@ def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:fl
 
     absorb=_absorb_service_alternative(plan,target,target_w,target_h,command)
     if absorb is not None:
-        ranked.append((0.26,1,absorb))
+        parts=absorb.id.split(":")
+        absorbed_id=parts[2] if len(parts)>2 else ""
+        if absorbed_id not in excluded_neighbors and (not preferred_neighbors or absorbed_id in preferred_neighbors):
+            ranked.append((0.26 if not preferred_neighbors else 0.12,1,absorb))
 
     if not ranked:
+        if preferred_neighbors:
+            names=[room.name for room in plan.rooms if room.id in preferred_neighbors]
+            return ProposalResponse(
+                command=command,
+                proposals=[],
+                needsClarification=f"لا يمكن تنفيذ المقاس المطلوب على حساب {' و'.join(names)} دون إنشاء تعارض أو جعل الفراغ غير صالح."
+            )
+        if excluded_neighbors:
+            names=[room.name for room in plan.rooms if room.id in excluded_neighbors]
+            return ProposalResponse(
+                command=command,
+                proposals=[],
+                needsClarification=f"لا يوجد حل صالح يحقق المقاس المطلوب مع إبقاء {' و'.join(names)} دون تغيير."
+            )
         return ProposalResponse(
             command=command,
             proposals=[],

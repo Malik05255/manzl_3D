@@ -249,3 +249,60 @@ def test_resize_keeps_perpendicular_wall_junctions_connected():
     right=next(wall for wall in preview.walls if wall.id=="top-right")
     assert left.b.x==600
     assert right.a.x==600
+
+
+def preference_plan():
+    plan=sample_plan()
+    plan.widthPx=1300
+    plan.rooms=[
+        Room(
+            id="store",
+            name="مخزن",
+            polygon=[Point(x=0,y=100),Point(x=300,y=100),Point(x=300,y=500),Point(x=0,y=500)],
+            confidence=.95,
+            areaM2=12,
+        ),
+        Room(
+            id="bed",
+            name="غرفة النوم",
+            polygon=[Point(x=300,y=100),Point(x=700,y=100),Point(x=700,y=500),Point(x=300,y=500)],
+            confidence=.95,
+            areaM2=16,
+        ),
+        Room(
+            id="hall",
+            name="الصالة",
+            polygon=[Point(x=700,y=100),Point(x=1100,y=100),Point(x=1100,y=500),Point(x=700,y=500)],
+            confidence=.95,
+            areaM2=16,
+        ),
+    ]
+    plan.walls=[
+        Wall(id="left-shared",a=Point(x=300,y=100),b=Point(x=300,y=500),thicknessPx=4,confidence=.9),
+        Wall(id="right-shared",a=Point(x=700,y=100),b=Point(x=700,y=500),thicknessPx=4,confidence=.9),
+    ]
+    return plan
+
+
+def test_explicit_on_account_of_neighbor_filters_other_directions():
+    plan=preference_plan()
+    response=build_proposals(EditRequest(
+        project_id="project-1",
+        command="عدل غرفة النوم إلى 5×4 على حساب الصالة",
+        plan=plan,
+    ))
+    assert response.proposals
+    assert all("الصالة" in " ".join(impact.text for impact in proposal.impacts) for proposal in response.proposals)
+    assert all("مخزن" not in " ".join(impact.text for impact in proposal.impacts) for proposal in response.proposals)
+
+
+def test_explicit_do_not_change_neighbor_is_respected():
+    plan=preference_plan()
+    response=build_proposals(EditRequest(
+        project_id="project-1",
+        command="عدل غرفة النوم إلى 5×4 بدون تغيير الصالة",
+        plan=plan,
+    ))
+    assert response.proposals
+    assert all("الصالة" not in " ".join(impact.text for impact in proposal.impacts) for proposal in response.proposals)
+    assert any("مخزن" in " ".join(impact.text for impact in proposal.impacts) for proposal in response.proposals)
