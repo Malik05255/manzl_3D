@@ -11,6 +11,8 @@ interface Props{
   calibrationMode?:boolean;
   calibrationPoints?:Point[];
   onCalibrationPoint?:(point:Point)=>void;
+  backgroundUrl?:string|null;
+  backgroundOpacity?:number;
 }
 type DragState={wallId:string;startClient:Point;original:Wall}|null;
 
@@ -91,7 +93,7 @@ function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall):FloorP
   };
 }
 
-export function PlanCanvas({plan,selectedWallId,onSelectWall,onPlanChange,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint}:Props){
+export function PlanCanvas({plan,selectedWallId,onSelectWall,onPlanChange,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint,backgroundUrl=null,backgroundOpacity=.38}:Props){
   const[zoom,setZoom]=useState(1);
   const[drag,setDrag]=useState<DragState>(null);
   const svgRef=useRef<SVGSVGElement|null>(null);
@@ -132,6 +134,7 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,onPlanChange,readon
     <div className="canvas-viewport" onPointerMove={move} onPointerUp={()=>setDrag(null)} onPointerCancel={()=>setDrag(null)}>
       <svg ref={svgRef} className="plan-svg" viewBox={viewBox} style={{transform:`scale(${zoom})`}} onPointerDown={addCalibrationPoint}>
         <rect width={plan.widthPx} height={plan.heightPx} fill="#fff"/>
+        {backgroundUrl&&<image href={backgroundUrl} x={0} y={0} width={plan.widthPx} height={plan.heightPx} preserveAspectRatio="none" opacity={backgroundOpacity} pointerEvents="none"/>}
         {plan.rooms.map(room=><g key={room.id}>
           <polygon points={room.polygon.map(p=>`${p.x},${p.y}`).join(" ")} fill="rgba(37,99,235,.055)" stroke="rgba(37,99,235,.16)" strokeWidth={1}/>
           {room.polygon.length>0&&<text
