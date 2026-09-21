@@ -92,6 +92,30 @@ def test_quality_warns_when_pdf_vector_is_quarantined():
         suspicious,[],None,None,
     )
     assert any(
-        "دون استخدامه تلقائيًا في إغلاق الغرف" in item
+        "دون احتسابه كحد موثوق للغرف" in item
         for item in plan["quality"]["warnings"]
+    )
+
+
+
+def test_low_confidence_wall_cannot_inflate_room_boundary_quality():
+    image=np.zeros((600,600,3),dtype=np.uint8)
+    extracted_room=room()
+    trusted=complete_walls(.95)[:2]
+    fake=[
+        wall("fake-bottom",100,500,500,500,.40),
+        wall("fake-right",500,100,500,500,.40),
+    ]
+    mixed=assemble_plan(
+        image,"mixed","x.png","image/png",[],
+        [*trusted,*fake],[extracted_room],None,None,
+    )
+    only_trusted=assemble_plan(
+        image,"trusted","x.png","image/png",[],
+        trusted,[room()],None,None,
+    )
+    assert mixed["quality"]["rooms"]==only_trusted["quality"]["rooms"]
+    assert any(
+        "دون احتسابه كحد موثوق للغرف" in item
+        for item in mixed["quality"]["warnings"]
     )
