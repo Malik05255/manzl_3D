@@ -97,7 +97,7 @@ export interface EditProposalResponse {
   proposals: EditProposal[];
   needsClarification?: string | null;
 }
-export interface ApplyProposalRequest { command: string; proposal: EditProposal; targetRoomId?: string | null; targetWallId?: string | null; targetOpeningId?: string | null; }
+export interface ApplyProposalRequest { command: string; proposal: EditProposal; expectedRevision: number; targetRoomId?: string | null; targetWallId?: string | null; targetOpeningId?: string | null; }
 export interface SaveRevisionRequest { summary: string; plan: FloorPlanModel; expectedRevision: number; }
 export interface RevisionView { revision: number; summary: string; createdAt: string; sourcePage?: number | null; floorId?: string | null; }
 
