@@ -19,7 +19,7 @@ export async function consumeAnalysis(batch:MessageBatch<AnalyzeMessage>,env:Env
       form.set("callback_url",`${env.API_PUBLIC_URL.replace(/\/$/,"")}/internal/progress`);
       form.set("callback_token",env.INTERNAL_TOKEN);
 
-      const response=await fetch(`${env.ANALYZER_URL.replace(/\/$/,"")}/v1/analyze`,{method:"POST",body:form});
+      const response=await fetch(`${env.ANALYZER_URL.replace(/\/$/,"")}/v1/analyze`,{method:"POST",headers:{"x-manzil-internal":env.INTERNAL_TOKEN},body:form});
       if(!response.ok) throw new Error((await response.text().catch(()=>""))||`ANALYZER_${response.status}`);
 
       const plan=await response.json<FloorPlanModel>();
