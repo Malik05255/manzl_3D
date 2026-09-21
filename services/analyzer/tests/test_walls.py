@@ -108,3 +108,24 @@ def test_vector_wall_candidate_does_not_duplicate_detected_wall():
     ]
     result=add_vector_wall_candidates(detected,vectors,800,1000)
     assert [wall["id"] for wall in result]==["wall-1"]
+
+
+def test_thick_single_pdf_vector_can_seed_wall():
+    vectors=[
+        {"a":{"x":100.0,"y":180.0},"b":{"x":700.0,"y":180.0},"widthPx":10.0},
+        {"a":{"x":120.0,"y":260.0},"b":{"x":300.0,"y":260.0},"widthPx":1.2},
+        {"a":{"x":120.0,"y":300.0},"b":{"x":300.0,"y":300.0},"widthPx":1.2},
+    ]
+    result=add_vector_wall_candidates([],vectors,900,1200)
+    wall=next(item for item in result if item["a"]["y"]==item["b"]["y"]==180.0)
+    assert wall["provenance"]=="pdf-vector"
+    assert wall["confidence"]>=.90
+    assert wall["thicknessPx"]==10.0
+
+
+def test_ordinary_single_vector_dimension_line_stays_ignored():
+    vectors=[
+        {"a":{"x":100.0,"y":180.0},"b":{"x":700.0,"y":180.0},"widthPx":1.2},
+        {"a":{"x":100.0,"y":260.0},"b":{"x":700.0,"y":260.0},"widthPx":1.2},
+    ]
+    assert add_vector_wall_candidates([],vectors,900,1200)==[]
