@@ -6,28 +6,95 @@ import cv2
 import numpy as np
 
 
-def _dedupe(lines:list[tuple[int,int,int,int]],tol:int=8)->list[tuple[int,int,int,int]]:
-    out=[]
-    for line in sorted(lines,key=lambda p:math.hypot(p[2]-p[0],p[3]-p[1]),reverse=True):
-        x1,y1,x2,y2=line
+def _merge_axis_lines(
+    lines:list[tuple[int,int,int,int]],
+    *,
+    axis_tol:int=8,
+    gap_tol:int=3,
+)->list[tuple[int,int,int,int]]:
+    """Merge overlapping H/V Hough fragments into full centerlines.
+
+    The old dedupe path kept the first/longest segment and discarded overlapping
+    fragments, which could lose a real wall extension. Here overlapping pieces
+    are unioned. Only tiny raster gaps are bridged; architectural opening-sized
+    gaps stay separate for door/window detection.
+    """
+    pending=[]
+    for x1,y1,x2,y2 in lines:
         horizontal=abs(y2-y1)<=abs(x2-x1)
-        duplicate=False
-        for a,b,c,d in out:
-            other=abs(d-b)<=abs(c-a)
-            if horizontal!=other:
+        if horizontal:
+            axis=int(round((y1+y2)/2))
+            start=min(x1,x2); end=max(x1,x2)
+        else:
+            axis=int(round((x1+x2)/2))
+            start=min(y1,y2); end=max(y1,y2)
+        pending.append({
+            "horizontal":horizontal,
+            "axis":float(axis),
+            "start":float(start),
+            "end":float(end),
+            "weight":max(1.0,float(end-start)),
+        })
+
+    changed=True
+    while changed:
+        changed=False
+        merged=[]
+        used=[False]*len(pending)
+        for index,item in enumerate(pending):
+            if used[index]:
                 continue
-            if horizontal:
-                same=abs(((y1+y2)/2)-((b+d)/2))<tol
-                overlap=max(min(x1,x2),min(a,c))<=min(max(x1,x2),max(a,c))+tol
-            else:
-                same=abs(((x1+x2)/2)-((a+c)/2))<tol
-                overlap=max(min(y1,y2),min(b,d))<=min(max(y1,y2),max(b,d))+tol
-            if same and overlap:
-                duplicate=True
-                break
-        if not duplicate:
-            out.append(line)
-    return out
+            current=dict(item)
+            for j in range(index+1,len(pending)):
+                if used[j]:
+                    continue
+                other=pending[j]
+                if current["horizontal"]!=other["horizontal"]:
+                    continue
+                if abs(current["axis"]-other["axis"])>=axis_tol:
+                    continue
+                if other["end"]<current["start"]:
+                    gap=current["start"]-other["end"]
+                elif other["start"]>current["end"]:
+                    gap=other["start"]-current["end"]
+                else:
+                    gap=0.0
+                if gap>gap_tol:
+                    continue
+
+                total=current["weight"]+other["weight"]
+                current["axis"]=(
+                    current["axis"]*current["weight"]
+                    +other["axis"]*other["weight"]
+                )/max(1.0,total)
+                current["weight"]=total
+                current["start"]=min(current["start"],other["start"])
+                current["end"]=max(current["end"],other["end"])
+                used[j]=True
+                changed=True
+            used[index]=True
+            merged.append(current)
+        pending=merged
+
+    result=[]
+    for item in pending:
+        axis=int(round(item["axis"]))
+        start=int(round(item["start"]))
+        end=int(round(item["end"]))
+        if item["horizontal"]:
+            result.append((start,axis,end,axis))
+        else:
+            result.append((axis,start,axis,end))
+    return sorted(
+        result,
+        key=lambda p:math.hypot(p[2]-p[0],p[3]-p[1]),
+        reverse=True,
+    )
+
+
+def _dedupe(lines:list[tuple[int,int,int,int]],tol:int=8)->list[tuple[int,int,int,int]]:
+    # Compatibility wrapper used by older tests/callers.
+    return _merge_axis_lines(lines,axis_tol=tol)
 
 
 def _estimate_thickness(ink:np.ndarray,line:tuple[int,int,int,int])->float:
@@ -381,7 +448,7 @@ def detect_walls(ink:np.ndarray)->tuple[list[dict],np.ndarray]:
                 x=int(round((x1+x2)/2))
                 lines.append((x,min(y1,y2),x,max(y1,y2)))
 
-    deduped=_dedupe(lines)
+    deduped=_merge_axis_lines(lines)
     walls=[
         {
             "id":f"wall-{i+1}",
@@ -510,6 +577,7 @@ def add_vector_wall_candidates(
             candidates.append(candidate)
 
     result=[dict(wall) for wall in walls]
+    candidates=_merge_near_collinear_candidates(candidates)
     accepted=[]
     for candidate in sorted(
         candidates,
