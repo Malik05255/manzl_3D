@@ -7,7 +7,7 @@ function plan():FloorPlanModel{
     schemaVersion:1,id:"p",widthPx:1000,heightPx:500,metersPerPixel:.01,calibrationConfidence:1,
     walls:[{id:"w",a:{x:100,y:100},b:{x:900,y:100},thicknessPx:10,confidence:.9}],
     rooms:[],
-    doors:[{id:"d",kind:"door",wallId:"w",a:{x:200,y:100},b:{x:290,y:100},confidence:.9}],
+    doors:[{id:"d",kind:"door",doorSubtype:"single_swing",wallId:"w",a:{x:200,y:100},b:{x:290,y:100},confidence:.9}],
     windows:[],labels:[],
     quality:{overall:.9,walls:.9,rooms:.9,text:.9,dimensions:.9,needsCalibration:false,warnings:[]},
     source:{fileName:"x.png",mimeType:"image/png",page:1},
@@ -40,6 +40,13 @@ describe("opening geometry",()=>{
     expect(window.provenance).toBe("manual");
   });
 
+  it("manual door starts with unknown subtype",()=>{
+    const source=plan();
+    source.doors=[];
+    const next=addOpeningToWall(source,"w","door")!;
+    expect(next.doors[0].doorSubtype).toBe("unknown");
+  });
+
   it("marks corrected extracted openings as reviewed mixed provenance",()=>{
     const source=plan();
     source.doors[0].provenance="opencv";
@@ -53,6 +60,7 @@ describe("opening geometry",()=>{
     const changed=changeOpeningKind(plan(),"d","window")!;
     expect(changed.doors).toHaveLength(0);
     expect(changed.windows[0].kind).toBe("window");
+    expect(changed.windows[0].doorSubtype).toBeUndefined();
     const removed=removeOpening(changed,"d");
     expect(removed.windows).toHaveLength(0);
   });
