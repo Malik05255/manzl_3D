@@ -191,18 +191,33 @@ def _door_arc_evidence_details(
     b:dict,
     gap_px:float,
 )->tuple[int,set[str],str,float]:
-    """Detect swing arcs by fitting their circle/ellipse centre near a hinge.
-
-    A real swing arc is *centred* on the hinge; its pixels are normally one door
-    radius away. Checking raw arc pixels for proximity to the hinge therefore
-    misses the cleanest door symbols.
-    """
+    """Detect a door swing arc whose circle centre sits near a wall-gap hinge."""
     roi,offset_x,offset_y=_opening_roi(image,a,b,gap_px)
     if roi.size==0:
         return 0,set(),"unknown",0.0
+
     gray=cv2.cvtColor(roi,cv2.COLOR_BGR2GRAY)
+    blurred=cv2.GaussianBlur(gray,(5,5),1.2)
+    min_radius=max(5,int(round(gap_px*.25)))
+    max_radius=max(min_radius+2,int(round(gap_px*1.60)))
+    circles=cv2.HoughCircles(
+        blurred,
+        cv2.HOUGH_GRADIENT,
+        dp=1.2,
+        minDist=max(10.0,gap_px*.35),
+        param1=120,
+        param2=max(12.0,min(24.0,gap_px*.20)),
+        minRadius=min_radius,
+        maxRadius=max_radius,
+    )
+    if circles is None:
+        return 0,set(),"unknown",0.0
+
     edges=cv2.Canny(gray,55,150)
-    contours,_=cv2.findContours(edges,cv2.RETR_LIST,cv2.CHAIN_APPROX_NONE)
+    edge_y,edge_x=np.nonzero(edges)
+    if not len(edge_x):
+        return 0,set(),"unknown",0.0
+
     ax,ay=_point(a)
     bx,by=_point(b)
     gap_length=max(1e-9,math.hypot(bx-ax,by-ay))
@@ -211,55 +226,60 @@ def _door_arc_evidence_details(
     nx=-uy
     ny=ux
     hinge_tolerance=max(10.0,gap_px*.30)
-
+    ring_tolerance=max(3.0,gap_px*.065)
     by_hinge:dict[str,tuple[float,float]]={}
-    for contour in contours:
-        perimeter=cv2.arcLength(contour,False)
-        if perimeter<gap_px*.30 or perimeter>gap_px*4.2:
-            continue
-        x,y,w,h=cv2.boundingRect(contour)
-        if min(w,h)<max(5,gap_px*.14):
-            continue
-        aspect=max(w,h)/max(1.0,min(w,h))
-        if aspect>3.0 or len(contour)<8:
-            continue
 
-        try:
-            (cx,cy),(major,minor),_=cv2.fitEllipse(contour)
-        except cv2.error:
-            continue
-        radius=(float(major)+float(minor))/4.0
-        if radius<gap_px*.25 or radius>gap_px*1.65:
-            continue
-        ellipse_ratio=max(float(major),float(minor))/max(1.0,min(float(major),float(minor)))
-        if ellipse_ratio>2.2:
-            continue
-
-        center=(float(offset_x)+float(cx),float(offset_y)+float(cy))
-        distance_a=math.hypot(center[0]-ax,center[1]-ay)
-        distance_b=math.hypot(center[0]-bx,center[1]-by)
+    for raw_cx,raw_cy,raw_radius in circles[0]:
+        cx=float(raw_cx)
+        cy=float(raw_cy)
+        radius=float(raw_radius)
+        global_cx=float(offset_x)+cx
+        global_cy=float(offset_y)+cy
+        distance_a=math.hypot(global_cx-ax,global_cy-ay)
+        distance_b=math.hypot(global_cx-bx,global_cy-by)
         nearest=min(distance_a,distance_b)
         if nearest>hinge_tolerance:
             continue
+
         hinge="a" if distance_a<=distance_b else "b"
         hx,hy=(ax,ay) if hinge=="a" else (bx,by)
 
-        points=contour.reshape(-1,2)
-        signed_depths=[
-            (float(offset_x+px)-hx)*nx+(float(offset_y+py)-hy)*ny
-            for px,py in points[::max(1,len(points)//120)]
-        ]
-        if not signed_depths:
-            continue
-        depth_value=max(signed_depths,key=abs)
-        coverage=perimeter/max(1.0,2*math.pi*radius)
-        if coverage<.10 or coverage>.92:
+        radial=np.sqrt(
+            (edge_x.astype(np.float32)-cx)**2
+            +(edge_y.astype(np.float32)-cy)**2
+        )
+        selected=np.abs(radial-radius)<=ring_tolerance
+        if int(np.count_nonzero(selected))<12:
             continue
 
-        strength=min(1.0,coverage/.25)*(1.0-nearest/max(hinge_tolerance,1.0))
+        sx=edge_x[selected].astype(np.float32)
+        sy=edge_y[selected].astype(np.float32)
+        angles=np.arctan2(sy-cy,sx-cx)
+        angle_bins=np.floor((angles+math.pi)/(math.pi/18.0)).astype(np.int32)
+        coverage=len(np.unique(angle_bins))/36.0
+        # A useful swing mark is an arc, not a tiny corner and not a full
+        # circle/furniture symbol.
+        if coverage<.10 or coverage>.82:
+            continue
+
+        global_x=sx+float(offset_x)
+        global_y=sy+float(offset_y)
+        signed=(global_x-hx)*nx+(global_y-hy)*ny
+        significant=signed[np.abs(signed)>=gap_px*.10]
+        if not len(significant):
+            continue
+
+        positive=float(np.sum(np.abs(significant[significant>0])))
+        negative=float(np.sum(np.abs(significant[significant<0])))
+        signed_depth=float(significant[np.argmax(np.abs(significant))])
+        side_balance=abs(positive-negative)/max(1e-9,positive+negative)
+        if side_balance<.20:
+            continue
+
+        strength=coverage*(1.0-nearest/max(hinge_tolerance,1.0))
         previous=by_hinge.get(hinge)
         if previous is None or strength>previous[0]:
-            by_hinge[hinge]=(strength,float(depth_value))
+            by_hinge[hinge]=(strength,signed_depth)
 
     if not by_hinge:
         return 0,set(),"unknown",0.0
