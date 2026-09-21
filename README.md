@@ -9,7 +9,7 @@
 - مسار: ابنِ مشروعك → تعديل مشروع → رفع → تحليل → منطقة التعديل، مع رفع بالنقر أو السحب والإفلات أو لصق صورة من الحافظة.
 - R2 للمصادر والنسخ الهندسية، وD1 للمشاريع وسجل النسخ.
 - Queue لمعالجة المخططات خارج طلب المستخدم، مع إعادة التحليل من المصدر السحابي بنقرة واحدة عند فشل عابر دون إعادة الرفع.
-- Analyzer سحابي: PDF/Image + OCR عربي/إنجليزي + جدران + غرف + معايرة مقياس + درجات ثقة.
+- Analyzer سحابي: PDF/Image + OCR عربي/إنجليزي + جدران + غرف + معايرة مقياس + درجات ثقة، مع Google Vision OCR اختياري يعمل بالتوازي مع Tesseract ويعود تلقائيًا للمحرك المحلي عند غياب المزود.
 - ملفات PDF الرقمية تقرأ طبقة النص الأصلية مباشرة وتدمجها مع OCR لرفع دقة أسماء الغرف والأبعاد.
 - H Engineer يدعم أوامر المقاس مثل: `عدل غرفة النوم إلى 5×5`، ويمكنه استخدام الغرفة المحددة مباشرة مع أوامر مثل `اجعلها 5×5`.
 - H Engineer يعمل أيضًا على الجدران والفتحات المحددة مباشرة: تحريك الجدار بمسافة، تغيير سماكته، إضافة باب/نافذة، تغيير عرض الفتحة وموقعها ونوعها أو حذفها.
@@ -52,13 +52,17 @@
 
 - التعديلات اليدوية وH Engineer تحدث `provenance` للعناصر المتغيرة إلى حالة مختلطة مع إبقاء ثقة الاستخراج الأصلية مستقلة.
 
+- بيانات الطوابق نفسها — الاسم والمنسوب والارتفاع — تدخل سجل Revisions ويمكن استعادتها مع النسخة بدل بقائها إعدادات خارج التاريخ.
+
+- مصدر قراءة النص محفوظ في `provenance` بشكل منفصل بين OCR المحلي و`cloud-ocr` وطبقة نص PDF الأصلية، وتظهر هذه المعلومة أثناء مراجعة العناصر منخفضة الثقة.
+
 ## البنية
 
 ```text
 apps/web             React + TypeScript + Vite PWA
 apps/api             Cloudflare Worker + D1 + R2 + Queue
 packages/contracts   Canonical FloorPlan contracts
-services/analyzer    FastAPI + OpenCV + Tesseract + PyMuPDF
+services/analyzer    FastAPI + OpenCV + Tesseract + PyMuPDF + Cloud OCR اختياري
 ```
 
 راجع `docs/ARCHITECTURE.md`.
@@ -79,6 +83,8 @@ pip install -r requirements-dev.txt
 PYTHONPATH=. pytest -q
 docker build -t manzil-h-analyzer .
 ```
+
+لرفع جودة OCR بدون كشف المفتاح للواجهة، انسخ `services/analyzer/.env.example` إلى متغيرات بيئة خدمة الـAnalyzer فقط. عند تفعيل `CLOUD_OCR_PROVIDER=google-vision` يوضع `GOOGLE_VISION_API_KEY` في سرّ الخادم/الحاوية، ولا يضاف إلى أي متغير `VITE_*` أو كود المتصفح.
 
 أنشئ D1 وR2 وQueue، ثم انسخ `apps/api/wrangler.jsonc.example` إلى `wrangler.jsonc`. ضع نفس `INTERNAL_TOKEN` في Worker وAnalyzer، واضبط `ALLOWED_ORIGIN` على رابط واجهة الويب. إذا لم تضبطه فالـAPI يسمح افتراضيًا بطلبات نفس الأصل فقط.
 
