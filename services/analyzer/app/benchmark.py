@@ -151,15 +151,29 @@ def evaluate_floor_plan(
     room_iou_threshold:float=0.65,
 )->dict:
     walls=_greedy_segment_metrics(prediction.get("walls",[]),truth.get("walls",[]),tolerance_px)
-    predicted_openings=[*prediction.get("doors",[]),*prediction.get("windows",[])]
-    truth_openings=[*truth.get("doors",[]),*truth.get("windows",[])]
-    openings=_greedy_segment_metrics(predicted_openings,truth_openings,tolerance_px)
+    doors=_greedy_segment_metrics(
+        prediction.get("doors",[]),
+        truth.get("doors",[]),
+        tolerance_px,
+    )
+    windows=_greedy_segment_metrics(
+        prediction.get("windows",[]),
+        truth.get("windows",[]),
+        tolerance_px,
+    )
+    openings=_metrics(
+        int(doors["tp"])+int(windows["tp"]),
+        len(prediction.get("doors",[]))+len(prediction.get("windows",[])),
+        len(truth.get("doors",[]))+len(truth.get("windows",[])),
+    )
     rooms=_room_metrics(prediction.get("rooms",[]),truth.get("rooms",[]),room_iou_threshold)
     dimensions=_dimension_metrics(prediction.get("dimensions",[]),truth.get("dimensions",[]),tolerance_px)
     categories={"walls":walls,"rooms":rooms,"openings":openings,"dimensions":dimensions}
     macro_f1=sum(float(item["f1"]) for item in categories.values())/len(categories)
     return {
         **categories,
+        "doors":doors,
+        "windows":windows,
         "macroF1":round(macro_f1,4),
         "settings":{
             "tolerancePx":tolerance_px,
