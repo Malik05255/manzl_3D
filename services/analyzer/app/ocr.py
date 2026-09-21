@@ -79,6 +79,8 @@ def _ocr_pass(image:np.ndarray,lang:str,config:str,min_conf:float,prefix:str)->l
             "center":{"x":(x1+x2)/2.0,"y":(y1+y2)/2.0},
             "confidence":confidence,
             "kind":classify_text(text),
+            "reviewed":False,
+            "provenance":"ocr",
         })
     return labels
 
