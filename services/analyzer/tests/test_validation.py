@@ -179,9 +179,13 @@ def test_missing_room_boundary_wall_is_critical():
 
 
 def test_incomplete_room_boundary_emits_warning():
+    from app.models import Wall
     plan=base_plan()
-    plan.walls=plan.walls[:2]
+    plan.walls=[
+        Wall(id="top",a=Point(x=100,y=100),b=Point(x=500,y=100),thicknessPx=10,confidence=.9),
+        Wall(id="left",a=Point(x=100,y=100),b=Point(x=100,y=500),thicknessPx=10,confidence=.9),
+    ]
     report=validate_plan(plan)
-    finding=next(item for item in report.findings if item.code=="room_boundary_incomplete")
+    finding=next(item for item in report.findings if item.code=="room_boundary_incomplete" and "a" in item.roomIds)
     assert finding.severity=="warning"
-    assert finding.roomIds
+    assert finding.roomIds==["a"]
