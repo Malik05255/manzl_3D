@@ -185,6 +185,69 @@ def _polygon_area_px2(points)->float:
     return abs(total)/2.0
 
 
+def recalibrate_extracted_room_confidence(
+    rooms:list,
+    walls:list,
+    width:int,
+    height:int,
+)->list:
+    """Lower confidence for small unlabeled enclosures supported only by PDF vectors.
+
+    These shapes are retained for review rather than deleted because they can be
+    closets, shafts or other legitimate small spaces.
+    """
+    wall_by_id={
+        str(_wall_value(wall,"id")):wall
+        for wall in walls
+    }
+    page_area=max(1.0,float(width)*float(height))
+
+    for room in rooms:
+        polygon=_room_value(room,"polygon")
+        area_ratio=_polygon_area_px2(polygon)/page_area
+        ids=(
+            room.get("boundaryWallIds",[])
+            if isinstance(room,dict)
+            else room.boundaryWallIds
+        )
+        boundaries=[
+            wall_by_id[wall_id]
+            for wall_id in ids
+            if wall_id in wall_by_id
+        ]
+        name=str(_room_value(room,"name") or "").strip()
+        generated_name=(
+            name.startswith("غرفة ")
+            and name.removeprefix("غرفة ").strip().isdigit()
+        )
+        vector_only=bool(boundaries) and all(
+            str(_wall_value(wall,"provenance") or "")=="pdf-vector"
+            for wall in boundaries
+        )
+        coverage=room_boundary_coverage(room,walls)
+        current=float(_room_value(room,"confidence"))
+
+        if (
+            generated_name
+            and vector_only
+            and area_ratio<0.012
+            and coverage>=0.65
+        ):
+            adjusted=min(current,max(0.45,0.50+coverage*0.12))
+            if isinstance(room,dict):
+                room["confidence"]=round(adjusted,3)
+            else:
+                room.confidence=round(adjusted,3)
+        elif coverage>=0.88 and current<0.94:
+            adjusted=min(0.94,current+0.025)
+            if isinstance(room,dict):
+                room["confidence"]=round(adjusted,3)
+            else:
+                room.confidence=round(adjusted,3)
+
+    return rooms
+
+
 def canonicalize_plan(plan:FloorPlan)->FloorPlan:
     """Refresh derived topology without rewriting user-authored geometry."""
     candidate=plan.model_copy(deep=True)
