@@ -272,6 +272,53 @@ def extract_pdf_text_lines(data:bytes,page_number:int,render_scale:float=PDF_REN
         document.close()
 
 
+def extract_pdf_vector_lines(data:bytes,page_number:int,render_scale:float=PDF_RENDER_SCALE)->list[dict]:
+    document=fitz.open(stream=data,filetype="pdf")
+    try:
+        if document.page_count<1:
+            return []
+        index=max(0,min(document.page_count-1,page_number-1))
+        page=document.load_page(index)
+        result=[]
+
+        def transform(point):
+            p=fitz.Point(float(point.x),float(point.y))
+            if page.rotation:
+                p=p*page.rotation_matrix
+            return {"x":float(p.x*render_scale),"y":float(p.y*render_scale)}
+
+        for drawing in page.get_drawings():
+            width=max(0.5,float(drawing.get("width") or 1.0))*render_scale
+            for item in drawing.get("items",[]):
+                kind=item[0] if item else None
+                segments=[]
+                if kind=="l" and len(item)>=3:
+                    segments=[(item[1],item[2])]
+                elif kind=="re" and len(item)>=2:
+                    rect=fitz.Rect(item[1])
+                    p1=fitz.Point(rect.x0,rect.y0); p2=fitz.Point(rect.x1,rect.y0)
+                    p3=fitz.Point(rect.x1,rect.y1); p4=fitz.Point(rect.x0,rect.y1)
+                    segments=[(p1,p2),(p2,p3),(p3,p4),(p4,p1)]
+                for start,end in segments:
+                    a=transform(start); b=transform(end)
+                    dx=abs(b["x"]-a["x"]); dy=abs(b["y"]-a["y"])
+                    length=(dx*dx+dy*dy)**0.5
+                    if length<24:
+                        continue
+                    if dx>=max(3.0,dy*8.0):
+                        y=(a["y"]+b["y"])/2
+                        a={"x":min(a["x"],b["x"]),"y":y}; b={"x":max(a["x"],b["x"]),"y":y}
+                    elif dy>=max(3.0,dx*8.0):
+                        x=(a["x"]+b["x"])/2
+                        a={"x":x,"y":min(a["y"],b["y"])}; b={"x":x,"y":max(a["y"],b["y"])}
+                    else:
+                        continue
+                    result.append({"a":a,"b":b,"widthPx":round(width,2)})
+        return result
+    finally:
+        document.close()
+
+
 def decode_document_with_page(data:bytes,mime_type:str)->tuple[np.ndarray,int]:
     if mime_type=="application/pdf":
         document=fitz.open(stream=data,filetype="pdf")
