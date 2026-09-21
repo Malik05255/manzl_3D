@@ -95,3 +95,9 @@ def test_text_duplicate_prefers_higher_confidence_provider():
     assert len(merged)==1
     assert merged[0]["confidence"]==0.97
     assert merged[0]["provenance"]=="cloud-ocr"
+
+
+
+def test_architectural_area_labels_are_room_names():
+    for text in ["Balcony","SHAFT","Elevator","Stairs","شرفة","مصعد","درج"]:
+        assert classify_text(text)=="room_name"
