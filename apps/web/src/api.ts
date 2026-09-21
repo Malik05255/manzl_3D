@@ -3,7 +3,7 @@ import type { ApplyProposalRequest, EditProposalResponse, FloorPlanModel, Projec
 const API_BASE=(import.meta.env.VITE_API_BASE_URL as string|undefined)?.replace(/\/$/,"")??"http://localhost:8787";
 const tokenKey=(projectId:string)=>`manzil:project-token:${projectId}`;
 export class ApiError extends Error{
-  constructor(message:string,public readonly status:number){super(message);this.name="ApiError";}
+  constructor(message:string,public readonly status:number,public readonly data?:unknown){super(message);this.name="ApiError";}
 }
 
 const lastProjectKey="manzil:last-project";
@@ -68,8 +68,12 @@ async function request<T>(path:string,init?:RequestInit):Promise<T>{
   });
   if(!response.ok){
     let message=`HTTP ${response.status}`;
-    try{const body=await response.json() as {error?:string};if(body.error)message=body.error;}catch{}
-    throw new ApiError(message,response.status);
+    let data:unknown=undefined;
+    try{
+      data=await response.json();
+      if(data&&typeof data==="object"&&"error" in data&&typeof (data as {error?:unknown}).error==="string")message=(data as {error:string}).error;
+    }catch{}
+    throw new ApiError(message,response.status,data);
   }
   return response.json() as Promise<T>;
 }

@@ -1,5 +1,5 @@
 import { useMemo,useRef,useState } from "react";
-import type { FloorPlanModel,Point,Wall } from "@manzil/contracts";
+import type { FloorPlanModel,Point,ValidationFinding,Wall } from "@manzil/contracts";
 import { Minus,Plus,RotateCcw } from "lucide-react";
 
 interface Props{
@@ -17,6 +17,7 @@ interface Props{
   backgroundUrl?:string|null;
   backgroundOpacity?:number;
   comparisonPlan?:FloorPlanModel|null;
+  validationFindings?:ValidationFinding[];
 }
 type DragState={wallId:string;startClient:Point;original:Wall;basePlan:FloorPlanModel;changed:boolean}|null;
 
@@ -137,7 +138,7 @@ export function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall)
   };
 }
 
-export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSelectRoom,onPlanChange,onPlanCommit,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint,backgroundUrl=null,backgroundOpacity=.38,comparisonPlan=null}:Props){
+export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSelectRoom,onPlanChange,onPlanCommit,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint,backgroundUrl=null,backgroundOpacity=.38,comparisonPlan=null,validationFindings=[]}:Props){
   const[zoom,setZoom]=useState(1);
   const[drag,setDrag]=useState<DragState>(null);
   const svgRef=useRef<SVGSVGElement|null>(null);
@@ -146,6 +147,18 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
     width:`min(${zoom*100}%, ${Math.round(1100*zoom)}px)`,
     aspectRatio:`${Math.max(plan.widthPx,1)} / ${Math.max(plan.heightPx,1)}`,
   }),[zoom,plan.widthPx,plan.heightPx]);
+
+  const validationByRoom=useMemo(()=>{
+    const rank={info:1,warning:2,critical:3} as const;
+    const result=new Map<string,ValidationFinding["severity"]>();
+    for(const finding of validationFindings){
+      for(const roomId of finding.roomIds){
+        const current=result.get(roomId);
+        if(!current||rank[finding.severity]>rank[current])result.set(roomId,finding.severity);
+      }
+    }
+    return result;
+  },[validationFindings]);
 
   const screenToPlan=(clientX:number,clientY:number):Point=>{
     const svg=svgRef.current;if(!svg)return{x:0,y:0};
@@ -214,6 +227,7 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
           const metrics=roomVisualMetrics(room,plan.metersPerPixel);
           const showMetrics=Boolean(plan.metersPerPixel)&&metrics.widthPx>=70&&metrics.heightPx>=55;
           const selected=selectedRoomId===room.id;
+          const validationSeverity=validationByRoom.get(room.id);
           return <g key={room.id}>
             <polygon
               points={room.polygon.map(p=>`${p.x},${p.y}`).join(" ")}
@@ -223,6 +237,16 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
               className={readonly||calibrationMode?undefined:"editable-room"}
               onPointerDown={event=>{if(readonly||calibrationMode)return;event.stopPropagation();onSelectRoom?.(room.id);}}
             />
+            {validationSeverity&&<polygon
+              points={room.polygon.map(p=>`${p.x},${p.y}`).join(" ")}
+              fill="none"
+              stroke={validationSeverity==="critical"?"#e11d48":validationSeverity==="warning"?"#d97706":"#2563eb"}
+              strokeWidth={validationSeverity==="critical"?5:3}
+              strokeDasharray={validationSeverity==="critical"?"14 7":"10 7"}
+              opacity={.9}
+              pointerEvents="none"
+              className={`validation-room-outline ${validationSeverity}`}
+            />}
             {room.polygon.length>0&&<text x={metrics.cx} y={metrics.cy} textAnchor="middle" dominantBaseline="middle" className="room-label">
               <tspan x={metrics.cx} dy={showMetrics?-10:0}>{room.name||"غرفة"}</tspan>
               {showMetrics&&<tspan x={metrics.cx} dy={18} className="room-dimensions">{metrics.widthM!.toFixed(2)} × {metrics.heightM!.toFixed(2)} م</tspan>}

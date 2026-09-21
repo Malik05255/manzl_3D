@@ -44,6 +44,30 @@ async function analyzerValidation(env:Env,id:string,plan:FloorPlanModel):Promise
   return upstream.json<ValidationReport>();
 }
 
+function criticalFindingKey(item:ValidationReport["findings"][number]){
+  return `${item.code}:${[...item.roomIds].sort().join(",")}`;
+}
+
+async function validateTransition(env:Env,id:string,before:FloorPlanModel|null,after:FloorPlanModel){
+  const afterReport=await analyzerValidation(env,id,after);
+  const afterCritical=afterReport.findings.filter(item=>item.severity==="critical");
+  if(!afterCritical.length)return {report:afterReport,introduced:[] as ValidationReport["findings"]};
+
+  let beforeKeys=new Set<string>();
+  if(before){
+    const beforeReport=await analyzerValidation(env,id,before);
+    beforeKeys=new Set(beforeReport.findings.filter(item=>item.severity==="critical").map(criticalFindingKey));
+  }
+  const introduced=afterCritical.filter(item=>!beforeKeys.has(criticalFindingKey(item)));
+  return {report:afterReport,introduced};
+}
+
+async function committedPlan(env:Env,row:ProjectRow):Promise<FloorPlanModel|null>{
+  if(!row.plan_key)return null;
+  const object=await env.ASSETS.get(row.plan_key);
+  return object?object.json<FloorPlanModel>():null;
+}
+
 async function protectedRow(request:Request,env:Env,id:string):Promise<ProjectRow|Response>{
   const row=await getProjectRow(env,id);
   if(!row) return json({error:"المشروع غير موجود"},404);
@@ -185,6 +209,19 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const planError=floorPlanValidationError(body.plan,id);
     if(planError) return json({error:"صيغة المخطط غير صالحة"},400);
     if(!Number.isInteger(body.expectedRevision)||body.expectedRevision<0) return json({error:"رقم النسخة المرجعية غير صالح"},400);
+    try{
+      const baseline=await committedPlan(env,secured);
+      const checked=await validateTransition(env,id,baseline,body.plan);
+      if(checked.introduced.length){
+        return json({
+          error:"لن يتم حفظ التعديل لأنه أضاف تعارضًا هندسيًا جديدًا. راجع العناصر المحددة ثم حاول مرة أخرى.",
+          validation:checked.report,
+          introduced:checked.introduced,
+        },422);
+      }
+    }catch(error){
+      return json({error:error instanceof Error?error.message:"تعذر التحقق الهندسي قبل الحفظ"},502);
+    }
     try{await persistPlan(env,id,body.plan,cleanName(body.summary||"تعديل يدوي"),body.expectedRevision);}
     catch(error){
       if(error instanceof Error&&error.message==="STALE_REVISION") return json({error:"تم حفظ نسخة أحدث من مشروعك. حدّث المشروع قبل الحفظ مرة أخرى."},409);
@@ -283,6 +320,18 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const selected=fresh.proposals.find(proposal=>proposal.id===selectedId);
     if(!selected) return json({error:"المخطط تغير أو أن خيار التعديل لم يعد صالحًا. أعد المعاينة."},409);
     if(floorPlanValidationError(selected.previewPlan,id)) return json({error:"نتيجة H Engineer غير صالحة"},502);
+    try{
+      const checked=await validateTransition(env,id,plan,selected.previewPlan);
+      if(checked.introduced.length){
+        return json({
+          error:"تم إيقاف الاقتراح لأنه يضيف تعارضًا هندسيًا جديدًا.",
+          validation:checked.report,
+          introduced:checked.introduced,
+        },422);
+      }
+    }catch(error){
+      return json({error:error instanceof Error?error.message:"تعذر التحقق الهندسي من الاقتراح"},502);
+    }
 
     try{await persistPlan(env,id,selected.previewPlan,`H Engineer: ${cleanName(command)}`,secured.revision);}
     catch(error){if(error instanceof Error&&error.message==="STALE_REVISION") return json({error:"تغير المشروع أثناء تحليل H Engineer. أعد المعاينة على النسخة الأحدث."},409);throw error;}
