@@ -10,7 +10,7 @@ export function withCors(env:Env,request:Request,response:Response){
   const allowed=!env.ALLOWED_ORIGIN||env.ALLOWED_ORIGIN==="*"||origin===env.ALLOWED_ORIGIN;
   const headers=new Headers(response.headers);
   if(allowed) headers.set("access-control-allow-origin",env.ALLOWED_ORIGIN==="*"?"*":(origin||env.ALLOWED_ORIGIN||"*"));
-  headers.set("access-control-allow-methods","GET,POST,PUT,OPTIONS");
+  headers.set("access-control-allow-methods","GET,POST,PUT,DELETE,OPTIONS");
   headers.set("access-control-allow-headers","content-type,authorization");
   headers.set("vary","Origin");
   return new Response(response.body,{status:response.status,statusText:response.statusText,headers});

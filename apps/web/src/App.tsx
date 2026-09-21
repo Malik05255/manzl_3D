@@ -1,7 +1,7 @@
 import { useEffect,useMemo,useRef,useState } from "react";
 import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Clock3,Cloud,Download,FileImage,FileText,Hammer,Layers3,LoaderCircle,Redo2,Ruler,Save,ShieldCheck,Sparkles,Undo2,UploadCloud,WandSparkles,X } from "lucide-react";
 import type { EditProposal,FloorPlanModel,Point,ProjectView,RevisionView,ValidationReport } from "@manzil/contracts";
-import { ApiError,applyProposal,askEngineer,createProject,forgetKnownProject,forgetLastProject,getKnownProjects,getLastProjectId,getProject,getProjectPreview,importProjectBackup,inferSourceMime,listRevisions,resizeRoomPrecisely,restoreRevision,saveDraft,saveRevision,uploadSource,validateProject } from "./api";
+import { ApiError,applyProposal,askEngineer,clearProjectDraft,createProject,forgetKnownProject,forgetLastProject,getKnownProjects,getLastProjectId,getProject,getProjectPreview,importProjectBackup,inferSourceMime,listRevisions,resizeRoomPrecisely,restoreRevision,saveDraft,saveRevision,uploadSource,validateProject } from "./api";
 import type { KnownProject } from "./api";
 import { PlanCanvas } from "./PlanCanvas";
 import { exportPlanJson,exportPlanPng,exportPlanSvg } from "./exportPlan";
@@ -87,9 +87,10 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   const[calibrating,setCalibrating]=useState(false);const[calibrationPoints,setCalibrationPoints]=useState<Point[]>([]);const[knownDistance,setKnownDistance]=useState("");
   const[sourcePreview,setSourcePreview]=useState<string|null>(null);const[sourceOpacity,setSourceOpacity]=useState(.42);
   const[historyOpen,setHistoryOpen]=useState(false);const[historyBusy,setHistoryBusy]=useState(false);const[revisions,setRevisions]=useState<RevisionView[]>([]);const[exportOpen,setExportOpen]=useState(false);const[exportBusy,setExportBusy]=useState(false);
-  const[validationReport,setValidationReport]=useState<ValidationReport|null>(null);const[validationBusy,setValidationBusy]=useState(false);const[draftState,setDraftState]=useState<"idle"|"saving"|"saved"|"error">("idle");
+  const[validationReport,setValidationReport]=useState<ValidationReport|null>(null);const[validationBusy,setValidationBusy]=useState(false);const[draftState,setDraftState]=useState<"idle"|"saving"|"saved"|"error">(initialProject.hasDraft?"saved":"idle");const[recoveredDraft,setRecoveredDraft]=useState(initialProject.hasDraft);
   const draftGeneration=useRef(0);const draftChain=useRef<Promise<void>>(Promise.resolve());
-  const dirty=useMemo(()=>JSON.stringify(plan)!==JSON.stringify(savedPlan),[plan,savedPlan]);
+  const localDirty=useMemo(()=>JSON.stringify(plan)!==JSON.stringify(savedPlan),[plan,savedPlan]);
+  const dirty=localDirty||recoveredDraft;
   const enqueueDraft=(snapshot:FloorPlanModel,revision:number,generation:number)=>{
     const run=async()=>{
       if(generation!==draftGeneration.current)return;
@@ -97,7 +98,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
       try{
         const synced=await saveDraft(project.id,snapshot,revision);
         if(generation===draftGeneration.current){
-          setProject(current=>({...current,...synced,plan:current.plan}));
+          setProject(current=>({...current,...synced,plan:current.plan,hasDraft:true}));
           setDraftState("saved");
         }
       }catch(error){
@@ -110,7 +111,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     return queued;
   };
   const syncPlanForEngineer=async()=>{
-    if(!dirty)return;
+    if(!localDirty)return;
     const generation=++draftGeneration.current;
     await draftChain.current.catch(()=>undefined);
     await enqueueDraft(plan,project.revision,generation);
@@ -181,7 +182,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     return()=>{active=false;if(objectUrl)URL.revokeObjectURL(objectUrl);};
   },[project.id]);
   useEffect(()=>{
-    if(!dirty||preview)return;
+    if(!localDirty||preview)return;
     const generation=++draftGeneration.current;
     setDraftState("idle");
     const snapshot=plan;
@@ -190,7 +191,23 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
       void enqueueDraft(snapshot,revision,generation).catch(()=>undefined);
     },1400);
     return()=>window.clearTimeout(timer);
-  },[plan,dirty,preview,project.id,project.revision]);
+  },[plan,localDirty,preview,project.id,project.revision]);
+  useEffect(()=>{
+    if(localDirty||recoveredDraft||!project.hasDraft||preview)return;
+    const generation=++draftGeneration.current;
+    const timer=window.setTimeout(async()=>{
+      await draftChain.current.catch(()=>undefined);
+      if(generation!==draftGeneration.current)return;
+      try{
+        const synced=await clearProjectDraft(project.id,project.revision);
+        if(generation===draftGeneration.current){
+          setProject(current=>({...current,...synced,plan:current.plan,hasDraft:false}));
+          setDraftState("idle");
+        }
+      }catch{if(generation===draftGeneration.current)setDraftState("error");}
+    },350);
+    return()=>window.clearTimeout(timer);
+  },[localDirty,recoveredDraft,project.hasDraft,project.id,project.revision,preview]);
   useEffect(()=>{
     const handle=(event:KeyboardEvent)=>{
       const modifier=event.ctrlKey||event.metaKey;
@@ -204,12 +221,12 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     return()=>window.removeEventListener("keydown",handle);
   },[undoStack,redoStack,plan]);
   const ask=async()=>{if(!command.trim())return;setThinking(true);setNotice(null);setPreview(null);try{await syncPlanForEngineer();const r=await askEngineer(project.id,command.trim());setProposals(r.proposals);if(r.needsClarification)setNotice(r.needsClarification);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحليل الطلب");}finally{setThinking(false);}};
-  const save=async()=>{setSaving(true);const generation=++draftGeneration.current;try{await draftChain.current.catch(()=>undefined);if(generation!==draftGeneration.current)return;const u=await saveRevision(project.id,plan,"تعديل يدوي",project.revision);setProject(u);setSavedPlan(plan);setDraftState("saved");setNotice("تم حفظ التعديل في السحابة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر الحفظ");}finally{setSaving(false);}};
+  const save=async()=>{setSaving(true);const generation=++draftGeneration.current;try{await draftChain.current.catch(()=>undefined);if(generation!==draftGeneration.current)return;const u=await saveRevision(project.id,plan,"تعديل يدوي",project.revision);setProject(u);setSavedPlan(plan);setRecoveredDraft(false);setDraftState("idle");setNotice("تم حفظ التعديل في السحابة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر الحفظ");}finally{setSaving(false);}};
   const openHistory=async()=>{setHistoryOpen(true);setHistoryBusy(true);try{const r=await listRevisions(project.id);setRevisions(r.items);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحميل سجل النسخ");setHistoryOpen(false);}finally{setHistoryBusy(false);}};
   const runValidation=async()=>{setValidationBusy(true);setNotice(null);try{setValidationReport(await validateProject(project.id,plan));}catch(e){setNotice(e instanceof Error?e.message:"تعذر فحص المخطط");}finally{setValidationBusy(false);}};
   const runExport=async(format:"svg"|"png"|"json")=>{setExportBusy(true);setNotice(null);try{if(format==="svg")exportPlanSvg(plan,project.name);else if(format==="json")exportPlanJson(plan,project.name);else await exportPlanPng(plan,project.name);setExportOpen(false);}catch{setNotice("تعذر إنشاء ملف التصدير. جرّب صيغة أخرى.");}finally{setExportBusy(false);}};
-  const restore=async(revision:number)=>{if(dirty){setNotice("احفظ التغييرات الحالية أو تراجع عنها قبل استعادة نسخة سابقة.");return;}setSaving(true);++draftGeneration.current;try{await draftChain.current.catch(()=>undefined);const u=await restoreRevision(project.id,revision);if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);setUndoStack([]);setRedoStack([]);}setProject(u);setHistoryOpen(false);setNotice(`تمت استعادة النسخة ${revision} كنسخة جديدة محفوظة.`);}catch(e){setNotice(e instanceof Error?e.message:"تعذر استعادة النسخة");}finally{setSaving(false);}};
-  const apply=async()=>{if(!preview)return;setSaving(true);++draftGeneration.current;try{await draftChain.current.catch(()=>undefined);const u=await applyProposal(project.id,{command,proposal:preview});if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);setUndoStack([]);setRedoStack([]);}setProject(u);setPreview(null);setProposals([]);setCommand("");setSelectedRoom(null);setExactName("");setExactWidth("");setExactHeight("");setNotice("تم اعتماد التعديل وحفظ نسخة جديدة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر تطبيق التعديل");}finally{setSaving(false);}};
+  const restore=async(revision:number)=>{if(localDirty){setNotice("احفظ التغييرات الحالية أو تراجع عنها قبل استعادة نسخة سابقة.");return;}setSaving(true);++draftGeneration.current;try{await draftChain.current.catch(()=>undefined);const u=await restoreRevision(project.id,revision);if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);setUndoStack([]);setRedoStack([]);}setProject(u);setRecoveredDraft(false);setHistoryOpen(false);setNotice(`تمت استعادة النسخة ${revision} كنسخة جديدة محفوظة.`);}catch(e){setNotice(e instanceof Error?e.message:"تعذر استعادة النسخة");}finally{setSaving(false);}};
+  const apply=async()=>{if(!preview)return;setSaving(true);++draftGeneration.current;try{await draftChain.current.catch(()=>undefined);const u=await applyProposal(project.id,{command,proposal:preview});if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);setUndoStack([]);setRedoStack([]);}setProject(u);setRecoveredDraft(false);setPreview(null);setProposals([]);setCommand("");setSelectedRoom(null);setExactName("");setExactWidth("");setExactHeight("");setNotice("تم اعتماد التعديل وحفظ نسخة جديدة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر تطبيق التعديل");}finally{setSaving(false);}};
   const applyCalibration=()=>{
     if(calibrationPoints.length!==2)return;
     const meters=Number(knownDistance.replace(",","."));
@@ -225,13 +242,25 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     applyLocalPlan({...plan,metersPerPixel:mpp,calibrationConfidence:1,rooms,quality:{...plan.quality,needsCalibration:false,dimensions:Math.max(plan.quality.dimensions,.95),warnings:plan.quality.warnings.filter(w=>!w.includes("مقياس الرسم"))}});
     setCalibrating(false);setCalibrationPoints([]);setKnownDistance("");setNotice("تم تثبيت المقياس. احفظ المشروع لتثبيت المعايرة.");
   };
+  const discardRecoveredDraft=async()=>{
+    setSaving(true);++draftGeneration.current;setNotice(null);
+    try{
+      await draftChain.current.catch(()=>undefined);
+      await clearProjectDraft(project.id,project.revision);
+      const fresh=await getProject(project.id);
+      if(!fresh.plan)throw new Error("لا توجد نسخة محفوظة يمكن الرجوع إليها.");
+      setProject(fresh);setPlan(fresh.plan);setSavedPlan(fresh.plan);setRecoveredDraft(false);setUndoStack([]);setRedoStack([]);setDraftState("idle");setNotice("تم تجاهل المسودة التلقائية والعودة إلى آخر نسخة محفوظة.");
+    }catch(e){setNotice(e instanceof Error?e.message:"تعذر تجاهل المسودة.");}
+    finally{setSaving(false);}
+  };
 
   return <main className="editor-page">
     {exportOpen&&<div className="history-backdrop" onClick={()=>!exportBusy&&setExportOpen(false)}><section className="history-modal export-modal" onClick={e=>e.stopPropagation()}><div className="history-head"><div><strong>تصدير المخطط</strong><span>التصدير يستخدم النموذج الحالي كما يظهر بعد تعديلاتك، حتى لو لم تحفظ Revision بعد.</span></div><button className="icon-button" disabled={exportBusy} onClick={()=>setExportOpen(false)} aria-label="إغلاق"><X size={17}/></button></div><div className="export-grid"><button className="export-option" disabled={exportBusy} onClick={()=>void runExport("svg")}><FileText size={26}/><strong>SVG متجهي</strong><span>الأفضل للطباعة والتعديل لاحقًا دون فقدان الدقة.</span></button><button className="export-option" disabled={exportBusy} onClick={()=>void runExport("png")}><FileImage size={26}/><strong>PNG عالي الدقة</strong><span>صورة جاهزة للمشاركة والمعاينة.</span></button><button className="export-option" disabled={exportBusy} onClick={()=>void runExport("json")}><Layers3 size={26}/><strong>نسخة مشروع JSON</strong><span>يحفظ النموذج الهندسي الكامل للنسخ الاحتياطي والتكامل.</span></button></div>{exportBusy&&<div className="history-loading"><LoaderCircle className="spin" size={22}/> تجهيز الملف...</div>}</section></div>}
-    {historyOpen&&<div className="history-backdrop" onClick={()=>setHistoryOpen(false)}><section className="history-modal" onClick={e=>e.stopPropagation()}><div className="history-head"><div><strong>سجل النسخ</strong><span>الاستعادة لا تحذف أي نسخة؛ تُنشئ نسخة جديدة من الحالة المختارة.</span></div><button className="icon-button" onClick={()=>setHistoryOpen(false)} aria-label="إغلاق"><X size={17}/></button></div>{dirty&&<div className="inline-warning">لديك تغييرات غير محفوظة. احفظها أو تراجع عنها قبل الاستعادة.</div>}<div className="history-list">{historyBusy?<div className="history-loading"><LoaderCircle className="spin" size={24}/> تحميل النسخ...</div>:revisions.length?revisions.map((item,index)=><div className="history-item" key={item.revision}><div><strong>نسخة {item.revision}{index===0?" · الأحدث":""}</strong><span>{item.summary}</span><small>{new Date(item.createdAt).toLocaleString("ar-SA")}</small></div><button className="ghost" disabled={dirty||saving||index===0} onClick={()=>restore(item.revision)}>{index===0?(dirty?"آخر حفظ":"الحالية"):"استعادة"}</button></div>):<div className="history-empty">لا توجد نسخ محفوظة بعد.</div>}</div></section></div>}
+    {historyOpen&&<div className="history-backdrop" onClick={()=>setHistoryOpen(false)}><section className="history-modal" onClick={e=>e.stopPropagation()}><div className="history-head"><div><strong>سجل النسخ</strong><span>الاستعادة لا تحذف أي نسخة؛ تُنشئ نسخة جديدة من الحالة المختارة.</span></div><button className="icon-button" onClick={()=>setHistoryOpen(false)} aria-label="إغلاق"><X size={17}/></button></div>{localDirty&&<div className="inline-warning">لديك تغييرات محلية غير محفوظة. احفظها أو تراجع عنها قبل الاستعادة.</div>}{recoveredDraft&&!localDirty&&<div className="notice-box">أنت تعرض مسودة تلقائية مستعادة. يمكنك استعادة أي نسخة محفوظة دون أن تضيع من سجل النسخ.</div>}<div className="history-list">{historyBusy?<div className="history-loading"><LoaderCircle className="spin" size={24}/> تحميل النسخ...</div>:revisions.length?revisions.map((item,index)=><div className="history-item" key={item.revision}><div><strong>نسخة {item.revision}{index===0?" · الأحدث":""}</strong><span>{item.summary}</span><small>{new Date(item.createdAt).toLocaleString("ar-SA")}</small></div><button className="ghost" disabled={localDirty||saving||(!recoveredDraft&&index===0)} onClick={()=>restore(item.revision)}>{index===0?(recoveredDraft?"استعادة آخر حفظ":localDirty?"آخر حفظ":"الحالية"):"استعادة"}</button></div>):<div className="history-empty">لا توجد نسخ محفوظة بعد.</div>}</div></section></div>}
     <header className="editor-header"><Brand compact/><div className="project-name"><FileText size={17}/><strong>{project.name}</strong></div><div className="editor-actions"><button className="ghost" onClick={openHistory}><Clock3 size={17}/> النسخ</button><button className="ghost" onClick={onHome}><ArrowLeft size={17}/> الرئيسية</button><button className="ghost" disabled={!undoStack.length} onClick={undoLocal}><Undo2 size={17}/> تراجع</button><button className="ghost" disabled={!redoStack.length} onClick={redoLocal}><Redo2 size={17}/> إعادة</button><button className="primary small" disabled={!dirty||saving} onClick={save}><Save size={17}/> حفظ</button></div></header>
     <div className="editor-workspace">
       <section className="plan-panel"><div className="panel-title"><div><strong>منطقة التعديل</strong><span>اسحب جدارًا لتحريكه أو استخدم H Engineer</span></div><div className="panel-status"><span className={`draft-pill ${draftState}`}>{draftState==="saving"?"حفظ...":draftState==="saved"?"مسودة سحابية":draftState==="error"?"تعذر الحفظ":"سحابي"}</span><button className="validate-chip export-chip" onClick={()=>setExportOpen(true)}><Download size={14}/> تصدير</button>{sourcePreview&&<label className="overlay-control"><span>الأصل</span><input type="range" min="0" max=".85" step=".05" value={sourceOpacity} onChange={e=>setSourceOpacity(Number(e.target.value))}/></label>}<button className="validate-chip" disabled={validationBusy} onClick={runValidation}>{validationBusy?<LoaderCircle className="spin" size={14}/>:<ShieldCheck size={14}/>} فحص</button><div className="quality-pill">جودة التحليل {Math.round(plan.quality.overall*100)}%</div></div></div>
+        {recoveredDraft&&<div className="recovered-draft"><div><strong>تمت استعادة مسودة تلقائية</strong><span>هذه التغييرات محفوظة سحابيًا لكنها ليست Revision رسمية بعد.</span></div><div><button className="ghost" disabled={saving} onClick={()=>void discardRecoveredDraft()}>تجاهل المسودة</button><button className="primary small" disabled={saving} onClick={save}><Save size={15}/> حفظ كنسخة</button></div></div>}
         <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)} selectedWallId={selectedWall} onSelectWall={id=>{setSelectedWall(id);if(id)setSelectedRoom(null);}} selectedRoomId={selectedRoom} onSelectRoom={selectRoom} onPlanChange={applyLocalPlan} onPlanCommit={commitTransientPlan}
           calibrationMode={calibrating} calibrationPoints={calibrationPoints}
           onCalibrationPoint={point=>setCalibrationPoints(points=>points.length<2?[...points,point]:points)}

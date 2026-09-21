@@ -130,6 +130,7 @@ export const resizeRoomPrecisely=(id:string,roomId:string,widthM:number,heightM:
 export const validateProject=(id:string,plan:FloorPlanModel)=>request<ValidationReport>(`/v1/projects/${id}/validate`,{method:"POST",body:JSON.stringify({plan})});
 export async function applyProposal(id:string,payload:ApplyProposalRequest){const project=await request<ProjectView>(`/v1/projects/${id}/ai/apply`,{method:"POST",body:JSON.stringify(payload)});rememberKnownProject(project);return project;}
 export const saveDraft=(id:string,plan:FloorPlanModel,expectedRevision:number)=>request<ProjectView>(`/v1/projects/${id}/draft`,{method:"PUT",body:JSON.stringify({plan,expectedRevision})});
+export const clearProjectDraft=(id:string,expectedRevision:number)=>request<ProjectView>(`/v1/projects/${id}/draft?expectedRevision=${expectedRevision}`,{method:"DELETE"});
 export async function saveRevision(id:string,plan:FloorPlanModel,summary:string,expectedRevision:number){
   const payload:SaveRevisionRequest={plan,summary,expectedRevision};
   const project=await request<ProjectView>(`/v1/projects/${id}/revisions`,{method:"POST",body:JSON.stringify(payload)});

@@ -1,6 +1,6 @@
 import type { ApplyProposalRequest,EditProposalResponse,FloorPlanModel,SaveRevisionRequest,ValidationReport } from "@manzil/contracts";
 import { createProjectAccess,hasProjectAccess } from "./access";
-import { getProjectRow,persistDraft,persistPlan,projectView } from "./db";
+import { clearDraft,getProjectRow,persistDraft,persistPlan,projectView } from "./db";
 import { cleanName,json } from "./http";
 import type { Env,ProjectRow } from "./types";
 
@@ -51,8 +51,9 @@ async function protectedRow(request:Request,env:Env,id:string):Promise<ProjectRo
 }
 
 async function currentPlan(env:Env,row:ProjectRow):Promise<FloorPlanModel|null>{
-  if(!row.plan_key) return null;
-  const object=await env.ASSETS.get(row.plan_key);
+  const key=row.draft_key||row.plan_key;
+  if(!key) return null;
+  const object=await env.ASSETS.get(key);
   return object?object.json<FloorPlanModel>():null;
 }
 
@@ -140,6 +141,20 @@ export async function route(request:Request,env:Env):Promise<Response>{
     try{await persistDraft(env,id,body.plan,expectedRevision);}
     catch(error){
       if(error instanceof Error&&error.message==="STALE_DRAFT") return json({error:"المسودة متقادمة بعد حفظ نسخة أحدث"},409);
+      throw error;
+    }
+    const row=await getProjectRow(env,id);
+    return json(await projectView(env,row!,false));
+  }
+  if(draftMatch&&request.method==="DELETE"){
+    const id=draftMatch[1];
+    const secured=await protectedRow(request,env,id);
+    if(secured instanceof Response) return secured;
+    const expectedRevision=Number(url.searchParams.get("expectedRevision"));
+    if(!Number.isInteger(expectedRevision)||expectedRevision<0) return json({error:"رقم النسخة المرجعية للمسودة غير صالح"},400);
+    try{await clearDraft(env,id,expectedRevision);}
+    catch(error){
+      if(error instanceof Error&&error.message==="STALE_DRAFT") return json({error:"تغير المشروع قبل حذف المسودة. أعد تحميله."},409);
       throw error;
     }
     const row=await getProjectRow(env,id);
