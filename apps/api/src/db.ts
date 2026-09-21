@@ -72,13 +72,19 @@ export async function persistDraft(env:Env,id:string,plan:FloorPlanModel,expecte
   const row=await getProjectRow(env,id);
   if(!row) throw new Error("PROJECT_NOT_FOUND");
   if(row.revision!==expectedRevision) throw new Error("STALE_DRAFT");
+  if(["queued","analyzing"].includes(row.status)) throw new Error("ANALYSIS_IN_PROGRESS");
 
   const key=`projects/${id}/draft/current-r${expectedRevision}.json`;
   await env.ASSETS.put(key,JSON.stringify(plan),{httpMetadata:{contentType:"application/json"}});
   const now=new Date().toISOString();
-  const result=await env.DB.prepare("UPDATE projects SET draft_key=?, status='ready', phase='ready', progress=100, message=?, error=NULL, updated_at=? WHERE id=? AND revision=?")
+  const result=await env.DB.prepare("UPDATE projects SET draft_key=?, status='ready', phase='ready', progress=100, message=?, error=NULL, updated_at=? WHERE id=? AND revision=? AND status NOT IN ('queued','analyzing')")
     .bind(key,"تم حفظ المسودة سحابيًا",now,id,expectedRevision).run();
-  if((result.meta.changes??0)<1) throw new Error("STALE_DRAFT");
+  if((result.meta.changes??0)<1){
+    await env.ASSETS.delete(key).catch(()=>undefined);
+    const current=await getProjectRow(env,id);
+    if(current&&["queued","analyzing"].includes(current.status)) throw new Error("ANALYSIS_IN_PROGRESS");
+    throw new Error("STALE_DRAFT");
+  }
 }
 
 export async function clearDraft(env:Env,id:string,expectedRevision:number){
