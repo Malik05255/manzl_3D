@@ -621,7 +621,7 @@ def _candidate_near_dimension_label(
     nx=-uy
     ny=ux
     thickness=max(2.0,float(candidate.get("thicknessPx",4.0)))
-    normal_tolerance=max(18.0,min(min_side*.035,thickness*5.0))
+    normal_tolerance=max(18.0,min(48.0,min_side*.055,thickness*5.0))
     axial_margin=max(14.0,min(length*.18,min_side*.04))
 
     for label in labels:
@@ -773,7 +773,7 @@ def add_vector_wall_candidates(
 
     result=[dict(wall) for wall in walls]
     candidates=_merge_near_collinear_candidates(candidates)
-    dimension_candidate_thin_limit=max(4.5,min(8.0,min_side*.0045))
+    dimension_candidate_thin_limit=max(6.0,min(8.0,min_side*.0055))
     for candidate in candidates:
         if (
             float(candidate.get("thicknessPx",4.0))<=dimension_candidate_thin_limit
