@@ -15,7 +15,7 @@ export interface AnalyzeMessage {
   fileName: string;
   mimeType: string;
   sourcePage?: number;
-  expectedRevision?: number;
+  expectedRevision: number;
 }
 
 export interface ProjectRow {
