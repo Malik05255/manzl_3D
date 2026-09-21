@@ -7,6 +7,9 @@ from .edit_geometry import bbox,minimum_clear_span_m,overlap
 from .models import EditRequest,FloorPlan,Impact,Opening,Point,Proposal,ProposalResponse,Wall
 from .validation import validate_plan
 
+WALL_EDIT_CONFIDENCE_MIN=0.72
+OPENING_EDIT_CONFIDENCE_MIN=0.84
+
 
 def _point_at(wall:Wall,distance:float)->Point:
     vx=wall.b.x-wall.a.x
@@ -374,6 +377,12 @@ def build_selected_element_proposals(req:EditRequest)->ProposalResponse|None:
         opening=_find_opening(req.plan,req.target_opening_id)
         if opening is None:
             return ProposalResponse(command=req.command,proposals=[],needsClarification="الفتحة المحددة لم تعد موجودة في المخطط.")
+        if opening.confidence<OPENING_EDIT_CONFIDENCE_MIN:
+            return ProposalResponse(
+                command=req.command,
+                proposals=[],
+                needsClarification="قراءة الفتحة المحددة منخفضة الثقة. أكد أنها باب أو نافذة وموقعها من مراجعة القراءة قبل تعديلها بالذكاء.",
+            )
         action=parse_selected_opening_action(req.command)
         if action is None:
             return ProposalResponse(
@@ -450,6 +459,12 @@ def build_selected_element_proposals(req:EditRequest)->ProposalResponse|None:
         wall=next((item for item in req.plan.walls if item.id==req.target_wall_id),None)
         if wall is None:
             return ProposalResponse(command=req.command,proposals=[],needsClarification="الجدار المحدد لم يعد موجودًا في المخطط.")
+        if wall.confidence<WALL_EDIT_CONFIDENCE_MIN:
+            return ProposalResponse(
+                command=req.command,
+                proposals=[],
+                needsClarification="قراءة الجدار المحدد منخفضة الثقة. أكد الجدار من مراجعة القراءة أو صحح موضعه أولًا قبل تعديله بالذكاء.",
+            )
         action=parse_selected_wall_action(req.command)
         if action is None:
             return ProposalResponse(
