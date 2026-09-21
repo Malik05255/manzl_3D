@@ -49,6 +49,17 @@ export interface FloorPlanModel {
   quality: FloorPlanQuality;
   source: { fileName: string; mimeType: string; page: number; pageCount?: number | null; };
 }
+export interface ProjectFloorView {
+  id: string;
+  sourcePage: number;
+  name: string;
+  latestRevision: number;
+  previewAvailable: boolean;
+  elevationM?: number | null;
+  heightM?: number | null;
+  updatedAt: string;
+}
+
 export interface ProjectView {
   id: string;
   name: string;
@@ -57,6 +68,8 @@ export interface ProjectView {
   progress: number;
   revision: number;
   hasDraft: boolean;
+  activeFloorId?: string | null;
+  floors?: ProjectFloorView[];
   message?: string | null;
   error?: string | null;
   createdAt: string;
@@ -86,7 +99,7 @@ export interface EditProposalResponse {
 }
 export interface ApplyProposalRequest { command: string; proposal: EditProposal; targetRoomId?: string | null; targetWallId?: string | null; targetOpeningId?: string | null; }
 export interface SaveRevisionRequest { summary: string; plan: FloorPlanModel; expectedRevision: number; }
-export interface RevisionView { revision: number; summary: string; createdAt: string; }
+export interface RevisionView { revision: number; summary: string; createdAt: string; sourcePage?: number | null; floorId?: string | null; }
 
 export interface ValidationFinding {
   code: string;
