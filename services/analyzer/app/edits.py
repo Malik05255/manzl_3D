@@ -1,7 +1,7 @@
 from __future__ import annotations
 from itertools import product
-from .commands import find_target_room,normalize_arabic,resolve_target_size
-from .edit_geometry import absorb_neighbor,adjacent,apply_side,bbox,is_rectangular_room,minimum_clear_span_m
+from .commands import find_target_room,normalize_arabic,parse_merge_rooms,resolve_target_size
+from .edit_geometry import absorb_neighbor,adjacent,apply_side,bbox,is_rectangular_room,merge_neighbor,minimum_clear_span_m
 from .models import EditRequest,FloorPlan,Impact,Proposal,ProposalResponse,Room
 from .validation import validate_plan
 
@@ -188,7 +188,51 @@ def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:fl
     ranked.sort(key=lambda item:(item[0],item[1],-item[2].confidence))
     return ProposalResponse(command=command,proposals=[item[2] for item in ranked[:4]])
 
+def build_merge_proposal(plan:FloorPlan,source:Room,target:Room,command:str)->ProposalResponse:
+    if not plan.metersPerPixel:
+        return ProposalResponse(command=command,proposals=[],needsClarification="يجب تثبيت مقياس المخطط قبل دمج الغرف.")
+
+    candidate=plan.model_copy(deep=True)
+    candidate_source=next((room for room in candidate.rooms if room.id==source.id),None)
+    candidate_target=next((room for room in candidate.rooms if room.id==target.id),None)
+    if candidate_source is None or candidate_target is None:
+        return ProposalResponse(command=command,proposals=[],needsClarification="تعذر العثور على الغرف المطلوب دمجها.")
+
+    ok,impacts=merge_neighbor(candidate,candidate_target,candidate_source,plan.metersPerPixel)
+    if not ok:
+        return ProposalResponse(
+            command=command,
+            proposals=[],
+            needsClarification="لا يمكن دمج الغرفتين تلقائيًا دون إنشاء شكل غير منتظم أو فراغ غير مغطى. استخدم التعديل اليدوي لهذه الحالة.",
+        )
+
+    validation=validate_plan(candidate)
+    if any(item.severity=="critical" for item in validation.findings):
+        return ProposalResponse(command=command,proposals=[],needsClarification="نتيجة الدمج تسببت في تعارض هندسي، لذلك لم يتم اقتراحها.")
+
+    warnings=[
+        f"سيتم حذف {source.name} كغرفة مستقلة وضم مساحتها بالكامل إلى {target.name}.",
+        *[item.text for item in validation.findings if item.severity=="warning"],
+    ]
+    proposal=Proposal(
+        id=f"merge:{source.id}:into:{target.id}",
+        title=f"ضم {source.name} إلى {target.name}",
+        summary=f"إلغاء الحد الفاصل واعتبار المساحتين غرفة واحدة باسم {target.name}",
+        confidence=max(0.55,min(0.82,plan.quality.overall-0.12)),
+        validationScore=validation.score,
+        impacts=impacts,
+        warnings=list(dict.fromkeys(warnings)),
+        previewPlan=candidate,
+    )
+    return ProposalResponse(command=command,proposals=[proposal])
+
+
 def build_proposals(req:EditRequest)->ProposalResponse:
+    merge=parse_merge_rooms(req.command,req.plan.rooms)
+    if merge is not None:
+        source,target=merge
+        return build_merge_proposal(req.plan,source,target,req.command)
+
     target=find_target_room(req.command,req.plan.rooms)
     if target is None:
         names="، ".join(room.name for room in req.plan.rooms[:10])
