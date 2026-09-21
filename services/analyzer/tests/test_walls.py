@@ -129,3 +129,33 @@ def test_ordinary_single_vector_dimension_line_stays_ignored():
         {"a":{"x":100.0,"y":260.0},"b":{"x":700.0,"y":260.0},"widthPx":1.2},
     ]
     assert add_vector_wall_candidates([],vectors,900,1200)==[]
+
+
+def test_parallel_diagonal_pdf_vectors_seed_slanted_wall():
+    vectors=[
+        {"a":{"x":100.0,"y":100.0},"b":{"x":500.0,"y":400.0},"widthPx":1.5},
+        {"a":{"x":91.6,"y":111.2},"b":{"x":491.6,"y":411.2},"widthPx":1.5},
+    ]
+    result=add_vector_wall_candidates([],vectors,900,1200)
+    assert len(result)==1
+    wall=result[0]
+    assert abs((wall["b"]["x"]-wall["a"]["x"])-(wall["b"]["y"]-wall["a"]["y"])*4/3)<3
+    assert wall["provenance"]=="pdf-vector"
+    assert wall["confidence"]>=.94
+
+
+def test_raster_detector_finds_double_line_slanted_wall():
+    from app.walls import detect_walls
+
+    ink=np.zeros((500,600),dtype=np.uint8)
+    cv2.line(ink,(100,100),(450,350),255,3)
+    cv2.line(ink,(92,111),(442,361),255,3)
+
+    walls,_=detect_walls(ink)
+    slanted=[
+        wall for wall in walls
+        if abs(wall["b"]["x"]-wall["a"]["x"])>120
+        and abs(wall["b"]["y"]-wall["a"]["y"])>80
+    ]
+    assert slanted
+    assert any(wall["confidence"]>=.85 for wall in slanted)
