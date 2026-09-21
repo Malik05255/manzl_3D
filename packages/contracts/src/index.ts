@@ -252,6 +252,7 @@ export function floorPlanValidationError(value:unknown,expectedId?:string):strin
   if(new Set(ids).size!==ids.length)return "PLAN_DUPLICATE_IDS";
 
   const wallIds=new Set(value.walls.map(item=>(item as Wall).id));
+  const labelIds=new Set(value.labels.map(item=>(item as PlanLabel).id));
   for(const room of value.rooms as Room[]){
     if(room.boundaryWallIds?.some(id=>!wallIds.has(id)))return "PLAN_ROOM_WALL";
   }
@@ -260,6 +261,7 @@ export function floorPlanValidationError(value:unknown,expectedId?:string):strin
   }
   for(const dimension of (value.dimensions??[]) as Dimension[]){
     if(dimension.referenceWallId&& !wallIds.has(dimension.referenceWallId))return "PLAN_DIMENSION_WALL";
+    if(dimension.sourceLabelId&& !labelIds.has(dimension.sourceLabelId))return "PLAN_DIMENSION_LABEL";
   }
   return null;
 }
