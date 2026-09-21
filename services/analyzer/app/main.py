@@ -171,6 +171,14 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     doors=detect_doors(image,topology_walls,scale)
     windows=detect_windows(image,topology_walls,scale)
     walls,doors,windows=normalize_opening_hosts(walls,doors,windows)
+    topology_walls=[
+        wall for wall in walls
+        if str(wall.get("id","")) not in quarantined_wall_ids
+        and not (
+            str(wall.get("provenance",""))=="pdf-vector"
+            and float(wall.get("confidence",0.0))<.70
+        )
+    ]
     room_barrier_mask=rasterize_wall_mask(walls,h,w,min_pdf_vector_confidence=.70,excluded_wall_ids=quarantined_wall_ids)
 
     await progress(req.callback_url,req.project_id,"rooms",78,"فهم الغرف والعلاقات")
