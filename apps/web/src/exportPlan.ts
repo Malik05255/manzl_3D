@@ -30,6 +30,10 @@ function roomMetrics(room:FloorPlanModel["rooms"][number],metersPerPixel?:number
   };
 }
 
+function symbolLabel(kind:string){
+  return ({sink:"مغسلة",toilet:"مرحاض",bathtub:"بانيو",shower:"دش",cooktop:"موقد",stairs:"درج"} as Record<string,string>)[kind]??kind;
+}
+
 export function safeFileName(value:string){
   const cleaned=value.trim().replace(/[\\/:*?"<>|]+/g,"-").replace(/\s+/g," ").slice(0,90);
   return cleaned||"manzil-h-plan";
@@ -56,6 +60,14 @@ export function planToSvg(plan:FloorPlanModel){
   }
   for(const window of plan.windows){
     parts.push(`<line x1="${window.a.x}" y1="${window.a.y}" x2="${window.b.x}" y2="${window.b.y}" stroke="#38bdf8" stroke-width="3"/>`);
+  }
+
+  for(const symbol of plan.symbols??[]){
+    const width=Math.max(1,symbol.b.x-symbol.a.x);
+    const height=Math.max(1,symbol.b.y-symbol.a.y);
+    const label=escapeXml(symbolLabel(symbol.kind));
+    parts.push(`<rect x="${symbol.a.x}" y="${symbol.a.y}" width="${width}" height="${height}" rx="4" fill="#f0fdfa" stroke="#0f766e" stroke-width="2"/>`);
+    parts.push(`<text x="${(symbol.a.x+symbol.b.x)/2}" y="${Math.max(12,symbol.a.y-5)}" text-anchor="middle" fill="#0f766e" font-size="11" font-weight="700" style="font-family:Arial,Tahoma,sans-serif;direction:rtl;unicode-bidi:plaintext">${label}</text>`);
   }
 
   for(const dimension of plan.dimensions??[]){
