@@ -11,6 +11,8 @@ export interface Opening {
   id: string;
   kind: "door" | "window";
   doorSubtype?: DoorSubtype;
+  doorSwingSide?: "positive" | "negative" | "unknown";
+  doorSwingDepthPx?: number | null;
   wallId?: string | null;
   a: Point;
   b: Point;
@@ -199,6 +201,8 @@ function fpOpening(value:unknown):value is Opening{
     &&typeof value.id==="string"&&value.id.length>0
     &&(value.kind==="door"||value.kind==="window")
     &&(value.doorSubtype===undefined||["unknown","single_swing","double_swing","sliding"].includes(String(value.doorSubtype)))
+    &&(value.doorSwingSide===undefined||["positive","negative","unknown"].includes(String(value.doorSwingSide)))
+    &&(value.doorSwingDepthPx===undefined||value.doorSwingDepthPx===null||(fpFinite(value.doorSwingDepthPx)&&value.doorSwingDepthPx>=0&&value.doorSwingDepthPx<=30000))
     &&(value.wallId===undefined||value.wallId===null||typeof value.wallId==="string")
     &&fpPoint(value.a)&&fpPoint(value.b)
     &&fpConfidence(value.confidence)
