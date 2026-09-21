@@ -71,6 +71,27 @@ def plan_to_aec_prediction(plan:dict,*,sheet:str,width:int,height:int)->dict:
             "bbox":_opening_bbox(window,sx,sy,padding),
         })
 
+    symbol_classes={
+        "sink":"Sink",
+        "toilet":"Toilet",
+        "bathtub":"Bathtub",
+        "shower":"Shower",
+        "cooktop":"Cooktops",
+    }
+    for symbol in plan.get("symbols",[]):
+        object_class=symbol_classes.get(symbol.get("kind"))
+        if not object_class:
+            continue
+        objects.append({
+            "class":object_class,
+            "bbox":[
+                float(symbol["a"]["x"])*sx,
+                float(symbol["a"]["y"])*sy,
+                float(symbol["b"]["x"])*sx,
+                float(symbol["b"]["y"])*sy,
+            ],
+        })
+
     areas=[
         [_scale_point(point,sx,sy) for point in room.get("polygon",[])]
         for room in plan.get("rooms",[])
