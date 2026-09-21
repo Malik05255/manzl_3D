@@ -1,3 +1,4 @@
+import { floorPlanValidationError } from "@manzil/contracts";
 import type { FloorPlanModel } from "@manzil/contracts";
 import { persistPlan,setProgress } from "./db";
 import type { AnalyzeMessage,Env } from "./types";
@@ -21,8 +22,10 @@ export async function consumeAnalysis(batch:MessageBatch<AnalyzeMessage>,env:Env
         })
       });
       if(!response.ok) throw new Error((await response.text().catch(()=>""))||`ANALYZER_${response.status}`);
-      const plan=await response.json<FloorPlanModel>();
-      if(plan.id!==job.projectId) throw new Error("ANALYZER_PROJECT_MISMATCH");
+      const rawPlan=await response.json<unknown>();
+      const planError=floorPlanValidationError(rawPlan,job.projectId);
+      if(planError) throw new Error(`ANALYZER_INVALID_PLAN:${planError}`);
+      const plan=rawPlan as FloorPlanModel;
       await persistPlan(env,job.projectId,plan,"التحليل السحابي الأولي");
       message.ack();
     }catch(error){

@@ -1,3 +1,4 @@
+import { floorPlanValidationError } from "@manzil/contracts";
 import type { ApplyProposalRequest,EditProposalResponse,FloorPlanModel,SaveRevisionRequest,ValidationReport } from "@manzil/contracts";
 import { createProjectAccess,hasProjectAccess } from "./access";
 import { clearDraft,getProjectRow,persistDraft,persistPlan,projectView } from "./db";
@@ -134,11 +135,13 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const id=draftMatch[1];
     const secured=await protectedRow(request,env,id);
     if(secured instanceof Response) return secured;
-    const body=await request.json<{plan?:FloorPlanModel;expectedRevision?:number}>();
-    if(!body.plan||body.plan.id!==id||body.plan.schemaVersion!==1) return json({error:"صيغة المسودة غير صالحة"},400);
+    const body=await request.json<{plan?:unknown;expectedRevision?:number}>();
+    const planError=floorPlanValidationError(body.plan,id);
+    if(planError) return json({error:"صيغة المسودة غير صالحة"},400);
+    const plan=body.plan as FloorPlanModel;
     const expectedRevision=body.expectedRevision;
     if(typeof expectedRevision!=="number"||!Number.isInteger(expectedRevision)||expectedRevision<0) return json({error:"رقم النسخة المرجعية للمسودة غير صالح"},400);
-    try{await persistDraft(env,id,body.plan,expectedRevision);}
+    try{await persistDraft(env,id,plan,expectedRevision);}
     catch(error){
       if(error instanceof Error&&error.message==="STALE_DRAFT") return json({error:"المسودة متقادمة بعد حفظ نسخة أحدث"},409);
       throw error;
@@ -179,7 +182,8 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const secured=await protectedRow(request,env,id);
     if(secured instanceof Response) return secured;
     const body=await request.json<SaveRevisionRequest>();
-    if(!body.plan||body.plan.schemaVersion!==1||body.plan.id!==id) return json({error:"صيغة المخطط غير صالحة"},400);
+    const planError=floorPlanValidationError(body.plan,id);
+    if(planError) return json({error:"صيغة المخطط غير صالحة"},400);
     if(!Number.isInteger(body.expectedRevision)||body.expectedRevision<0) return json({error:"رقم النسخة المرجعية غير صالح"},400);
     try{await persistPlan(env,id,body.plan,cleanName(body.summary||"تعديل يدوي"),body.expectedRevision);}
     catch(error){
@@ -215,11 +219,13 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const id=validateMatch[1];
     const secured=await protectedRow(request,env,id);
     if(secured instanceof Response) return secured;
-    const body:{plan?:FloorPlanModel}=await request.json<{plan?:FloorPlanModel}>().catch(()=>({}));
+    const body:{plan?:unknown}=await request.json<{plan?:unknown}>().catch(()=>({}));
     const stored=await currentPlan(env,secured);
-    const plan=body.plan??stored;
-    if(!plan) return json({error:"المخطط غير جاهز للفحص"},409);
-    if(plan.id!==id||plan.schemaVersion!==1) return json({error:"صيغة المخطط غير صالحة للفحص"},400);
+    const candidate=body.plan??stored;
+    if(!candidate) return json({error:"المخطط غير جاهز للفحص"},409);
+    const planError=floorPlanValidationError(candidate,id);
+    if(planError) return json({error:"صيغة المخطط غير صالحة للفحص"},400);
+    const plan=candidate as FloorPlanModel;
     try{return json(await analyzerValidation(env,id,plan));}
     catch(error){return json({error:error instanceof Error?error.message:"تعذر فحص المخطط"},502);}
   }
@@ -276,7 +282,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
 
     const selected=fresh.proposals.find(proposal=>proposal.id===selectedId);
     if(!selected) return json({error:"المخطط تغير أو أن خيار التعديل لم يعد صالحًا. أعد المعاينة."},409);
-    if(selected.previewPlan.id!==id||selected.previewPlan.schemaVersion!==1) return json({error:"نتيجة H Engineer غير صالحة"},502);
+    if(floorPlanValidationError(selected.previewPlan,id)) return json({error:"نتيجة H Engineer غير صالحة"},502);
 
     try{await persistPlan(env,id,selected.previewPlan,`H Engineer: ${cleanName(command)}`,secured.revision);}
     catch(error){if(error instanceof Error&&error.message==="STALE_REVISION") return json({error:"تغير المشروع أثناء تحليل H Engineer. أعد المعاينة على النسخة الأحدث."},409);throw error;}
