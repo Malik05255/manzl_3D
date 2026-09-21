@@ -15,6 +15,7 @@ class Wall(BaseModel):
     b: Point
     thicknessPx: float = 4.0
     confidence: float = Field(ge=0, le=1)
+    heightM: float | None = Field(default=None, ge=0.5, le=20)
     role: WallRole = "unknown"
     locked: bool = False
     reviewed: bool = False
@@ -26,6 +27,7 @@ class Room(BaseModel):
     polygon: list[Point]
     confidence: float = Field(ge=0, le=1)
     areaM2: float | None = None
+    ceilingHeightM: float | None = Field(default=None, ge=0.5, le=20)
     boundaryWallIds: list[str] = Field(default_factory=list)
     reviewed: bool = False
     provenance: ElementProvenance | None = None
@@ -37,6 +39,8 @@ class Opening(BaseModel):
     a: Point
     b: Point
     confidence: float = Field(ge=0, le=1)
+    heightM: float | None = Field(default=None, ge=0.2, le=10)
+    sillHeightM: float | None = Field(default=None, ge=0, le=10)
     reviewed: bool = False
     provenance: ElementProvenance | None = None
 
