@@ -32,13 +32,6 @@ describe("plan backup",()=>{
     expect(cloned.rooms).not.toBe(original.rooms);
     expect(cloned.rooms[0].polygon).not.toBe(original.rooms[0].polygon);
   });
-});
-
-
-  it("rejects orphaned opening references through the shared contract validator",()=>{
-    const broken={...plan(),doors:[{id:"door-1",kind:"door",wallId:"missing-wall",a:{x:10,y:10},b:{x:20,y:10},confidence:.9}]};
-    expect(()=>parsePlanBackup(JSON.stringify(broken))).toThrow("BACKUP_OPENING_WALL");
-  
 
   it("rejects orphaned opening references through the shared contract validator",()=>{
     const broken={...plan(),doors:[{id:"door-1",kind:"door" as const,wallId:"missing-wall",a:{x:10,y:10},b:{x:20,y:10},confidence:.9}]};
