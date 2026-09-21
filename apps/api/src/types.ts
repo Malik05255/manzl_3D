@@ -14,6 +14,7 @@ export interface AnalyzeMessage {
   sourceKey: string;
   fileName: string;
   mimeType: string;
+  sourcePage?: number;
 }
 
 export interface ProjectRow {
