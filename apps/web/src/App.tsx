@@ -3,7 +3,8 @@ import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Clock3,Cloud,DoorOpen,Download
 import type { EditProposal,ElementProvenance,FloorPlanModel,Opening,Point,ProjectView,RevisionView,ValidationReport,WallRole } from "@manzil/contracts";
 import { ApiError,applyProposal,askEngineer,clearProjectDraft,createProject,forgetKnownProject,forgetLastProject,getKnownProjects,getLastProjectId,getProject,getProjectPreview,importProjectBackup,inferSourceMime,listRevisions,resizeRoomPrecisely,restoreRevision,retryAnalysis,saveDraft,saveRevision,uploadSource,validateProject } from "./api";
 import type { KnownProject } from "./api";
-import { PlanCanvas,moveWallAndTopology } from "./PlanCanvas";
+import { DEFAULT_PLAN_LAYERS,PlanCanvas,moveWallAndTopology } from "./PlanCanvas";
+import type { PlanLayerVisibility } from "./PlanCanvas";
 import { exportPlanJson,exportPlanPng,exportPlanSvg } from "./exportPlan";
 import { parsePlanBackup } from "./planBackup";
 import { addOpeningToWall,changeOpeningKind,findOpening,openingMetrics,positionOpening,removeOpening,resizeOpening } from "./openingGeometry";
@@ -142,11 +143,13 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   const[selectedWall,setSelectedWall]=useState<string|null>(null);const[wallThicknessCm,setWallThicknessCm]=useState("");const[wallMoveCm,setWallMoveCm]=useState("10");const[selectedRoom,setSelectedRoom]=useState<string|null>(null);const[selectedOpening,setSelectedOpening]=useState<string|null>(null);const[openingWidth,setOpeningWidth]=useState("");const[openingPosition,setOpeningPosition]=useState(50);const[exactName,setExactName]=useState("");const[exactWidth,setExactWidth]=useState("");const[exactHeight,setExactHeight]=useState("");const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
   const[calibrating,setCalibrating]=useState(false);const[calibrationPoints,setCalibrationPoints]=useState<Point[]>([]);const[knownDistance,setKnownDistance]=useState("");
   const[sourcePreview,setSourcePreview]=useState<string|null>(null);const[sourceOpacity,setSourceOpacity]=useState(.42);const[sourcePreviewNonce,setSourcePreviewNonce]=useState(0);const[sourcePageInput,setSourcePageInput]=useState(String(initialProject.plan?.source.page??1));const[pageSwitchBusy,setPageSwitchBusy]=useState(false);
+  const[layerOpen,setLayerOpen]=useState(false);const[layers,setLayers]=useState<PlanLayerVisibility>({...DEFAULT_PLAN_LAYERS});
   const[historyOpen,setHistoryOpen]=useState(false);const[historyBusy,setHistoryBusy]=useState(false);const[revisions,setRevisions]=useState<RevisionView[]>([]);const[exportOpen,setExportOpen]=useState(false);const[exportBusy,setExportBusy]=useState(false);
   const[validationReport,setValidationReport]=useState<ValidationReport|null>(null);const[validationBusy,setValidationBusy]=useState(false);const[draftState,setDraftState]=useState<"idle"|"saving"|"saved"|"error">(initialProject.hasDraft?"saved":"idle");const[recoveredDraft,setRecoveredDraft]=useState(initialProject.hasDraft);
   const draftGeneration=useRef(0);const draftChain=useRef<Promise<void>>(Promise.resolve());const openingPositionBase=useRef<FloorPlanModel|null>(null);
   const localDirty=useMemo(()=>JSON.stringify(plan)!==JSON.stringify(savedPlan),[plan,savedPlan]);
   const dirty=localDirty||recoveredDraft;
+  const toggleLayer=(key:keyof PlanLayerVisibility)=>setLayers(current=>({...current,[key]:!current[key]}));
   const selectedContextLabel=useMemo(()=>{
     if(selectedRoom)return `الغرفة · ${plan.rooms.find(room=>room.id===selectedRoom)?.name??"محددة"}`;
     if(selectedOpening){
@@ -424,16 +427,25 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   },[localDirty,recoveredDraft,project.hasDraft,project.id,project.revision,preview]);
   useEffect(()=>{
     const handle=(event:KeyboardEvent)=>{
+      const target=event.target as HTMLElement|null;
+      const tag=target?.tagName?.toLowerCase();
+      const typing=tag==="input"||tag==="textarea"||tag==="select"||target?.isContentEditable;
+      if(event.key==="Escape"){
+        setLayerOpen(false);setPreview(null);setProposals([]);setSelectedWall(null);setSelectedRoom(null);setSelectedOpening(null);
+        return;
+      }
+      if(typing)return;
+      if((event.key==="Delete"||event.key==="Backspace")&&selectedOpening&&!openingHostProtected(plan,selectedOpening)){
+        event.preventDefault();deleteOpening();return;
+      }
       const modifier=event.ctrlKey||event.metaKey;
       if(!modifier)return;
-      const tag=(event.target as HTMLElement|null)?.tagName?.toLowerCase();
-      if(tag==="input"||tag==="textarea"||tag==="select")return;
       if(event.key.toLowerCase()==="z"&&!event.shiftKey){event.preventDefault();undoLocal();}
       else if((event.key.toLowerCase()==="z"&&event.shiftKey)||event.key.toLowerCase()==="y"){event.preventDefault();redoLocal();}
     };
     window.addEventListener("keydown",handle);
     return()=>window.removeEventListener("keydown",handle);
-  },[undoStack,redoStack,plan]);
+  },[undoStack,redoStack,plan,selectedOpening]);
   const ask=async()=>{if(!command.trim())return;setThinking(true);setNotice(null);setPreview(null);try{await syncPlanForEngineer();const r=await askEngineer(project.id,command.trim(),{targetRoomId:selectedRoom,targetWallId:selectedWall,targetOpeningId:selectedOpening});setProposals(r.proposals);if(r.needsClarification)setNotice(r.needsClarification);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحليل الطلب");}finally{setThinking(false);}};
   const save=async()=>{setSaving(true);const generation=++draftGeneration.current;try{await draftChain.current.catch(()=>undefined);if(generation!==draftGeneration.current)return;const u=await saveRevision(project.id,plan,"تعديل يدوي",project.revision);setProject(u);setSavedPlan(plan);setRecoveredDraft(false);setDraftState("idle");setValidationReport(null);setNotice("تم حفظ التعديل في السحابة.");}catch(e){const report=validationFromApiError(e);if(report)setValidationReport(report);setNotice(e instanceof Error?e.message:"تعذر الحفظ");}finally{setSaving(false);}};
   const openHistory=async()=>{setHistoryOpen(true);setHistoryBusy(true);try{const r=await listRevisions(project.id);setRevisions(r.items);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحميل سجل النسخ");setHistoryOpen(false);}finally{setHistoryBusy(false);}};
@@ -507,12 +519,20 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     <header className="editor-header"><Brand compact/><div className="project-name"><FileText size={17}/><strong>{project.name}</strong></div><div className="editor-actions"><button className="ghost" onClick={openHistory}><Clock3 size={17}/> النسخ</button><button className="ghost" onClick={onHome}><ArrowLeft size={17}/> الرئيسية</button><button className="ghost" disabled={!undoStack.length} onClick={undoLocal}><Undo2 size={17}/> تراجع</button><button className="ghost" disabled={!redoStack.length} onClick={redoLocal}><Redo2 size={17}/> إعادة</button><button className="primary small" disabled={!dirty||saving} onClick={save}><Save size={17}/> حفظ</button></div></header>
     <div className={`editor-workspace ${pageSwitchBusy?"reanalyzing":""}`}>
       {pageSwitchBusy&&<div className="reanalyze-overlay" aria-live="polite"><div><LoaderCircle className="spin" size={24}/><strong>إعادة تحليل صفحة PDF</strong><span>نبني نموذج الصفحة الجديدة ونحفظ الصفحة السابقة في سجل النسخ.</span></div></div>}
-      <section className="plan-panel"><div className="panel-title"><div><strong>منطقة التعديل</strong><span>اسحب جدارًا لتحريكه أو استخدم H Engineer</span></div><div className="panel-status"><span className={`draft-pill ${draftState}`}>{draftState==="saving"?"حفظ...":draftState==="saved"?"مسودة سحابية":draftState==="error"?"تعذر الحفظ":"سحابي"}</span><button className="validate-chip export-chip" onClick={()=>setExportOpen(true)}><Download size={14}/> تصدير</button>{sourcePreview&&<label className="overlay-control"><span>الأصل</span><input type="range" min="0" max=".85" step=".05" value={sourceOpacity} onChange={e=>setSourceOpacity(Number(e.target.value))}/></label>}<button className="validate-chip" disabled={validationBusy} onClick={runValidation}>{validationBusy?<LoaderCircle className="spin" size={14}/>:<ShieldCheck size={14}/>} فحص</button>{(plan.source.pageCount??1)>1&&<div className="source-page-control"><span>PDF {plan.source.page}/{plan.source.pageCount}</span><input type="number" min="1" max={plan.source.pageCount??1} value={sourcePageInput} disabled={pageSwitchBusy||dirty} onChange={e=>setSourcePageInput(e.target.value)}/><button className="ghost" disabled={pageSwitchBusy||dirty||Number(sourcePageInput)===plan.source.page} onClick={()=>void reanalyzeSourcePage()}>{pageSwitchBusy?<LoaderCircle className="spin" size={13}/>:null} تحليل الصفحة</button></div>}<div className="quality-pill">جودة التحليل {Math.round(plan.quality.overall*100)}%</div></div></div>
+      <section className="plan-panel"><div className="panel-title"><div><strong>منطقة التعديل</strong><span>اسحب جدارًا لتحريكه أو استخدم H Engineer</span></div><div className="panel-status"><span className={`draft-pill ${draftState}`}>{draftState==="saving"?"حفظ...":draftState==="saved"?"مسودة سحابية":draftState==="error"?"تعذر الحفظ":"سحابي"}</span><div className="layer-control-wrap"><button className={`validate-chip ${layerOpen?"active":""}`} onClick={()=>setLayerOpen(value=>!value)}><Layers3 size={14}/> الطبقات</button>{layerOpen&&<div className="layer-popover">{([
+  ["source","المخطط الأصلي"],
+  ["rooms","الغرف"],
+  ["walls","الجدران"],
+  ["openings","الأبواب والنوافذ"],
+  ["labels","نصوص OCR والأبعاد"],
+  ["validation","نتائج الفحص"],
+  ["uncertainty","إبراز القراءة غير المؤكدة"],
+] as Array<[keyof PlanLayerVisibility,string]>).map(([key,label])=><label key={key}><input type="checkbox" checked={layers[key]} onChange={()=>toggleLayer(key)}/><span>{label}</span></label>)}<button className="ghost layer-reset" onClick={()=>setLayers({...DEFAULT_PLAN_LAYERS})}>إظهار الكل</button></div>}</div><button className="validate-chip export-chip" onClick={()=>setExportOpen(true)}><Download size={14}/> تصدير</button>{sourcePreview&&<label className="overlay-control"><span>الأصل</span><input type="range" min="0" max=".85" step=".05" value={sourceOpacity} onChange={e=>setSourceOpacity(Number(e.target.value))}/></label>}<button className="validate-chip" disabled={validationBusy} onClick={runValidation}>{validationBusy?<LoaderCircle className="spin" size={14}/>:<ShieldCheck size={14}/>} فحص</button>{(plan.source.pageCount??1)>1&&<div className="source-page-control"><span>PDF {plan.source.page}/{plan.source.pageCount}</span><input type="number" min="1" max={plan.source.pageCount??1} value={sourcePageInput} disabled={pageSwitchBusy||dirty} onChange={e=>setSourcePageInput(e.target.value)}/><button className="ghost" disabled={pageSwitchBusy||dirty||Number(sourcePageInput)===plan.source.page} onClick={()=>void reanalyzeSourcePage()}>{pageSwitchBusy?<LoaderCircle className="spin" size={13}/>:null} تحليل الصفحة</button></div>}<div className="quality-pill">جودة التحليل {Math.round(plan.quality.overall*100)}%</div></div></div>
         {recoveredDraft&&<div className="recovered-draft"><div><strong>تمت استعادة مسودة تلقائية</strong><span>هذه التغييرات محفوظة سحابيًا لكنها ليست Revision رسمية بعد.</span></div><div><button className="ghost" disabled={saving} onClick={()=>void discardRecoveredDraft()}>تجاهل المسودة</button><button className="primary small" disabled={saving} onClick={save}><Save size={15}/> حفظ كنسخة</button></div></div>}
         <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)||pageSwitchBusy} selectedWallId={selectedWall} onSelectWall={selectWall} selectedRoomId={selectedRoom} onSelectRoom={selectRoom} selectedOpeningId={selectedOpening} onSelectOpening={selectOpening} onPlanChange={applyLocalPlan} onPlanCommit={commitTransientPlan}
           calibrationMode={calibrating} calibrationPoints={calibrationPoints}
           onCalibrationPoint={point=>setCalibrationPoints(points=>points.length<2?[...points,point]:points)}
-          backgroundUrl={sourcePreview} backgroundOpacity={sourceOpacity} comparisonPlan={preview?plan:null} validationFindings={validationReport?.findings??[]}/>
+          backgroundUrl={sourcePreview} backgroundOpacity={sourceOpacity} comparisonPlan={preview?plan:null} validationFindings={validationReport?.findings??[]} layers={layers}/>
         {plan.quality.needsCalibration&&!calibrating&&<div className="inline-warning calibration-warning"><span>تعذر تثبيت المقياس تلقائيًا. ثبته مرة واحدة لتفعيل أوامر الأمتار بدقة.</span><button className="ghost" onClick={()=>{setCalibrating(true);setCalibrationPoints([]);}}>معايرة الآن</button></div>}
         {calibrating&&<div className="calibration-bar"><div><strong>معايرة المقياس</strong><span>{calibrationPoints.length<2?`حدد نقطتين على بُعد معروف · ${calibrationPoints.length}/2`:"أدخل المسافة الحقيقية بين النقطتين"}</span></div>{calibrationPoints.length===2&&<input inputMode="decimal" value={knownDistance} onChange={e=>setKnownDistance(e.target.value)} placeholder="مثال: 4.20 م"/>}<button className="ghost" onClick={()=>{setCalibrating(false);setCalibrationPoints([]);setKnownDistance("");}}>إلغاء</button>{calibrationPoints.length===2&&<button className="primary small" onClick={applyCalibration}><Check size={16}/> تثبيت</button>}</div>}
       </section>
