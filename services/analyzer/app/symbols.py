@@ -106,9 +106,9 @@ def _bbox(item:dict,width:int,height:int)->tuple[float,float,float,float]|None:
     if box_width<4 or box_height<4:
         return None
     area_ratio=(box_width*box_height)/max(1.0,float(width*height))
-    if area_ratio>.35:
+    if area_ratio>.60:
         return None
-    if box_width>width*.80 or box_height>height*.80:
+    if box_width>width*.92 or box_height>height*.92:
         return None
     return x1,y1,x2,y2
 
