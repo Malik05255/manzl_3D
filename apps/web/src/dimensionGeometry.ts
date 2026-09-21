@@ -13,6 +13,53 @@ function polygonArea(points:{x:number;y:number}[]){
   return Math.abs(total)/2;
 }
 
+function pointSegmentDistance(px:number,py:number,ax:number,ay:number,bx:number,by:number){
+  const vx=bx-ax,vy=by-ay;
+  const lengthSq=vx*vx+vy*vy;
+  if(lengthSq<=1e-9)return Math.hypot(px-ax,py-ay);
+  const t=Math.max(0,Math.min(1,((px-ax)*vx+(py-ay)*vy)/lengthSq));
+  const cx=ax+t*vx,cy=ay+t*vy;
+  return Math.hypot(px-cx,py-cy);
+}
+
+export interface DimensionWallCandidate{
+  wallId:string;
+  distancePx:number;
+  lengthPx:number;
+}
+
+export function dimensionWallCandidates(plan:FloorPlanModel,dimensionId:string,limit=12):DimensionWallCandidate[]{
+  const dimension=(plan.dimensions??[]).find(item=>item.id===dimensionId);
+  if(!dimension||limit<=0)return [];
+  return plan.walls.map(wall=>({
+    wallId:wall.id,
+    distancePx:pointSegmentDistance(dimension.center.x,dimension.center.y,wall.a.x,wall.a.y,wall.b.x,wall.b.y),
+    lengthPx:Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y),
+  })).filter(item=>item.lengthPx>=5)
+    .sort((a,b)=>a.distancePx-b.distancePx||b.lengthPx-a.lengthPx)
+    .slice(0,limit);
+}
+
+export function linkDimensionToWall(plan:FloorPlanModel,dimensionId:string,wallId:string|null):FloorPlanModel|null{
+  const dimension=(plan.dimensions??[]).find(item=>item.id===dimensionId);
+  if(!dimension)return null;
+  const wall=wallId?plan.walls.find(item=>item.id===wallId):null;
+  if(wallId&&!wall)return null;
+  const orientation=wall
+    ?Math.abs(wall.b.x-wall.a.x)>=Math.abs(wall.b.y-wall.a.y)?"horizontal":"vertical"
+    :"unknown";
+  return {
+    ...plan,
+    dimensions:(plan.dimensions??[]).map(item=>item.id===dimensionId?{
+      ...item,
+      referenceWallId:wall?.id??null,
+      orientation,
+      reviewed:true,
+      provenance:manualProvenance(item.provenance),
+    }:item),
+  };
+}
+
 export function correctDimensionValue(plan:FloorPlanModel,dimensionId:string,valueM:number):FloorPlanModel|null{
   if(!Number.isFinite(valueM)||valueM<=0||valueM>1000)return null;
   const current=(plan.dimensions??[]).find(item=>item.id===dimensionId);
