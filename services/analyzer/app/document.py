@@ -233,6 +233,14 @@ def _candidate_page_indexes(page_count:int)->list[int]:
     return sorted(set(int(value) for value in points))
 
 
+def pdf_page_count(data:bytes)->int:
+    document=fitz.open(stream=data,filetype="pdf")
+    try:
+        return int(document.page_count)
+    finally:
+        document.close()
+
+
 def extract_pdf_text_lines(data:bytes,page_number:int,render_scale:float=PDF_RENDER_SCALE)->list[dict]:
     document=fitz.open(stream=data,filetype="pdf")
     try:
@@ -319,21 +327,26 @@ def extract_pdf_vector_lines(data:bytes,page_number:int,render_scale:float=PDF_R
         document.close()
 
 
-def decode_document_with_page(data:bytes,mime_type:str)->tuple[np.ndarray,int]:
+def decode_document_with_page(data:bytes,mime_type:str,preferred_page:int|None=None)->tuple[np.ndarray,int]:
     if mime_type=="application/pdf":
         document=fitz.open(stream=data,filetype="pdf")
         try:
             if document.page_count<1:
                 raise ValueError("PDF_EMPTY")
 
-            best_index=0
-            best_score=float("-inf")
-            for index in _candidate_page_indexes(document.page_count):
-                preview=_render_page(document.load_page(index),0.72)
-                score=_plan_likeness_score(preview)
-                if score>best_score:
-                    best_score=score
-                    best_index=index
+            if preferred_page is not None:
+                if preferred_page<1 or preferred_page>document.page_count:
+                    raise ValueError("PDF_PAGE_OUT_OF_RANGE")
+                best_index=preferred_page-1
+            else:
+                best_index=0
+                best_score=float("-inf")
+                for index in _candidate_page_indexes(document.page_count):
+                    preview=_render_page(document.load_page(index),0.72)
+                    score=_plan_likeness_score(preview)
+                    if score>best_score:
+                        best_score=score
+                        best_index=index
 
             image=_render_page(document.load_page(best_index),PDF_RENDER_SCALE)
             return image,best_index+1
