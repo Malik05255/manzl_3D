@@ -26,9 +26,14 @@ def assemble_plan(image:np.ndarray,project_id:str,filename:str,mime_type:str,lab
         sum(float(item.get("confidence",0.0)) for item in rooms)/len(rooms)
         if rooms else 0.0
     )
+    trusted_room_walls=[
+        wall for wall in walls
+        if bool(wall.get("reviewed",False))
+        or float(wall.get("confidence",0.0))>=.70
+    ]
     room_coverage=(
-        sum(room_boundary_coverage(room,walls) for room in rooms)/len(rooms)
-        if rooms and walls else 0.0
+        sum(room_boundary_coverage(room,trusted_room_walls) for room in rooms)/len(rooms)
+        if rooms and trusted_room_walls else 0.0
     )
     room_count_support=min(1.0,len(rooms)/4.0)
     room_score=(
@@ -57,14 +62,14 @@ def assemble_plan(image:np.ndarray,project_id:str,filename:str,mime_type:str,lab
         warnings.append("تغطية حدود بعض الغرف بالجدران منخفضة؛ راجع الجدران أو أكمل الأجزاء الناقصة.")
     if walls and wall_confidence<0.72:
         warnings.append("متوسط ثقة الجدران منخفض؛ راجع الخطوط المكتشفة قبل التعديل الهندسي.")
-    quarantined_vectors=[
+    quarantined_walls=[
         wall for wall in walls
-        if str(wall.get("provenance",""))=="pdf-vector"
+        if not bool(wall.get("reviewed",False))
         and float(wall.get("confidence",0.0))<.70
     ]
-    if quarantined_vectors:
+    if quarantined_walls:
         warnings.append(
-            f"تم حفظ {len(quarantined_vectors)} خط PDF منخفض الثقة للمراجعة دون استخدامه تلقائيًا في إغلاق الغرف."
+            f"تم حفظ {len(quarantined_walls)} خط منخفض الثقة للمراجعة دون احتسابه كحد موثوق للغرف."
         )
     warnings.append("العناصر منخفضة الثقة لا تُثبت تلقائيًا؛ يجب تأكيد الأبواب والنوافذ بصريًا.")
 
