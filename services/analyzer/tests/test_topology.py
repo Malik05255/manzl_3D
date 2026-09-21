@@ -129,3 +129,24 @@ def test_boundary_coverage_detects_missing_room_sides():
     ]
     assert room_boundary_coverage(room,complete)>.95
     assert room_boundary_coverage(room,complete[:2])<.60
+
+
+def test_canonicalize_clears_stale_dimension_references():
+    from app.models import Dimension
+    plan=plan_with_two_rooms()
+    plan.dimensions=[Dimension(
+        id="dimension-1",
+        sourceLabelId="missing-label",
+        text="4.20 m",
+        center=Point(x=250,y=80),
+        valueM=4.2,
+        unit="m",
+        orientation="horizontal",
+        referenceWallId="missing-wall",
+        confidence=.9,
+        provenance="ocr",
+    )]
+    canonical=canonicalize_plan(plan)
+    assert canonical.dimensions[0].referenceWallId is None
+    assert canonical.dimensions[0].orientation=="unknown"
+    assert canonical.dimensions[0].sourceLabelId is None
