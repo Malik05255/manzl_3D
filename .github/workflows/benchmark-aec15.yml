@@ -72,6 +72,7 @@ jobs:
           name: manzil-aec15-${{ github.sha }}
           path: |
             benchmark-output/score.txt
+            benchmark-output/report.json
             benchmark-output/manzil-commit.txt
             benchmark-output/dataset-commit.txt
             benchmark-output/predictions/*.json
