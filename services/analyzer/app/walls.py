@@ -84,7 +84,7 @@ def detect_walls(ink:np.ndarray)->tuple[list[dict],np.ndarray]:
             elif dy>=dx*4:
                 x=int(round((x1+x2)/2)); lines.append((x,min(y1,y2),x,max(y1,y2)))
     deduped=_dedupe(lines)
-    walls=[{"id":f"wall-{i+1}","a":{"x":float(x1),"y":float(y1)},"b":{"x":float(x2),"y":float(y2)},"thicknessPx":round(_estimate_thickness(ink,(x1,y1,x2,y2)),2),"confidence":0.80} for i,(x1,y1,x2,y2) in enumerate(deduped)]
+    walls=[{"id":f"wall-{i+1}","a":{"x":float(x1),"y":float(y1)},"b":{"x":float(x2),"y":float(y2)},"thicknessPx":round(_estimate_thickness(ink,(x1,y1,x2,y2)),2),"confidence":0.80,"reviewed":False,"provenance":"opencv"} for i,(x1,y1,x2,y2) in enumerate(deduped)]
     return walls,mask
 
 
@@ -133,7 +133,7 @@ def enrich_walls_with_vector(walls:list[dict],vector_lines:list[dict])->list[dic
 
         if best>0:
             confidence=max(float(wall.get("confidence",0.0)),min(0.97,0.88+0.09*best))
-            result.append({**wall,"confidence":round(confidence,3)})
+            result.append({**wall,"confidence":round(confidence,3),"provenance":"mixed"})
         else:
             result.append(wall)
     return result
