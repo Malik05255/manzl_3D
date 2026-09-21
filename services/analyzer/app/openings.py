@@ -158,7 +158,16 @@ def _parallel_window_evidence(
     gap_px:float,
     wall_angle_deg:float,
 )->int:
-    roi,_,_=_opening_roi(image,a,b,gap_px)
+    roi,offset_x,offset_y=_opening_roi(image,a,b,gap_px)
+    ax,ay=_point(a)
+    bx,by=_point(b)
+    vx=bx-ax
+    vy=by-ay
+    gap_length=max(1e-9,math.hypot(vx,vy))
+    ux=vx/gap_length
+    uy=vy/gap_length
+    gap_start=min(ax*ux+ay*uy,bx*ux+by*uy)
+    gap_end=max(ax*ux+ay*uy,bx*ux+by*uy)
     evidence=0
     for x1,y1,x2,y2 in _hough_segments(roi,gap_px):
         dx=float(x2-x1)
@@ -167,8 +176,16 @@ def _parallel_window_evidence(
         if length<gap_px*0.42:
             continue
         angle=math.degrees(math.atan2(dy,dx))%180.0
-        if _angle_delta_degrees(angle,wall_angle_deg)<=8:
-            evidence+=1
+        if _angle_delta_degrees(angle,wall_angle_deg)>8:
+            continue
+        mx=offset_x+(x1+x2)/2
+        my=offset_y+(y1+y2)/2
+        projection=mx*ux+my*uy
+        # Evidence must actually cross the opening gap. Host-wall continuations
+        # outside the gap are not window glazing.
+        if projection<gap_start-gap_px*.08 or projection>gap_end+gap_px*.08:
+            continue
+        evidence+=1
     return evidence
 
 
@@ -304,8 +321,7 @@ def detect_windows(
             b=_point_from_frame(ss,offset,ux,uy)
 
             leaf_evidence=_door_leaf_evidence(image,a,b,gap,wall_angle)
-            arc_evidence=_door_arc_evidence(image,a,b,gap)
-            if leaf_evidence>0 or arc_evidence>0:
+            if leaf_evidence>0:
                 continue
             evidence=_parallel_window_evidence(image,a,b,gap,wall_angle)
             if evidence<2:
@@ -346,6 +362,18 @@ def _endpoint_distance(wall:dict,point:dict)->float:
             float(wall["b"]["y"])-float(point["y"]),
         ),
     )
+
+
+def _point_infinite_line_distance(point:dict,wall:dict)->float:
+    ax,ay=_point(wall["a"])
+    bx,by=_point(wall["b"])
+    px,py=_point(point)
+    vx=bx-ax
+    vy=by-ay
+    length=math.hypot(vx,vy)
+    if length<=1e-9:
+        return math.hypot(px-ax,py-ay)
+    return abs(vy*px-vx*py+bx*ay-by*ax)/length
 
 
 def _point_line_metrics(point:dict,wall:dict)->tuple[float,float]:
@@ -399,7 +427,7 @@ def normalize_opening_hosts(
             tolerance=max(10.0,float(wall.get("thicknessPx",4.0))*3.0)
             cx=(float(opening["a"]["x"])+float(opening["b"]["x"]))/2
             cy=(float(opening["a"]["y"])+float(opening["b"]["y"]))/2
-            distance,_=_point_line_metrics({"x":cx,"y":cy},wall)
+            distance=_point_infinite_line_distance({"x":cx,"y":cy},wall)
             if distance>tolerance:
                 continue
             touches_a=_endpoint_distance(wall,opening["a"])<=tolerance*1.5
