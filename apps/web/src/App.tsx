@@ -97,7 +97,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   const[sourcePreview,setSourcePreview]=useState<string|null>(null);const[sourceOpacity,setSourceOpacity]=useState(.42);
   const[historyOpen,setHistoryOpen]=useState(false);const[historyBusy,setHistoryBusy]=useState(false);const[revisions,setRevisions]=useState<RevisionView[]>([]);const[exportOpen,setExportOpen]=useState(false);const[exportBusy,setExportBusy]=useState(false);
   const[validationReport,setValidationReport]=useState<ValidationReport|null>(null);const[validationBusy,setValidationBusy]=useState(false);const[draftState,setDraftState]=useState<"idle"|"saving"|"saved"|"error">(initialProject.hasDraft?"saved":"idle");const[recoveredDraft,setRecoveredDraft]=useState(initialProject.hasDraft);
-  const draftGeneration=useRef(0);const draftChain=useRef<Promise<void>>(Promise.resolve());
+  const draftGeneration=useRef(0);const draftChain=useRef<Promise<void>>(Promise.resolve());const openingPositionBase=useRef<FloorPlanModel|null>(null);
   const localDirty=useMemo(()=>JSON.stringify(plan)!==JSON.stringify(savedPlan),[plan,savedPlan]);
   const dirty=localDirty||recoveredDraft;
   const enqueueDraft=(snapshot:FloorPlanModel,revision:number,generation:number)=>{
@@ -174,7 +174,12 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     const beforeIds=new Set([...plan.doors,...plan.windows].map(item=>item.id));
     const created=[...next.doors,...next.windows].find(item=>!beforeIds.has(item.id));
     applyLocalPlan(next);setSelectedRoom(null);setSelectedWall(null);setNotice(kind==="door"?"تمت إضافة باب. اضبط عرضه وموقعه ثم احفظ.":"تمت إضافة نافذة. اضبط عرضها وموقعها ثم احفظ.");
-    if(created)queueMicrotask(()=>selectOpening(created.id));
+    if(created){
+      const metrics=openingMetrics(next,created.id);
+      setSelectedOpening(created.id);
+      setOpeningWidth(metrics?.widthM?.toFixed(2)??"");
+      setOpeningPosition(Math.round(metrics?.positionPct??50));
+    }
   };
   const updateOpeningWidth=()=>{
     if(!selectedOpening)return;
@@ -187,11 +192,17 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     setOpeningPosition(Math.round(metrics?.positionPct??openingPosition));
     setNotice("تم تحديث عرض الفتحة محليًا.");
   };
+  const startOpeningPositionEdit=()=>{if(!openingPositionBase.current)openingPositionBase.current=plan;};
+  const finishOpeningPositionEdit=()=>{
+    const base=openingPositionBase.current;
+    if(base)commitTransientPlan(base);
+    openingPositionBase.current=null;
+  };
   const updateOpeningPosition=(position:number)=>{
     if(!selectedOpening)return;
     const next=positionOpening(plan,selectedOpening,position);
     if(!next)return;
-    applyLocalPlan(next);setOpeningPosition(position);
+    applyLocalPlan(next,false);setOpeningPosition(position);
   };
   const updateOpeningKind=(kind:Opening["kind"])=>{
     if(!selectedOpening)return;
@@ -323,7 +334,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
       <aside className="ai-panel"><div className="ai-title"><div className="ai-avatar"><BrainCircuit size={22}/></div><div><strong>H Engineer</strong><span>يفهم الأثر قبل التنفيذ</span></div></div>
         {validationReport&&<div className="validation-card"><div className="validation-summary"><div><strong>الفحص الهندسي الداخلي</strong><span>سلامة النموذج {Math.round(validationReport.score*100)}%</span></div><div className={`validation-score ${validationReport.findings.some(item=>item.severity==="critical")?"bad":validationReport.findings.length?"warn":"good"}`}>{Math.round(validationReport.score*100)}</div></div>{validationReport.findings.length?<div className="validation-findings">{validationReport.findings.slice(0,6).map((item,index)=><button type="button" key={`${item.code}-${index}`} className={`validation-finding ${item.severity} ${item.roomIds.length?"clickable":""}`} disabled={!item.roomIds.length} onClick={()=>item.roomIds[0]&&selectRoom(item.roomIds[0])}><span>{item.severity==="critical"?"!":"•"}</span><p>{item.text}</p></button>)}</div>:<div className="validation-clean"><Check size={16}/> لا توجد مشاكل هندسية واضحة في النموذج الحالي.</div>}<small>هذا فحص اتساق واستخدام داخلي، وليس اعتمادًا لكود البناء.</small></div>}
         {selectedWall&&<div className="opening-add-card"><div><strong>الجدار محدد</strong><span>أضف فتحة في أكبر مساحة خالية على الجدار.</span></div><div><button className="ghost" disabled={Boolean(preview)} onClick={()=>addOpening("door")}><DoorOpen size={16}/> إضافة باب</button><button className="ghost" disabled={Boolean(preview)} onClick={()=>addOpening("window")}><Square size={15}/> إضافة نافذة</button></div></div>}
-        {selectedOpening&&findOpening(plan,selectedOpening)&&<div className="opening-editor"><div className="precise-title"><div><strong>تعديل الفتحة</strong><span>صحح النوع والعرض والموقع على الجدار</span></div>{findOpening(plan,selectedOpening)?.kind==="door"?<DoorOpen size={19}/>:<Square size={18}/>}</div><div className="opening-kind"><button className={findOpening(plan,selectedOpening)?.kind==="door"?"active":""} onClick={()=>updateOpeningKind("door")}>باب</button><button className={findOpening(plan,selectedOpening)?.kind==="window"?"active":""} onClick={()=>updateOpeningKind("window")}>نافذة</button></div><label className="opening-width"><span>العرض بالمتر</span><div><input inputMode="decimal" disabled={!plan.metersPerPixel} value={openingWidth} onChange={e=>setOpeningWidth(e.target.value)} placeholder={plan.metersPerPixel?"0.90":"ثبّت المقياس"}/><button className="ghost" disabled={!plan.metersPerPixel||!openingWidth} onClick={updateOpeningWidth}>تطبيق</button></div></label><label className="opening-position"><span>الموقع على الجدار · {openingPosition}%</span><input type="range" min="2" max="98" step="1" value={openingPosition} onChange={e=>updateOpeningPosition(Number(e.target.value))}/></label><button className="delete-opening" onClick={deleteOpening}><Trash2 size={15}/> حذف الفتحة</button></div>}
+        {selectedOpening&&findOpening(plan,selectedOpening)&&<div className="opening-editor"><div className="precise-title"><div><strong>تعديل الفتحة</strong><span>صحح النوع والعرض والموقع على الجدار</span></div>{findOpening(plan,selectedOpening)?.kind==="door"?<DoorOpen size={19}/>:<Square size={18}/>}</div><div className="opening-kind"><button className={findOpening(plan,selectedOpening)?.kind==="door"?"active":""} onClick={()=>updateOpeningKind("door")}>باب</button><button className={findOpening(plan,selectedOpening)?.kind==="window"?"active":""} onClick={()=>updateOpeningKind("window")}>نافذة</button></div><label className="opening-width"><span>العرض بالمتر</span><div><input inputMode="decimal" disabled={!plan.metersPerPixel} value={openingWidth} onChange={e=>setOpeningWidth(e.target.value)} placeholder={plan.metersPerPixel?"0.90":"ثبّت المقياس"}/><button className="ghost" disabled={!plan.metersPerPixel||!openingWidth} onClick={updateOpeningWidth}>تطبيق</button></div></label><label className="opening-position"><span>الموقع على الجدار · {openingPosition}%</span><input type="range" min="2" max="98" step="1" value={openingPosition} onFocus={startOpeningPositionEdit} onBlur={finishOpeningPositionEdit} onPointerDown={startOpeningPositionEdit} onPointerUp={finishOpeningPositionEdit} onChange={e=>updateOpeningPosition(Number(e.target.value))}/></label><button className="delete-opening" onClick={deleteOpening}><Trash2 size={15}/> حذف الفتحة</button></div>}
         <div className="precise-editor"><div className="precise-title"><div><strong>تعديل دقيق</strong><span>اختر الغرفة ثم أدخل المقاس بالمتر</span></div><Ruler size={19}/></div>
           <select value={selectedRoom??""} onChange={e=>selectRoom(e.target.value||null)}><option value="">اختر غرفة</option>{plan.rooms.map(room=><option key={room.id} value={room.id}>{room.name}</option>)}</select>
           {selectedRoom&&<div className="room-name-edit"><label><span>اسم الغرفة</span><input value={exactName} onChange={e=>setExactName(e.target.value)} maxLength={80}/></label><button className="ghost" disabled={!exactName.trim()||exactName.trim()===plan.rooms.find(room=>room.id===selectedRoom)?.name||Boolean(preview)} onClick={renameSelectedRoom}>تحديث</button></div>}
