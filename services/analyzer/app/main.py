@@ -11,7 +11,7 @@ from .document import decode_document_with_page,extract_pdf_text_lines,extract_p
 from .edits import build_proposals,build_resize_proposals
 from .models import EditRequest,FloorPlan,ProposalResponse,ResizeRequest,ValidationReport,ValidationRequest
 from .ocr import _merge_labels,classify_text,extract_ocr_labels
-from .openings import detect_doors,detect_windows
+from .openings import detect_doors,detect_windows,normalize_opening_hosts
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
@@ -136,6 +136,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     scale,scale_confidence,scale_warnings=estimate_scale_with_diagnostics(labels,walls,w,h)
     doors=detect_doors(image,walls,scale)
     windows=detect_windows(image,walls,scale)
+    walls,doors,windows=normalize_opening_hosts(walls,doors,windows)
 
     await progress(req.callback_url,req.project_id,"rooms",78,"فهم الغرف والعلاقات")
     rooms=detect_rooms(wall_mask,labels,scale)
