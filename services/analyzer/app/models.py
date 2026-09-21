@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 class Point(BaseModel):
     x: float
@@ -46,6 +46,16 @@ class Opening(BaseModel):
     sillHeightM: float | None = Field(default=None, ge=0, le=10)
     reviewed: bool = False
     provenance: ElementProvenance | None = None
+
+    @model_validator(mode="after")
+    def validate_door_metadata(self):
+        if self.kind=="window" and (
+            self.doorSubtype is not None
+            or self.doorSwingSide is not None
+            or self.doorSwingDepthPx is not None
+        ):
+            raise ValueError("WINDOW_DOOR_METADATA")
+        return self
 
 class PlanSymbol(BaseModel):
     id: str
