@@ -190,7 +190,8 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(secured.draft_key) return json({error:"يوجد مسودة تلقائية غير مثبتة. احفظها كنسخة أو تجاهلها قبل إعادة تحليل المصدر."},409);
     if(["queued","analyzing"].includes(secured.status)) return json({error:"التحليل جارٍ بالفعل"},409);
 
-    const body: {sourcePage?:number|null}=await request.json<{sourcePage?:number|null}>().catch(()=>({}));
+    const body: {sourcePage?:number|null;expectedRevision?:number}=await request.json<{sourcePage?:number|null;expectedRevision?:number}>().catch(()=>({}));
+    if(!Number.isInteger(body.expectedRevision)||body.expectedRevision!==secured.revision) return json({error:"تغير المشروع قبل إعادة التحليل. حدّث المشروع وحاول مرة أخرى."},409);
     const requestedPage=body.sourcePage==null?null:Number(body.sourcePage);
     if(requestedPage!==null&&(!Number.isInteger(requestedPage)||requestedPage<1||requestedPage>10000)){
       return json({error:"رقم صفحة PDF غير صالح"},400);
