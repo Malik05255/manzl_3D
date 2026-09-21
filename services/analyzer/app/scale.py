@@ -22,6 +22,19 @@ def _metric_value(text:str)->tuple[float|None,bool]:
     return float(match.group(1)),False
 
 
+def _point_segment_distance(cx:float,cy:float,wall:dict)->tuple[float,float]:
+    ax=float(wall["a"]["x"]); ay=float(wall["a"]["y"])
+    bx=float(wall["b"]["x"]); by=float(wall["b"]["y"])
+    vx=bx-ax; vy=by-ay
+    length_sq=vx*vx+vy*vy
+    if length_sq<=1e-9:
+        return float("inf"),0.0
+    t=((cx-ax)*vx+(cy-ay)*vy)/length_sq
+    clamped=max(0.0,min(1.0,t))
+    px=ax+clamped*vx; py=ay+clamped*vy
+    return math.hypot(cx-px,cy-py),t
+
+
 def _scale_candidates(labels:list[dict],walls:list[dict],width:int,height:int)->list[tuple[float,bool]]:
     candidates:list[tuple[float,bool]]=[]
     max_distance=min(width,height)*0.12
@@ -43,7 +56,9 @@ def _scale_candidates(labels:list[dict],walls:list[dict],width:int,height:int)->
             length=math.hypot(x2-x1,y2-y1)
             if length<40:
                 continue
-            distance=math.hypot((x1+x2)/2-cx,(y1+y2)/2-cy)
+            distance,t=_point_segment_distance(cx,cy,wall)
+            if t<-0.25 or t>1.25:
+                continue
             if distance<=max_distance and (best is None or distance<best[0]):
                 best=(distance,length)
         if best:
