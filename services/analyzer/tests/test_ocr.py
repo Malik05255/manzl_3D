@@ -72,3 +72,26 @@ def test_counterclockwise_ocr_coordinates_restore_to_original_image():
     }]
     restored=_restore_rotated_labels(labels,original_h=100,original_w=200,direction="ccw")
     assert restored[0]["center"]=={"x":30.0,"y":20.0}
+
+
+def test_text_duplicate_prefers_higher_confidence_provider():
+    primary=[{
+        "id":"local",
+        "text":"غرفة النوم",
+        "center":{"x":220.0,"y":180.0},
+        "confidence":0.62,
+        "kind":"room_name",
+        "provenance":"ocr",
+    }]
+    secondary=[{
+        "id":"cloud",
+        "text":"غرفة النوم",
+        "center":{"x":224.0,"y":181.0},
+        "confidence":0.97,
+        "kind":"room_name",
+        "provenance":"cloud-ocr",
+    }]
+    merged=_merge_labels(primary,secondary,14)
+    assert len(merged)==1
+    assert merged[0]["confidence"]==0.97
+    assert merged[0]["provenance"]=="cloud-ocr"
