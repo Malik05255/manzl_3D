@@ -88,6 +88,20 @@ export async function route(request:Request,env:Env):Promise<Response>{
     return json(await projectView(env,secured,true));
   }
 
+  const previewMatch=path.match(/^\/v1\/projects\/([^/]+)\/preview$/);
+  if(previewMatch&&request.method==="GET"){
+    const secured=await protectedRow(request,env,previewMatch[1]);
+    if(secured instanceof Response) return secured;
+    if(!secured.preview_key) return json({error:"المعاينة غير متوفرة"},404);
+    const object=await env.ASSETS.get(secured.preview_key);
+    if(!object) return json({error:"المعاينة غير متوفرة"},404);
+    const headers=new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set("cache-control","private, max-age=300");
+    headers.set("content-length",String(object.size));
+    return new Response(object.body,{headers});
+  }
+
   const revision=path.match(/^\/v1\/projects\/([^/]+)\/revisions$/);
   if(revision&&request.method==="POST"){
     const id=revision[1];
