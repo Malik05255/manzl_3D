@@ -190,6 +190,8 @@ def detect_doors(image:np.ndarray,walls:list[dict],meters_per_pixel:float|None)-
                 "a":a,
                 "b":b,
                 "confidence":round(confidence,3),
+                "reviewed":False,
+                "provenance":"opencv",
             })
 
     dedupe_distance=max(min_gap*0.6,8.0)
@@ -253,6 +255,8 @@ def detect_windows(image:np.ndarray,walls:list[dict],meters_per_pixel:float|None
                 "a":a,
                 "b":b,
                 "confidence":round(confidence,3),
+                "reviewed":False,
+                "provenance":"opencv",
             })
 
     result=_dedupe(candidates,max(min_gap*0.55,8.0))
