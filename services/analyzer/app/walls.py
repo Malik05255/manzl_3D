@@ -420,8 +420,11 @@ def _detect_slanted_wall_candidates(ink:np.ndarray)->list[dict]:
 
 def detect_walls(ink:np.ndarray)->tuple[list[dict],np.ndarray]:
     h,w=ink.shape[:2]
-    hk=max(18,w//45)
-    vk=max(18,h//45)
+    min_side=max(1,min(h,w))
+    # Keep morphology scale sublinear enough for large scanned sheets. The old
+    # /45 and /18 thresholds could erase short but real partitions at 4K.
+    hk=max(14,min(90,w//70))
+    vk=max(14,min(90,h//70))
     horizontal=cv2.morphologyEx(
         ink,cv2.MORPH_OPEN,cv2.getStructuringElement(cv2.MORPH_RECT,(hk,1))
     )
@@ -430,37 +433,53 @@ def detect_walls(ink:np.ndarray)->tuple[list[dict],np.ndarray]:
     )
     mask=cv2.bitwise_or(horizontal,vertical)
     mask=cv2.morphologyEx(mask,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8))
+    conservative_length=max(35,min_side//18)
     raw=cv2.HoughLinesP(
         mask,1,np.pi/180,
-        threshold=max(40,min(h,w)//18),
-        minLineLength=max(35,min(h,w)//18),
-        maxLineGap=12,
+        threshold=max(28,min_side//45),
+        minLineLength=max(26,min_side//40),
+        maxLineGap=max(8,min(24,min_side//250)),
     )
     lines=[]
     if raw is not None:
         for item in raw[:,0]:
             x1,y1,x2,y2=map(int,item)
             dx,dy=abs(x2-x1),abs(y2-y1)
+            candidate=None
             if dx>=dy*4:
                 y=int(round((y1+y2)/2))
-                lines.append((min(x1,x2),y,max(x1,x2),y))
+                candidate=(min(x1,x2),y,max(x1,x2),y)
             elif dy>=dx*4:
                 x=int(round((x1+x2)/2))
-                lines.append((x,min(y1,y2),x,max(y1,y2)))
+                candidate=(x,min(y1,y2),x,max(y1,y2))
+            if candidate is None:
+                continue
+
+            length=math.hypot(
+                candidate[2]-candidate[0],
+                candidate[3]-candidate[1],
+            )
+            # The extra short-wall pass must have thickness evidence. This
+            # suppresses dimension/text strokes while retaining short partitions.
+            if length<conservative_length and _estimate_thickness(ink,candidate)<3.0:
+                continue
+            lines.append(candidate)
 
     deduped=_merge_axis_lines(lines)
-    walls=[
-        {
-            "id":f"wall-{i+1}",
+    walls=[]
+    for i,(x1,y1,x2,y2) in enumerate(deduped,start=1):
+        thickness=round(_estimate_thickness(ink,(x1,y1,x2,y2)),2)
+        length=math.hypot(x2-x1,y2-y1)
+        confidence=0.80 if length>=conservative_length else 0.74
+        walls.append({
+            "id":f"wall-{i}",
             "a":{"x":float(x1),"y":float(y1)},
             "b":{"x":float(x2),"y":float(y2)},
-            "thicknessPx":round(_estimate_thickness(ink,(x1,y1,x2,y2)),2),
-            "confidence":0.80,
+            "thicknessPx":thickness,
+            "confidence":confidence,
             "reviewed":False,
             "provenance":"opencv",
-        }
-        for i,(x1,y1,x2,y2) in enumerate(deduped)
-    ]
+        })
 
     slanted=_detect_slanted_wall_candidates(ink)
     existing=[*walls]
