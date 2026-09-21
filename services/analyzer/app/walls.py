@@ -1,24 +1,34 @@
 from __future__ import annotations
+
 import math
+
 import cv2
 import numpy as np
+
 
 def _dedupe(lines:list[tuple[int,int,int,int]],tol:int=8)->list[tuple[int,int,int,int]]:
     out=[]
     for line in sorted(lines,key=lambda p:math.hypot(p[2]-p[0],p[3]-p[1]),reverse=True):
-        x1,y1,x2,y2=line; horizontal=abs(y2-y1)<=abs(x2-x1); duplicate=False
+        x1,y1,x2,y2=line
+        horizontal=abs(y2-y1)<=abs(x2-x1)
+        duplicate=False
         for a,b,c,d in out:
             other=abs(d-b)<=abs(c-a)
-            if horizontal!=other: continue
+            if horizontal!=other:
+                continue
             if horizontal:
                 same=abs(((y1+y2)/2)-((b+d)/2))<tol
                 overlap=max(min(x1,x2),min(a,c))<=min(max(x1,x2),max(a,c))+tol
             else:
                 same=abs(((x1+x2)/2)-((a+c)/2))<tol
                 overlap=max(min(y1,y2),min(b,d))<=min(max(y1,y2),max(b,d))+tol
-            if same and overlap: duplicate=True; break
-        if not duplicate: out.append(line)
+            if same and overlap:
+                duplicate=True
+                break
+        if not duplicate:
+            out.append(line)
     return out
+
 
 def _estimate_thickness(ink:np.ndarray,line:tuple[int,int,int,int])->float:
     x1,y1,x2,y2=line
@@ -28,12 +38,15 @@ def _estimate_thickness(ink:np.ndarray,line:tuple[int,int,int,int])->float:
 
     if horizontal:
         axis=int(round((y1+y2)/2))
-        start=max(0,min(x1,x2)); end=min(w,max(x1,x2)+1)
+        start=max(0,min(x1,x2))
+        end=min(w,max(x1,x2)+1)
         if end-start<6:
             return 4.0
         trim=max(1,int((end-start)*0.12))
-        start=min(end-1,start+trim); end=max(start+1,end-trim)
-        top=max(0,axis-max_radius); bottom=min(h,axis+max_radius+1)
+        start=min(end-1,start+trim)
+        end=max(start+1,end-trim)
+        top=max(0,axis-max_radius)
+        bottom=min(h,axis+max_radius+1)
         strip=ink[top:bottom,start:end]
         if strip.size==0:
             return 4.0
@@ -42,12 +55,15 @@ def _estimate_thickness(ink:np.ndarray,line:tuple[int,int,int,int])->float:
         center=axis-top
     else:
         axis=int(round((x1+x2)/2))
-        start=max(0,min(y1,y2)); end=min(h,max(y1,y2)+1)
+        start=max(0,min(y1,y2))
+        end=min(h,max(y1,y2)+1)
         if end-start<6:
             return 4.0
         trim=max(1,int((end-start)*0.12))
-        start=min(end-1,start+trim); end=max(start+1,end-trim)
-        left=max(0,axis-max_radius); right=min(w,axis+max_radius+1)
+        start=min(end-1,start+trim)
+        end=max(start+1,end-trim)
+        left=max(0,axis-max_radius)
+        right=min(w,axis+max_radius+1)
         strip=ink[start:end,left:right]
         if strip.size==0:
             return 4.0
@@ -57,9 +73,6 @@ def _estimate_thickness(ink:np.ndarray,line:tuple[int,int,int,int])->float:
 
     if active.size==0:
         return 4.0
-
-    # Only use evidence reasonably close to the detected wall axis so nearby
-    # dimension lines/text do not inflate wall thickness.
     active=active[np.abs(active-center)<=max_radius]
     if active.size==0:
         return 4.0
@@ -67,24 +80,253 @@ def _estimate_thickness(ink:np.ndarray,line:tuple[int,int,int,int])->float:
     return max(2.0,min(32.0,thickness))
 
 
+def _point(item:dict)->tuple[float,float]:
+    return float(item["x"]),float(item["y"])
+
+
+def _segment_geometry(line:dict)->tuple[float,float,float,float,float,float,float]:
+    ax,ay=_point(line["a"])
+    bx,by=_point(line["b"])
+    dx=bx-ax
+    dy=by-ay
+    length=math.hypot(dx,dy)
+    if length<=1e-9:
+        return ax,ay,bx,by,0.0,0.0,0.0
+    ux=dx/length
+    uy=dy/length
+    if ux<0 or (abs(ux)<1e-9 and uy<0):
+        ux=-ux
+        uy=-uy
+    return ax,ay,bx,by,length,ux,uy
+
+
+def _angle_difference(left:dict,right:dict)->float:
+    *_,llen,lux,luy=_segment_geometry(left)
+    *_,rlen,rux,ruy=_segment_geometry(right)
+    if llen<=1e-9 or rlen<=1e-9:
+        return 180.0
+    cosine=max(-1.0,min(1.0,abs(lux*rux+luy*ruy)))
+    return math.degrees(math.acos(cosine))
+
+
+def _frame(line:dict)->tuple[float,float,float,float,float,float]:
+    *_,length,ux,uy=_segment_geometry(line)
+    nx=-uy
+    ny=ux
+    ax,ay=_point(line["a"])
+    bx,by=_point(line["b"])
+    ta=ax*ux+ay*uy
+    tb=bx*ux+by*uy
+    offset=((ax+bx)/2)*nx+((ay+by)/2)*ny
+    return min(ta,tb),max(ta,tb),offset,length,ux,uy
+
+
+def _point_from_frame(t:float,offset:float,ux:float,uy:float)->dict:
+    nx=-uy
+    ny=ux
+    return {"x":float(ux*t+nx*offset),"y":float(uy*t+ny*offset)}
+
+
+def _parallel_pair_candidate(
+    left:dict,
+    right:dict,
+    *,
+    min_length:float,
+    max_separation:float,
+    min_overlap_ratio:float=.70,
+    max_angle_deg:float=4.0,
+)->dict|None:
+    if _angle_difference(left,right)>max_angle_deg:
+        return None
+    ls,le,lo,llen,ux,uy=_frame(left)
+    if llen<min_length:
+        return None
+
+    # Project the second segment into the first segment's frame.
+    rax,ray=_point(right["a"])
+    rbx,rby=_point(right["b"])
+    nx=-uy
+    ny=ux
+    rs=min(rax*ux+ray*uy,rbx*ux+rby*uy)
+    re=max(rax*ux+ray*uy,rbx*ux+rby*uy)
+    ro=((rax+rbx)/2)*nx+((ray+rby)/2)*ny
+    rlen=re-rs
+    if rlen<min_length:
+        return None
+
+    separation=abs(ro-lo)
+    if separation<2.0 or separation>max_separation:
+        return None
+    shared=max(0.0,min(le,re)-max(ls,rs))
+    overlap_ratio=shared/max(1.0,min(le-ls,re-rs))
+    if overlap_ratio<min_overlap_ratio or shared<min_length:
+        return None
+    if separation/max(shared,1.0)>0.10:
+        return None
+
+    start=max(ls,rs)
+    end=min(le,re)
+    center_offset=(lo+ro)/2
+    stroke=(float(left.get("widthPx",1.0))+float(right.get("widthPx",1.0)))/2
+    thickness=max(2.0,min(48.0,separation+stroke))
+    confidence=min(0.985,0.90+0.075*overlap_ratio)
+    return {
+        "a":_point_from_frame(start,center_offset,ux,uy),
+        "b":_point_from_frame(end,center_offset,ux,uy),
+        "thicknessPx":round(thickness,2),
+        "confidence":round(confidence,3),
+        "reviewed":False,
+    }
+
+
+def _wall_duplicate(candidate:dict,existing:dict)->bool:
+    if _angle_difference(candidate,existing)>5.0:
+        return False
+    cs,ce,co,clen,ux,uy=_frame(candidate)
+    eax,eay=_point(existing["a"])
+    ebx,eby=_point(existing["b"])
+    nx=-uy
+    ny=ux
+    es=min(eax*ux+eay*uy,ebx*ux+eby*uy)
+    ee=max(eax*ux+eay*uy,ebx*ux+eby*uy)
+    eo=((eax+ebx)/2)*nx+((eay+eby)/2)*ny
+    shared=max(0.0,min(ce,ee)-max(cs,es))
+    if shared<=0:
+        return False
+    overlap_ratio=shared/max(1.0,min(clen,ee-es))
+    axis_tol=max(
+        6.0,
+        float(candidate.get("thicknessPx",4.0))*1.6,
+        float(existing.get("thicknessPx",4.0))*1.6,
+    )
+    return abs(co-eo)<=axis_tol and overlap_ratio>=0.55
+
+
+def _detect_slanted_wall_candidates(ink:np.ndarray)->list[dict]:
+    h,w=ink.shape[:2]
+    min_side=float(max(1,min(h,w)))
+    min_length=max(55.0,min_side*0.055)
+    max_separation=max(9.0,min(40.0,min_side*0.024))
+
+    edges=cv2.Canny(ink,45,135)
+    raw=cv2.HoughLinesP(
+        edges,
+        1,
+        np.pi/360,
+        threshold=max(26,int(min_side/30)),
+        minLineLength=int(min_length),
+        maxLineGap=max(6,int(min_side/110)),
+    )
+    if raw is None:
+        return []
+
+    segments=[]
+    for x1,y1,x2,y2 in raw[:,0]:
+        dx=float(x2-x1)
+        dy=float(y2-y1)
+        length=math.hypot(dx,dy)
+        if length<min_length:
+            continue
+        angle=abs(math.degrees(math.atan2(dy,dx)))%180
+        acute=min(angle,180-angle)
+        # Orthogonal walls are handled by the morphology path; keep only
+        # materially slanted segments here.
+        if acute<7 or abs(acute-90)<7:
+            continue
+        segments.append({
+            "a":{"x":float(x1),"y":float(y1)},
+            "b":{"x":float(x2),"y":float(y2)},
+            "widthPx":1.0,
+        })
+
+    candidates=[]
+    for index,left in enumerate(segments):
+        for right in segments[index+1:]:
+            candidate=_parallel_pair_candidate(
+                left,right,
+                min_length=min_length,
+                max_separation=max_separation,
+                min_overlap_ratio=.68,
+                max_angle_deg=3.5,
+            )
+            if candidate is None:
+                continue
+            candidate["confidence"]=min(.93,float(candidate["confidence"]))
+            candidate["provenance"]="opencv"
+            candidates.append(candidate)
+
+    accepted=[]
+    for candidate in sorted(
+        candidates,
+        key=lambda item:(
+            -float(item["confidence"]),
+            -math.hypot(
+                item["b"]["x"]-item["a"]["x"],
+                item["b"]["y"]-item["a"]["y"],
+            ),
+        ),
+    ):
+        if any(_wall_duplicate(candidate,item) for item in accepted):
+            continue
+        accepted.append(candidate)
+    return accepted
+
+
 def detect_walls(ink:np.ndarray)->tuple[list[dict],np.ndarray]:
     h,w=ink.shape[:2]
-    hk=max(18,w//45); vk=max(18,h//45)
-    horizontal=cv2.morphologyEx(ink,cv2.MORPH_OPEN,cv2.getStructuringElement(cv2.MORPH_RECT,(hk,1)))
-    vertical=cv2.morphologyEx(ink,cv2.MORPH_OPEN,cv2.getStructuringElement(cv2.MORPH_RECT,(1,vk)))
+    hk=max(18,w//45)
+    vk=max(18,h//45)
+    horizontal=cv2.morphologyEx(
+        ink,cv2.MORPH_OPEN,cv2.getStructuringElement(cv2.MORPH_RECT,(hk,1))
+    )
+    vertical=cv2.morphologyEx(
+        ink,cv2.MORPH_OPEN,cv2.getStructuringElement(cv2.MORPH_RECT,(1,vk))
+    )
     mask=cv2.bitwise_or(horizontal,vertical)
     mask=cv2.morphologyEx(mask,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8))
-    raw=cv2.HoughLinesP(mask,1,np.pi/180,threshold=max(40,min(h,w)//18),minLineLength=max(35,min(h,w)//18),maxLineGap=12)
+    raw=cv2.HoughLinesP(
+        mask,1,np.pi/180,
+        threshold=max(40,min(h,w)//18),
+        minLineLength=max(35,min(h,w)//18),
+        maxLineGap=12,
+    )
     lines=[]
     if raw is not None:
         for item in raw[:,0]:
-            x1,y1,x2,y2=map(int,item); dx,dy=abs(x2-x1),abs(y2-y1)
+            x1,y1,x2,y2=map(int,item)
+            dx,dy=abs(x2-x1),abs(y2-y1)
             if dx>=dy*4:
-                y=int(round((y1+y2)/2)); lines.append((min(x1,x2),y,max(x1,x2),y))
+                y=int(round((y1+y2)/2))
+                lines.append((min(x1,x2),y,max(x1,x2),y))
             elif dy>=dx*4:
-                x=int(round((x1+x2)/2)); lines.append((x,min(y1,y2),x,max(y1,y2)))
+                x=int(round((x1+x2)/2))
+                lines.append((x,min(y1,y2),x,max(y1,y2)))
+
     deduped=_dedupe(lines)
-    walls=[{"id":f"wall-{i+1}","a":{"x":float(x1),"y":float(y1)},"b":{"x":float(x2),"y":float(y2)},"thicknessPx":round(_estimate_thickness(ink,(x1,y1,x2,y2)),2),"confidence":0.80,"reviewed":False,"provenance":"opencv"} for i,(x1,y1,x2,y2) in enumerate(deduped)]
+    walls=[
+        {
+            "id":f"wall-{i+1}",
+            "a":{"x":float(x1),"y":float(y1)},
+            "b":{"x":float(x2),"y":float(y2)},
+            "thicknessPx":round(_estimate_thickness(ink,(x1,y1,x2,y2)),2),
+            "confidence":0.80,
+            "reviewed":False,
+            "provenance":"opencv",
+        }
+        for i,(x1,y1,x2,y2) in enumerate(deduped)
+    ]
+
+    slanted=_detect_slanted_wall_candidates(ink)
+    existing=[*walls]
+    next_index=len(walls)+1
+    for candidate in slanted:
+        if any(_wall_duplicate(candidate,item) for item in existing):
+            continue
+        candidate={**candidate,"id":f"wall-{next_index}"}
+        next_index+=1
+        walls.append(candidate)
+        existing.append(candidate)
+
     return walls,mask
 
 
@@ -92,40 +334,29 @@ def enrich_walls_with_vector(walls:list[dict],vector_lines:list[dict])->list[dic
     if not walls or not vector_lines:
         return walls
 
-    def orientation(line:dict)->str:
-        dx=abs(line["b"]["x"]-line["a"]["x"])
-        dy=abs(line["b"]["y"]-line["a"]["y"])
-        return "h" if dx>=dy else "v"
-
-    def ordered(line:dict,axis:str):
-        if axis=="h":
-            return (
-                min(line["a"]["x"],line["b"]["x"]),
-                max(line["a"]["x"],line["b"]["x"]),
-                (line["a"]["y"]+line["b"]["y"])/2,
-            )
-        return (
-            min(line["a"]["y"],line["b"]["y"]),
-            max(line["a"]["y"],line["b"]["y"]),
-            (line["a"]["x"]+line["b"]["x"])/2,
-        )
-
     result=[]
     for wall in walls:
-        axis=orientation(wall)
-        start,end,wall_axis=ordered(wall,axis)
-        wall_length=max(1.0,end-start)
+        ws,we,wo,wlen,ux,uy=_frame(wall)
+        if wlen<=1e-9:
+            result.append(wall)
+            continue
+        nx=-uy
+        ny=ux
         best=0.0
         for vector in vector_lines:
-            if orientation(vector)!=axis:
+            if _angle_difference(wall,vector)>5.0:
                 continue
-            v_start,v_end,v_axis=ordered(vector,axis)
+            vax,vay=_point(vector["a"])
+            vbx,vby=_point(vector["b"])
+            vs=min(vax*ux+vay*uy,vbx*ux+vby*uy)
+            ve=max(vax*ux+vay*uy,vbx*ux+vby*uy)
+            vo=((vax+vbx)/2)*nx+((vay+vby)/2)*ny
             axis_tol=max(4.0,float(wall.get("thicknessPx",4.0))*1.8)
-            axis_distance=abs(v_axis-wall_axis)
+            axis_distance=abs(vo-wo)
             if axis_distance>axis_tol:
                 continue
-            shared=max(0.0,min(end,v_end)-max(start,v_start))
-            overlap_ratio=shared/max(1.0,min(wall_length,v_end-v_start))
+            shared=max(0.0,min(we,ve)-max(ws,vs))
+            overlap_ratio=shared/max(1.0,min(wlen,ve-vs))
             if overlap_ratio<0.45:
                 continue
             score=overlap_ratio*(1.0-axis_distance/max(axis_tol,1.0))
@@ -139,12 +370,17 @@ def enrich_walls_with_vector(walls:list[dict],vector_lines:list[dict])->list[dic
     return result
 
 
-def add_vector_wall_candidates(walls:list[dict],vector_lines:list[dict],height:int,width:int)->list[dict]:
-    """Add high-confidence wall centerlines from native PDF vectors.
+def add_vector_wall_candidates(
+    walls:list[dict],
+    vector_lines:list[dict],
+    height:int,
+    width:int,
+)->list[dict]:
+    """Add wall centerlines from native PDF vectors at any angle.
 
-    Preferred evidence is a close parallel pair (double-line wall). A single
-    vector stroke is promoted only when it is unusually thick and long enough
-    to be credible wall geometry; ordinary dimension/guide lines stay ignored.
+    Close parallel vector pairs are preferred. A single vector is promoted only
+    when it is unusually thick and long, which keeps ordinary dimension and guide
+    strokes out of the canonical wall model.
     """
     if not vector_lines:
         return walls
@@ -153,25 +389,6 @@ def add_vector_wall_candidates(walls:list[dict],vector_lines:list[dict],height:i
     min_length=max(45.0,min_side*0.04)
     max_separation=max(10.0,min(42.0,min_side*0.025))
 
-    def orientation(line:dict)->str:
-        dx=abs(float(line["b"]["x"])-float(line["a"]["x"]))
-        dy=abs(float(line["b"]["y"])-float(line["a"]["y"]))
-        return "h" if dx>=dy else "v"
-
-    def ordered(line:dict,axis:str)->tuple[float,float,float]:
-        if axis=="h":
-            return (
-                min(float(line["a"]["x"]),float(line["b"]["x"])),
-                max(float(line["a"]["x"]),float(line["b"]["x"])),
-                (float(line["a"]["y"])+float(line["b"]["y"]))/2,
-            )
-        return (
-            min(float(line["a"]["y"]),float(line["b"]["y"])),
-            max(float(line["a"]["y"]),float(line["b"]["y"])),
-            (float(line["a"]["x"])+float(line["b"]["x"]))/2,
-        )
-
-    candidates=[]
     widths=[
         max(0.1,float(line.get("widthPx",1.0)))
         for line in vector_lines
@@ -179,13 +396,10 @@ def add_vector_wall_candidates(walls:list[dict],vector_lines:list[dict],height:i
     ]
     median_stroke=float(np.median(widths)) if widths else 1.0
     thick_stroke_threshold=max(7.0,min_side*0.0035)
+    candidates=[]
 
-    # Some CAD/PDF exports encode walls as one heavy centerline rather than two
-    # thin parallel outlines. Recover only unusually thick, long strokes.
     for vector in vector_lines:
-        axis=orientation(vector)
-        start,end,center_axis=ordered(vector,axis)
-        length=end-start
+        *_,length,_,_=_segment_geometry(vector)
         stroke=max(0.1,float(vector.get("widthPx",1.0)))
         unusually_thick=stroke>=thick_stroke_threshold and (
             median_stroke>=thick_stroke_threshold*0.70
@@ -193,12 +407,9 @@ def add_vector_wall_candidates(walls:list[dict],vector_lines:list[dict],height:i
         )
         if length<min_length*1.35 or not unusually_thick:
             continue
-        if axis=="h":
-            a={"x":start,"y":center_axis}; b={"x":end,"y":center_axis}
-        else:
-            a={"x":center_axis,"y":start}; b={"x":center_axis,"y":end}
         candidates.append({
-            "a":a,"b":b,
+            "a":dict(vector["a"]),
+            "b":dict(vector["b"]),
             "thicknessPx":round(max(2.0,min(48.0,stroke)),2),
             "confidence":0.91,
             "reviewed":False,
@@ -206,74 +417,32 @@ def add_vector_wall_candidates(walls:list[dict],vector_lines:list[dict],height:i
         })
 
     for index,left in enumerate(vector_lines):
-        axis=orientation(left)
-        ls,le,la=ordered(left,axis)
-        llen=le-ls
-        if llen<min_length:
-            continue
         for right in vector_lines[index+1:]:
-            if orientation(right)!=axis:
+            candidate=_parallel_pair_candidate(
+                left,right,
+                min_length=min_length,
+                max_separation=max_separation,
+                min_overlap_ratio=.72,
+                max_angle_deg=3.0,
+            )
+            if candidate is None:
                 continue
-            rs,re,ra=ordered(right,axis)
-            rlen=re-rs
-            if rlen<min_length:
-                continue
-            separation=abs(la-ra)
-            if separation<2.0 or separation>max_separation:
-                continue
-            shared=max(0.0,min(le,re)-max(ls,rs))
-            overlap_ratio=shared/max(1.0,min(llen,rlen))
-            if overlap_ratio<0.72 or shared<min_length:
-                continue
-            if separation/max(shared,1.0)>0.09:
-                continue
-
-            start=max(ls,rs)
-            end=min(le,re)
-            center_axis=(la+ra)/2
-            stroke=(float(left.get("widthPx",1.0))+float(right.get("widthPx",1.0)))/2
-            thickness=max(2.0,min(48.0,separation+stroke))
-            if axis=="h":
-                a={"x":start,"y":center_axis}; b={"x":end,"y":center_axis}
-            else:
-                a={"x":center_axis,"y":start}; b={"x":center_axis,"y":end}
-            confidence=min(0.98,0.91+0.07*overlap_ratio)
-            candidates.append({
-                "a":a,"b":b,
-                "thicknessPx":round(thickness,2),
-                "confidence":round(confidence,3),
-                "reviewed":False,
-                "provenance":"pdf-vector",
-            })
+            candidate["provenance"]="pdf-vector"
+            candidates.append(candidate)
 
     result=[dict(wall) for wall in walls]
-
-    def duplicate(candidate:dict,existing:dict)->bool:
-        axis=orientation(candidate)
-        if orientation(existing)!=axis:
-            return False
-        cs,ce,ca=ordered(candidate,axis)
-        es,ee,ea=ordered(existing,axis)
-        shared=max(0.0,min(ce,ee)-max(cs,es))
-        if shared<=0:
-            return False
-        overlap_ratio=shared/max(1.0,min(ce-cs,ee-es))
-        axis_tol=max(
-            6.0,
-            float(candidate.get("thicknessPx",4.0))*1.5,
-            float(existing.get("thicknessPx",4.0))*1.5,
-        )
-        return abs(ca-ea)<=axis_tol and overlap_ratio>=0.55
-
     accepted=[]
     for candidate in sorted(
         candidates,
         key=lambda item:(
             -float(item["confidence"]),
-            -math.hypot(item["b"]["x"]-item["a"]["x"],item["b"]["y"]-item["a"]["y"]),
+            -math.hypot(
+                item["b"]["x"]-item["a"]["x"],
+                item["b"]["y"]-item["a"]["y"],
+            ),
         ),
     ):
-        if any(duplicate(candidate,existing) for existing in [*result,*accepted]):
+        if any(_wall_duplicate(candidate,existing) for existing in [*result,*accepted]):
             continue
         accepted.append(candidate)
 
@@ -289,13 +458,13 @@ def add_vector_wall_candidates(walls:list[dict],vector_lines:list[dict],height:i
     return result
 
 
-def rasterize_wall_mask(walls:list[dict],height:int,width:int,base_mask:np.ndarray|None=None)->np.ndarray:
-    """Build a room-separation barrier from canonical wall centerlines.
-
-    This intentionally draws host walls continuously across doors/windows:
-    openings remain semantic objects, while room extraction needs a closed
-    boundary to keep adjacent spaces separate.
-    """
+def rasterize_wall_mask(
+    walls:list[dict],
+    height:int,
+    width:int,
+    base_mask:np.ndarray|None=None,
+)->np.ndarray:
+    """Build a room-separation barrier from canonical wall centerlines."""
     if base_mask is None:
         mask=np.zeros((height,width),dtype=np.uint8)
     else:
