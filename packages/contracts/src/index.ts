@@ -59,7 +59,7 @@ export interface ProjectView {
   accessToken?: string;
 }
 export interface ProposalImpact {
-  kind: "room_resize" | "room_remove" | "wall_move" | "door_move" | "warning" | "info";
+  kind: "room_resize" | "room_remove" | "wall_move" | "wall_update" | "door_move" | "opening_update" | "opening_remove" | "warning" | "info";
   text: string;
   severity: "info" | "warning" | "critical";
 }
@@ -78,7 +78,7 @@ export interface EditProposalResponse {
   proposals: EditProposal[];
   needsClarification?: string | null;
 }
-export interface ApplyProposalRequest { command: string; proposal: EditProposal; targetRoomId?: string | null; }
+export interface ApplyProposalRequest { command: string; proposal: EditProposal; targetRoomId?: string | null; targetWallId?: string | null; targetOpeningId?: string | null; }
 export interface SaveRevisionRequest { summary: string; plan: FloorPlanModel; expectedRevision: number; }
 export interface RevisionView { revision: number; summary: string; createdAt: string; }
 
