@@ -68,6 +68,7 @@ class EditRequest(BaseModel):
     project_id: str
     command: str
     plan: FloorPlan
+    target_room_id: str | None = None
 
 class ResizeRequest(BaseModel):
     project_id: str
