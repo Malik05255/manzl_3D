@@ -8,12 +8,26 @@ function internalAuthorized(request:Request,env:Env){
   return Boolean(env.INTERNAL_TOKEN)&&request.headers.get("x-manzil-internal")===env.INTERNAL_TOKEN;
 }
 
+function callbackMatchesAnalysis(url:URL,row:{source_key:string|null;revision:number}){
+  const sourceKey=url.searchParams.get("sourceKey");
+  const revisionRaw=url.searchParams.get("revision");
+  if(sourceKey&&sourceKey!==row.source_key)return false;
+  if(revisionRaw!==null){
+    const revision=Number(revisionRaw);
+    if(!Number.isInteger(revision)||revision!==row.revision)return false;
+  }
+  return true;
+}
+
 async function app(request:Request,env:Env){
   const url=new URL(request.url);
 
   if(url.pathname==="/internal/progress"&&request.method==="POST"){
     if(!internalAuthorized(request,env)) return json({error:"unauthorized"},401);
     const body=await request.json<{project_id:string;status?:string;phase:string;progress:number;message?:string;error?:string}>();
+    const row=await getProjectRow(env,body.project_id);
+    if(!row) return json({error:"project not found"},404);
+    if(!callbackMatchesAnalysis(url,row)) return json({error:"stale analysis callback"},409);
     await setProgress(env,body.project_id,body.status??"analyzing",body.phase,body.progress,body.message,body.error);
     return json({ok:true});
   }
@@ -24,6 +38,7 @@ async function app(request:Request,env:Env){
     const projectId=decodeURIComponent(preview[1]);
     const row=await getProjectRow(env,projectId);
     if(!row) return json({error:"project not found"},404);
+    if(!callbackMatchesAnalysis(url,row)) return json({error:"stale analysis callback"},409);
     if(!request.body) return json({error:"preview body required"},400);
     const contentType=request.headers.get("content-type")?.split(";")[0]??"image/webp";
     if(!["image/webp","image/png","image/jpeg"].includes(contentType)) return json({error:"unsupported preview type"},415);
