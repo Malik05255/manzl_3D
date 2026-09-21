@@ -212,3 +212,18 @@ def test_opening_on_protected_wall_blocks_ai_edit():
     ))
     assert not response.proposals
     assert "محمي" in (response.needsClarification or "")
+
+
+def test_opening_edit_can_proceed_with_unrelated_existing_critical_issue():
+    plan=sample_plan()
+    plan.walls.append(Wall(
+        id="broken-existing",
+        a=Point(x=950,y=650),
+        b=Point(x=950,y=650),
+        thicknessPx=10,
+        confidence=.9,
+    ))
+    response=build_proposals(EditRequest(
+        project_id="p1",command="اجعل عرضه 1 متر",target_opening_id="door-1",plan=plan,
+    ))
+    assert response.proposals
