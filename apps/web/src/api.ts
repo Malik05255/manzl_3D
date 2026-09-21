@@ -100,8 +100,8 @@ export const resizeRoomPrecisely=(id:string,roomId:string,widthM:number,heightM:
 export const validateProject=(id:string,plan:FloorPlanModel)=>request<ValidationReport>(`/v1/projects/${id}/validate`,{method:"POST",body:JSON.stringify({plan})});
 export const applyProposal=(id:string,payload:ApplyProposalRequest)=>request<ProjectView>(`/v1/projects/${id}/ai/apply`,{method:"POST",body:JSON.stringify(payload)});
 export const saveDraft=(id:string,plan:FloorPlanModel,expectedRevision:number)=>request<ProjectView>(`/v1/projects/${id}/draft`,{method:"PUT",body:JSON.stringify({plan,expectedRevision})});
-export function saveRevision(id:string,plan:FloorPlanModel,summary:string){
-  const payload:SaveRevisionRequest={plan,summary};
+export function saveRevision(id:string,plan:FloorPlanModel,summary:string,expectedRevision:number){
+  const payload:SaveRevisionRequest={plan,summary,expectedRevision};
   return request<ProjectView>(`/v1/projects/${id}/revisions`,{method:"POST",body:JSON.stringify(payload)});
 }
 
@@ -112,7 +112,7 @@ export const restoreRevision=(id:string,revision:number)=>request<ProjectView>(`
 export async function importProjectBackup(name:string,plan:FloorPlanModel){
   const project=await createProject(name);
   const imported:FloorPlanModel={...plan,id:project.id};
-  const ready=await saveRevision(project.id,imported,"استيراد نسخة مشروع");
+  const ready=await saveRevision(project.id,imported,"استيراد نسخة مشروع",project.revision);
   rememberLastProjectId(project.id);
   return ready;
 }

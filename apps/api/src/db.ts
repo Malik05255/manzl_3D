@@ -23,20 +23,31 @@ export async function setProgress(env:Env,id:string,status:string,phase:string,p
     .bind(status,phase,Math.max(0,Math.min(100,Math.round(progress))),message??null,error??null,now,id).run();
 }
 
-export async function persistPlan(env:Env,id:string,plan:FloorPlanModel,summary:string){
+export async function persistPlan(env:Env,id:string,plan:FloorPlanModel,summary:string,expectedRevision?:number){
   const row=await getProjectRow(env,id);
   if(!row) throw new Error("PROJECT_NOT_FOUND");
-  const revision=row.revision+1;
-  const key=`projects/${id}/revisions/${String(revision).padStart(5,"0")}.json`;
+  if(expectedRevision!==undefined&&row.revision!==expectedRevision) throw new Error("STALE_REVISION");
+
+  const baseRevision=row.revision;
+  const revision=baseRevision+1;
+  const revisionId=crypto.randomUUID();
+  const key=`projects/${id}/revisions/${String(revision).padStart(5,"0")}-${revisionId}.json`;
   await env.ASSETS.put(key,JSON.stringify(plan),{httpMetadata:{contentType:"application/json"}});
   const now=new Date().toISOString();
-  const revisionId=crypto.randomUUID();
-  await env.DB.batch([
-    env.DB.prepare("INSERT INTO revisions(id,project_id,revision,summary,plan_key,created_at) VALUES(?,?,?,?,?,?)")
-      .bind(revisionId,id,revision,summary,key,now),
-    env.DB.prepare("UPDATE projects SET plan_key=?, revision=?, status='ready', phase='ready', progress=100, message=?, error=NULL, updated_at=? WHERE id=?")
-      .bind(key,revision,"المشروع جاهز للتعديل",now,id)
-  ]);
+
+  try{
+    const results=await env.DB.batch([
+      env.DB.prepare("UPDATE projects SET plan_key=?, revision=?, status='ready', phase='ready', progress=100, message=?, error=NULL, updated_at=? WHERE id=? AND revision=?")
+        .bind(key,revision,"المشروع جاهز للتعديل",now,id,baseRevision),
+      env.DB.prepare("INSERT INTO revisions(id,project_id,revision,summary,plan_key,created_at) VALUES(?,?,?,?,?,?)")
+        .bind(revisionId,id,revision,summary,key,now),
+    ]);
+    if((results[0]?.meta.changes??0)<1) throw new Error("STALE_REVISION");
+  }catch(error){
+    const current=await getProjectRow(env,id);
+    if(current&&current.revision!==baseRevision) throw new Error("STALE_REVISION");
+    throw error;
+  }
 }
 
 

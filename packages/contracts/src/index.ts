@@ -78,7 +78,7 @@ export interface EditProposalResponse {
   needsClarification?: string | null;
 }
 export interface ApplyProposalRequest { command: string; proposal: EditProposal; }
-export interface SaveRevisionRequest { summary: string; plan: FloorPlanModel; }
+export interface SaveRevisionRequest { summary: string; plan: FloorPlanModel; expectedRevision: number; }
 export interface RevisionView { revision: number; summary: string; createdAt: string; }
 
 export interface ValidationFinding {
