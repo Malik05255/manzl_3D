@@ -4,7 +4,7 @@ export type AnalysisPhase = "created" | "upload" | "preprocess" | "ocr" | "geome
 export interface Point { x: number; y: number; }
 export type ElementProvenance = "opencv" | "pdf-vector" | "ocr" | "pdf-text" | "manual" | "ai" | "mixed";
 export interface Wall { id: string; a: Point; b: Point; thicknessPx: number; confidence: number; reviewed?: boolean; provenance?: ElementProvenance; }
-export interface Room { id: string; name: string; polygon: Point[]; confidence: number; areaM2?: number | null; reviewed?: boolean; provenance?: ElementProvenance; }
+export interface Room { id: string; name: string; polygon: Point[]; confidence: number; areaM2?: number | null; boundaryWallIds?: string[]; reviewed?: boolean; provenance?: ElementProvenance; }
 export interface Opening {
   id: string;
   kind: "door" | "window";
@@ -134,6 +134,7 @@ function fpRoom(value:unknown):value is Room{
     &&value.polygon.every(fpPoint)
     &&fpConfidence(value.confidence)
     &&(value.areaM2===undefined||value.areaM2===null||(fpFinite(value.areaM2)&&value.areaM2>=0&&value.areaM2<=100000))
+    &&(value.boundaryWallIds===undefined||(Array.isArray(value.boundaryWallIds)&&value.boundaryWallIds.length<=500&&value.boundaryWallIds.every(item=>typeof item==="string"&&item.length>0&&item.length<=200)&&new Set(value.boundaryWallIds).size===value.boundaryWallIds.length))
     &&fpElementMetadata(value);
 }
 function fpOpening(value:unknown):value is Opening{
@@ -185,6 +186,9 @@ export function floorPlanValidationError(value:unknown,expectedId?:string):strin
   if(new Set(ids).size!==ids.length)return "PLAN_DUPLICATE_IDS";
 
   const wallIds=new Set(value.walls.map(item=>(item as Wall).id));
+  for(const room of value.rooms as Room[]){
+    if(room.boundaryWallIds?.some(id=>!wallIds.has(id)))return "PLAN_ROOM_WALL";
+  }
   for(const opening of [...value.doors,...value.windows] as Opening[]){
     if(opening.wallId&& !wallIds.has(opening.wallId))return "PLAN_OPENING_WALL";
   }
