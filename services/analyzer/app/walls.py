@@ -439,7 +439,7 @@ def _detect_slanted_wall_candidates(ink:np.ndarray)->list[dict]:
         return []
 
     segments=[]
-    for x1,y1,x2,y2 in raw[:,0]:
+    for x1,y1,x2,y2 in np.asarray(raw).reshape(-1,4):
         dx=float(x2-x1)
         dy=float(y2-y1)
         length=math.hypot(dx,dy)
@@ -515,7 +515,7 @@ def detect_walls(ink:np.ndarray)->tuple[list[dict],np.ndarray]:
     )
     lines=[]
     if raw is not None:
-        for item in raw[:,0]:
+        for item in np.asarray(raw).reshape(-1,4):
             x1,y1,x2,y2=map(int,item)
             dx,dy=abs(x2-x1),abs(y2-y1)
             candidate=None
