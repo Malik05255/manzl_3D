@@ -7,7 +7,7 @@ from .rooms import detect_rooms
 from .scale import estimate_scale
 from .walls import detect_walls
 
-def assemble_plan(image:np.ndarray,project_id:str,filename:str,mime_type:str,labels:list[dict],walls:list[dict],rooms:list[dict],scale:float|None,scale_confidence:float|None,source_page:int=1,doors:list[dict]|None=None,windows:list[dict]|None=None)->dict:
+def assemble_plan(image:np.ndarray,project_id:str,filename:str,mime_type:str,labels:list[dict],walls:list[dict],rooms:list[dict],scale:float|None,scale_confidence:float|None,source_page:int=1,source_page_count:int|None=None,doors:list[dict]|None=None,windows:list[dict]|None=None)->dict:
     h,w=image.shape[:2]
     wall_score=min(0.96,0.35+len(walls)/35)
     room_score=min(0.94,0.35+len(rooms)/16)
@@ -33,7 +33,7 @@ def assemble_plan(image:np.ndarray,project_id:str,filename:str,mime_type:str,lab
             "text":round(text_score,3),"dimensions":round(dimension_score,3),
             "needsCalibration":scale is None,"warnings":warnings,
         },
-        "source":{"fileName":filename,"mimeType":mime_type,"page":source_page},
+        "source":{"fileName":filename,"mimeType":mime_type,"page":source_page,"pageCount":source_page_count},
     }
 
 def analyze_image(image:np.ndarray,project_id:str,filename:str,mime_type:str)->dict:
