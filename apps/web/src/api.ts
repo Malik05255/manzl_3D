@@ -1,7 +1,7 @@
 import type { ApplyProposalRequest, EditProposalResponse, FloorPlanModel, ProjectView, SaveRevisionRequest } from "@manzil/contracts";
 
 const API_BASE=(import.meta.env.VITE_API_BASE_URL as string|undefined)?.replace(/\/$/,"")??"http://localhost:8787";
-const tokenKey=(projectId:string)=>`manzil:project-token:${projectId}`;
+const tokenKey=(projectId:string)=>`manzil:project-token:${projectId}`;\nconst lastProjectKey="manzil:last-project";
 
 function projectIdFromPath(path:string){
   return path.match(/^\/v1\/projects\/([^/]+)/)?.[1]??null;
@@ -13,6 +13,18 @@ function projectToken(projectId:string){
 
 function rememberProjectToken(projectId:string,token:string){
   try{localStorage.setItem(tokenKey(projectId),token);}catch{}
+}
+
+function rememberLastProjectId(projectId:string){
+  try{localStorage.setItem(lastProjectKey,projectId);}catch{}
+}
+
+export function getLastProjectId(){
+  try{return localStorage.getItem(lastProjectKey);}catch{return null;}
+}
+
+export function forgetLastProject(){
+  try{localStorage.removeItem(lastProjectKey);}catch{}
 }
 
 async function request<T>(path:string,init?:RequestInit):Promise<T>{
@@ -49,12 +61,19 @@ export function uploadSource(projectId:string,file:File,onProgress:(value:number
     if(token)xhr.setRequestHeader("authorization",`Bearer ${token}`);
     xhr.upload.onprogress=e=>{if(e.lengthComputable)onProgress(Math.round(e.loaded/e.total*100));};
     xhr.onerror=()=>reject(new Error("تعذر رفع الملف إلى السحابة"));
-    xhr.onload=()=>xhr.status>=200&&xhr.status<300?resolve():reject(new Error(xhr.responseText||"فشل رفع الملف"));
+    xhr.onload=()=>{
+      if(xhr.status>=200&&xhr.status<300){rememberLastProjectId(projectId);resolve();}
+      else reject(new Error(xhr.responseText||"فشل رفع الملف"));
+    };
     xhr.send(file);
   });
 }
 
-export const getProject=(id:string)=>request<ProjectView>(`/v1/projects/${id}`);
+export async function getProject(id:string){
+  const project=await request<ProjectView>(`/v1/projects/${id}`);
+  rememberLastProjectId(id);
+  return project;
+}
 export async function getProjectPreview(id:string):Promise<string|null>{
   const token=projectToken(id);
   const response=await fetch(`${API_BASE}/v1/projects/${id}/preview`,{

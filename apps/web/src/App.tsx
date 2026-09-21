@@ -1,7 +1,7 @@
 import { useEffect,useMemo,useRef,useState } from "react";
 import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Cloud,FileImage,FileText,Hammer,Layers3,LoaderCircle,Save,Sparkles,Undo2,UploadCloud,WandSparkles } from "lucide-react";
 import type { EditProposal,FloorPlanModel,Point,ProjectView } from "@manzil/contracts";
-import { applyProposal,askEngineer,createProject,getProject,getProjectPreview,saveRevision,uploadSource } from "./api";
+import { applyProposal,askEngineer,createProject,forgetLastProject,getLastProjectId,getProject,getProjectPreview,saveRevision,uploadSource } from "./api";
 import { PlanCanvas } from "./PlanCanvas";
 import { useAppUpdate } from "./useAppUpdate";
 
@@ -15,10 +15,10 @@ const phaseLabels:Record<string,string>={
 function Brand({compact=false}:{compact?:boolean}){return <div className={`brand ${compact?"brand-compact":""}`}><img src="/icon.svg" alt=""/><div><strong>منزل H</strong>{!compact&&<span>محرر المخططات الذكي</span>}</div></div>;}
 function UpdateBanner({onInstall}:{onInstall:()=>void}){return <div className="update-banner"><span>يتوفر إصدار أحدث من منزل H.</span><button onClick={onInstall}>تثبيت التحديث</button></div>;}
 
-function Home({onStart}:{onStart:()=>void}){return <main className="landing">
+function Home({onStart,onResume,resumeAvailable,resumeBusy}:{onStart:()=>void;onResume:()=>void;resumeAvailable:boolean;resumeBusy:boolean}){return <main className="landing">
   <header className="landing-header"><Brand/></header>
   <section className="hero">
-    <div className="hero-copy"><span className="eyebrow"><Cloud size={16}/> معالجة سحابية</span><h1>عدّل مخططك كما تفكر فيه.</h1><p>ارفع المخطط، راجعه بصريًا، ثم عدّله يدويًا أو اطلب من H Engineer اقتراح التغيير مع أثره قبل التنفيذ.</p><button className="primary giant" onClick={onStart}>ابنِ مشروعك <ChevronLeft size={20}/></button></div>
+    <div className="hero-copy"><span className="eyebrow"><Cloud size={16}/> معالجة سحابية</span><h1>عدّل مخططك كما تفكر فيه.</h1><p>ارفع المخطط، راجعه بصريًا، ثم عدّله يدويًا أو اطلب من H Engineer اقتراح التغيير مع أثره قبل التنفيذ.</p><div className="hero-actions"><button className="primary giant" onClick={onStart}>ابنِ مشروعك <ChevronLeft size={20}/></button>{resumeAvailable&&<button className="ghost giant resume-button" disabled={resumeBusy} onClick={onResume}>{resumeBusy?<LoaderCircle className="spin" size={19}/>:<Layers3 size={19}/>} استكمال آخر مشروع</button>}</div></div>
     <div className="hero-board" aria-hidden="true"><div className="mock-plan"><div className="mock-room room-a">غرفة نوم</div><div className="mock-room room-b">صالة</div><div className="mock-room room-c">مطبخ</div><div className="mock-ai"><WandSparkles size={18}/> كبّر غرفة النوم إلى 5×5</div></div></div>
   </section>
 </main>;}
@@ -42,19 +42,19 @@ function Upload({onStarted,onBack}:{onStarted:(p:ProjectView)=>void;onBack:()=>v
   </main>;
 }
 
-function Processing({projectId,onReady}:{projectId:string;onReady:(p:ProjectView)=>void}){
+function Processing({projectId,onReady,onHome}:{projectId:string;onReady:(p:ProjectView)=>void;onHome:()=>void}){
   const[project,setProject]=useState<ProjectView|null>(null);
-  useEffect(()=>{let alive=true;const poll=async()=>{try{const next=await getProject(projectId);if(!alive)return;setProject(next);if(next.status==="ready"&&next.plan){onReady(next);return;}}catch{}if(alive)window.setTimeout(poll,1200);};poll();return()=>{alive=false;};},[projectId,onReady]);
+  useEffect(()=>{let alive=true;const poll=async()=>{try{const next=await getProject(projectId);if(!alive)return;setProject(next);if(next.status==="ready"&&next.plan){onReady(next);return;}if(next.status==="error")return;}catch{}if(alive)window.setTimeout(poll,1200);};poll();return()=>{alive=false;};},[projectId,onReady]);
   const progress=Math.max(0,Math.min(100,project?.progress??10));
   return <main className="processing-page"><Brand/><section className="processing-card">
     <div className="progress-ring" style={{"--p":`${progress*3.6}deg`} as React.CSSProperties}><div><strong>{progress}%</strong><span>تحليل حقيقي</span></div></div>
     <h2>{phaseLabels[project?.phase??"upload"]}</h2><p>{project?.message??"نعالج المخطط ونبني نموذجًا هندسيًا قابلًا للتعديل."}</p>
-    {project?.status==="error"&&<div className="error-box">{project.error??"تعذر تحليل المخطط."}</div>}
+    {project?.status==="error"&&<div className="error-box processing-error"><span>{project.error??"تعذر تحليل المخطط."}</span><button className="ghost" onClick={onHome}>العودة للرئيسية</button></div>}
     <div className="stage-list">{["preprocess","ocr","geometry","rooms","validation"].map(p=><span key={p} className={project?.phase===p?"current":""}>{phaseLabels[p]}</span>)}</div>
   </section></main>;
 }
 
-function Editor({initialProject}:{initialProject:ProjectView}){
+function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>void}){
   const[project,setProject]=useState(initialProject);const[plan,setPlan]=useState<FloorPlanModel>(initialProject.plan!);const[savedPlan,setSavedPlan]=useState<FloorPlanModel>(initialProject.plan!);
   const[selectedWall,setSelectedWall]=useState<string|null>(null);const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
   const[calibrating,setCalibrating]=useState(false);const[calibrationPoints,setCalibrationPoints]=useState<Point[]>([]);const[knownDistance,setKnownDistance]=useState("");
@@ -86,7 +86,7 @@ function Editor({initialProject}:{initialProject:ProjectView}){
   };
 
   return <main className="editor-page">
-    <header className="editor-header"><Brand compact/><div className="project-name"><FileText size={17}/><strong>{project.name}</strong></div><div className="editor-actions"><button className="ghost" disabled={!dirty} onClick={()=>setPlan(savedPlan)}><Undo2 size={17}/> تراجع</button><button className="primary small" disabled={!dirty||saving} onClick={save}><Save size={17}/> حفظ</button></div></header>
+    <header className="editor-header"><Brand compact/><div className="project-name"><FileText size={17}/><strong>{project.name}</strong></div><div className="editor-actions"><button className="ghost" onClick={onHome}><ArrowLeft size={17}/> الرئيسية</button><button className="ghost" disabled={!dirty} onClick={()=>setPlan(savedPlan)}><Undo2 size={17}/> تراجع</button><button className="primary small" disabled={!dirty||saving} onClick={save}><Save size={17}/> حفظ</button></div></header>
     <div className="editor-workspace">
       <section className="plan-panel"><div className="panel-title"><div><strong>منطقة التعديل</strong><span>اسحب جدارًا لتحريكه أو استخدم H Engineer</span></div><div className="panel-status">{sourcePreview&&<label className="overlay-control"><span>الأصل</span><input type="range" min="0" max=".85" step=".05" value={sourceOpacity} onChange={e=>setSourceOpacity(Number(e.target.value))}/></label>}<div className="quality-pill">جودة التحليل {Math.round(plan.quality.overall*100)}%</div></div></div>
         <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)} selectedWallId={selectedWall} onSelectWall={setSelectedWall} onPlanChange={setPlan}
@@ -108,12 +108,29 @@ function Editor({initialProject}:{initialProject:ProjectView}){
 }
 
 export default function App(){
-  const[screen,setScreen]=useState<Screen>("home");const[project,setProject]=useState<ProjectView|null>(null);const{updateReady,installUpdate}=useAppUpdate();
+  const[screen,setScreen]=useState<Screen>("home");const[project,setProject]=useState<ProjectView|null>(null);const[resumeAvailable,setResumeAvailable]=useState(()=>Boolean(getLastProjectId()));const[resumeBusy,setResumeBusy]=useState(false);const{updateReady,installUpdate}=useAppUpdate();
+  const resume=async()=>{
+    const id=getLastProjectId();
+    if(!id)return;
+    setResumeBusy(true);
+    try{
+      const next=await getProject(id);
+      setProject(next);
+      if(next.status==="ready"&&next.plan)setScreen("editor");
+      else setScreen("processing");
+    }catch{
+      forgetLastProject();
+      setResumeAvailable(false);
+    }finally{
+      setResumeBusy(false);
+    }
+  };
+  const home=()=>{setScreen("home");setResumeAvailable(Boolean(getLastProjectId()));};
   return <>{updateReady&&<UpdateBanner onInstall={installUpdate}/>}
-    {screen==="home"&&<Home onStart={()=>setScreen("choice")}/>}
-    {screen==="choice"&&<Choice onEdit={()=>setScreen("upload")} onBack={()=>setScreen("home")}/>}
-    {screen==="upload"&&<Upload onBack={()=>setScreen("choice")} onStarted={p=>{setProject(p);setScreen("processing");}}/>}
-    {screen==="processing"&&project&&<Processing projectId={project.id} onReady={p=>{setProject(p);setScreen("editor");}}/>}
-    {screen==="editor"&&project?.plan&&<Editor initialProject={project}/>}
+    {screen==="home"&&<Home onStart={()=>setScreen("choice")} onResume={resume} resumeAvailable={resumeAvailable} resumeBusy={resumeBusy}/>}
+    {screen==="choice"&&<Choice onEdit={()=>setScreen("upload")} onBack={home}/>}
+    {screen==="upload"&&<Upload onBack={()=>setScreen("choice")} onStarted={p=>{setProject(p);setResumeAvailable(true);setScreen("processing");}}/>}
+    {screen==="processing"&&project&&<Processing projectId={project.id} onReady={p=>{setProject(p);setScreen("editor");}} onHome={home}/>}
+    {screen==="editor"&&project?.plan&&<Editor initialProject={project} onHome={home}/>}
   </>;
 }

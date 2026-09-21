@@ -4,3 +4,6 @@
 
 .panel-status{display:flex;align-items:center;gap:9px}.overlay-control{display:flex;align-items:center;gap:7px;padding:6px 9px;border:1px solid var(--line);border-radius:10px;background:#fff;color:#64748b;font-size:11px;font-weight:700}.overlay-control input{width:92px;accent-color:var(--blue)}
 @media(max-width:640px){.panel-status{gap:5px}.overlay-control{padding:5px 7px}.overlay-control span{display:none}.overlay-control input{width:58px}}
+
+.hero-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.resume-button{background:rgba(255,255,255,.82)}.processing-error{display:flex;align-items:center;justify-content:space-between;gap:12px}.processing-error .ghost{flex:0 0 auto}
+@media(max-width:640px){.hero-actions{display:grid;grid-template-columns:1fr}.hero-actions .giant{width:100%;justify-content:center}.processing-error{align-items:stretch;flex-direction:column}}
