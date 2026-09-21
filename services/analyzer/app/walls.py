@@ -677,12 +677,51 @@ def _thin_matching_vector(
     return False
 
 
+def _wall_matches_dimension_span(
+    wall:dict,
+    dimensions:list[dict],
+    min_side:float,
+)->bool:
+    if not dimensions:
+        return False
+    ws,we,wo,wlen,ux,uy=_frame(wall)
+    if wlen<=1e-9:
+        return False
+    nx=-uy
+    ny=ux
+    axis_tol=max(6.0,min(18.0,min_side*.012))
+
+    for dimension in dimensions:
+        if dimension.get("valueM") is None:
+            continue
+        if str(dimension.get("unit","unknown"))=="unknown":
+            continue
+        a=dimension.get("spanA")
+        b=dimension.get("spanB")
+        if not isinstance(a,dict) or not isinstance(b,dict):
+            continue
+        span={"a":a,"b":b}
+        if _angle_difference(wall,span)>4.0:
+            continue
+        sax,say=_point(a)
+        sbx,sby=_point(b)
+        ss=min(sax*ux+say*uy,sbx*ux+sby*uy)
+        se=max(sax*ux+say*uy,sbx*ux+sby*uy)
+        so=((sax+sbx)/2)*nx+((say+sby)/2)*ny
+        shared=max(0.0,min(we,se)-max(ws,ss))
+        overlap=shared/max(1.0,min(wlen,se-ss))
+        if overlap>=.62 and abs(so-wo)<=axis_tol:
+            return True
+    return False
+
+
 def quarantine_dimension_aligned_walls(
     walls:list[dict],
     labels:list[dict],
     height:int,
     width:int,
     vector_lines:list[dict]|None=None,
+    dimensions:list[dict]|None=None,
 )->set[str]:
     """Downgrade lines that align with explicit dimension text/evidence.
 
@@ -701,7 +740,11 @@ def quarantine_dimension_aligned_walls(
             continue
         if not wall_id:
             continue
-        if not _candidate_near_dimension_label(wall,labels,min_side):
+        matches_dimension=(
+            _wall_matches_dimension_span(wall,dimensions or [],min_side)
+            or _candidate_near_dimension_label(wall,labels,min_side)
+        )
+        if not matches_dimension:
             continue
         thin_raster=thickness<=thin_limit
         thin_vector=_thin_matching_vector(wall,vector_lines or [],min_side)
