@@ -62,6 +62,8 @@ class Dimension(BaseModel):
     unit: Literal["m","cm","mm","unknown"] = "unknown"
     orientation: Literal["horizontal","vertical","unknown"] = "unknown"
     referenceWallId: str | None = None
+    spanA: Point | None = None
+    spanB: Point | None = None
     confidence: float = Field(ge=0, le=1)
     reviewed: bool = False
     provenance: ElementProvenance | None = None
