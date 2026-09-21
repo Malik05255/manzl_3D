@@ -51,6 +51,8 @@ function Upload({onStarted,onBack}:{onStarted:(p:ProjectView)=>void;onBack:()=>v
     const backup=file.name.toLowerCase().endsWith(".json")||file.type==="application/json";
     const sourceMime=inferSourceMime(file);
     if(!backup&&!sourceMime){setError("الملف يجب أن يكون PDF أو PNG/JPG/WEBP أو نسخة مشروع JSON.");return;}
+    if(backup&&file.size>12*1024*1024){setError("نسخة المشروع أكبر من الحد المدعوم 12MB.");return;}
+    if(!backup&&file.size>50*1024*1024){setError("حجم المخطط يتجاوز الحد الأقصى 50MB.");return;}
     setBusy(true);setPct(0);setMode(backup?"backup":"upload");setError(null);
     try{
       const name=file.name.replace(/\.(manzil\.)?json$/i,"").replace(/\.[^.]+$/,"")||"مخطط مستورد";
