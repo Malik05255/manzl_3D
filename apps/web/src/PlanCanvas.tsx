@@ -1,6 +1,6 @@
 import { useEffect,useMemo,useRef,useState } from "react";
 import type { FloorPlanModel,Point,ValidationFinding,Wall } from "@manzil/contracts";
-import { Minus,Plus,RotateCcw,Ruler } from "lucide-react";
+import { Magnet,Minus,Plus,RotateCcw,Ruler } from "lucide-react";
 import { easePreview,interpolatePlan } from "./previewInterpolation";
 
 interface Props{
@@ -26,6 +26,12 @@ type DragState={wallId:string;startClient:Point;original:Wall;basePlan:FloorPlan
 
 function overlap(a1:number,a2:number,b1:number,b2:number){
   return Math.max(0,Math.min(a2,b2)-Math.max(a1,b1));
+}
+
+export function snapAxis(value:number,metersPerPixel?:number|null,stepM=.05){
+  if(!metersPerPixel||metersPerPixel<=0||stepM<=0)return value;
+  const stepPx=stepM/metersPerPixel;
+  return Math.round(value/stepPx)*stepPx;
 }
 
 function polygonArea(points:Point[]){
@@ -145,6 +151,7 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
   const[zoom,setZoom]=useState(1);
   const[drag,setDrag]=useState<DragState>(null);
   const[measureMode,setMeasureMode]=useState(false);
+  const[snapEnabled,setSnapEnabled]=useState(true);
   const[measurePoints,setMeasurePoints]=useState<Point[]>([]);
   const[previewProgress,setPreviewProgress]=useState(1);
   const svgRef=useRef<SVGSVGElement|null>(null);
@@ -221,9 +228,11 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
     if(!drag||!onPlanChange||readonly||calibrationMode||measureMode)return;
     const d=toPlanDelta(event.clientX-drag.startClient.x,event.clientY-drag.startClient.y);
     const horizontal=Math.abs(drag.original.a.y-drag.original.b.y)<Math.abs(drag.original.a.x-drag.original.b.x);
+    const rawAxis=horizontal?drag.original.a.y+d.y:drag.original.a.x+d.x;
+    const axis=snapEnabled&&!event.shiftKey?snapAxis(rawAxis,plan.metersPerPixel,.05):rawAxis;
     const candidate:Wall=horizontal
-      ?{...drag.original,a:{...drag.original.a,y:drag.original.a.y+d.y},b:{...drag.original.b,y:drag.original.b.y+d.y}}
-      :{...drag.original,a:{...drag.original.a,x:drag.original.a.x+d.x},b:{...drag.original.b,x:drag.original.b.x+d.x}};
+      ?{...drag.original,a:{...drag.original.a,y:axis},b:{...drag.original.b,y:axis}}
+      :{...drag.original,a:{...drag.original.a,x:axis},b:{...drag.original.b,x:axis}};
     const next=moveWallAndTopology(drag.basePlan,drag.original,candidate);
     onPlanChange(next,false);
     if(!drag.changed&&Math.hypot(d.x,d.y)>.5)setDrag(current=>current?{...current,changed:true}:current);
@@ -264,6 +273,7 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
       <span>{Math.round(zoom*100)}%</span>
       <button className="icon-button" onClick={()=>setZoom(z=>Math.max(z-.15,.45))} aria-label="تصغير"><Minus size={18}/></button>
       <button className="icon-button" onClick={()=>setZoom(1)} aria-label="إعادة الضبط"><RotateCcw size={18}/></button>
+      <button className={`icon-button ${snapEnabled?"active-tool":""}`} disabled={!plan.metersPerPixel||calibrationMode||measureMode} onClick={()=>setSnapEnabled(value=>!value)} aria-label="محاذاة تلقائية كل 5 سم" title="محاذاة 5 سم · اضغط Shift للتجاوز"><Magnet size={17}/></button>
       <button className={`icon-button ${measureMode?"active-tool":""}`} disabled={calibrationMode} onClick={()=>{setMeasureMode(value=>!value);setMeasurePoints([]);setDrag(null);}} aria-label="قياس مسافة"><Ruler size={17}/></button>
     </div>
     <div className="canvas-viewport" onWheel={wheelZoom} onPointerMove={move} onPointerUp={finishDrag} onPointerCancel={finishDrag}>
