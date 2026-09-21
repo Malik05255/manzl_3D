@@ -299,7 +299,7 @@ def detect_doors(
 
             leaf_evidence=_door_leaf_evidence(image,a,b,gap,wall_angle)
             arc_evidence=_door_arc_evidence(image,a,b,gap)
-            if leaf_evidence<1 and arc_evidence<1:
+            if leaf_evidence<1 and arc_evidence<2:
                 continue
 
             evidence=leaf_evidence+arc_evidence
