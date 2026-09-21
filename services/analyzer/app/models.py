@@ -77,7 +77,7 @@ class ResizeRequest(BaseModel):
     plan: FloorPlan
 
 class Impact(BaseModel):
-    kind: Literal["room_resize", "wall_move", "door_move", "warning", "info"]
+    kind: Literal["room_resize", "room_remove", "wall_move", "door_move", "warning", "info"]
     text: str
     severity: Literal["info", "warning", "critical"] = "info"
 

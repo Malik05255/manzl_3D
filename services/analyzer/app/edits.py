@@ -1,7 +1,7 @@
 from __future__ import annotations
 from itertools import product
 from .commands import find_target_room,normalize_arabic,resolve_target_size
-from .edit_geometry import apply_side,bbox,is_rectangular_room,minimum_clear_span_m
+from .edit_geometry import absorb_neighbor,adjacent,apply_side,bbox,is_rectangular_room,minimum_clear_span_m
 from .models import EditRequest,FloorPlan,Impact,Proposal,ProposalResponse,Room
 from .validation import validate_plan
 
@@ -14,6 +14,60 @@ def _service_rooms(names:list[str])->list[str]:
         if any(normalize_arabic(word) in normalized for word in SERVICE_ROOM_WORDS):
             result.append(name)
     return result
+
+def _absorb_service_alternative(plan:FloorPlan,target:Room,target_w:float,target_h:float,command:str)->Proposal|None:
+    mpp=plan.metersPerPixel
+    if not mpp:
+        return None
+    x1,y1,x2,y2=bbox(target)
+    current_w=(x2-x1)*mpp
+    current_h=(y2-y1)*mpp
+    dx=(target_w-current_w)/mpp
+    dy=(target_h-current_h)/mpp
+
+    # Conservative first version: consume exactly one full-width/full-height service room
+    # only when one dimension changes. This avoids creating unassigned or overlapping space.
+    if abs(dx)>=1 and abs(dy)<1:
+        sides=["right","left"]
+        delta=dx
+    elif abs(dy)>=1 and abs(dx)<1:
+        sides=["bottom","top"]
+        delta=dy
+    else:
+        return None
+
+    tol=max(6.0,0.18/mpp)
+    for side in sides:
+        candidate=plan.model_copy(deep=True)
+        candidate_target=next(room for room in candidate.rooms if room.id==target.id)
+        neighbors=adjacent(candidate,candidate_target,side,tol)
+        if len(neighbors)!=1 or not _service_rooms([neighbors[0].name]):
+            continue
+        service=neighbors[0]
+        ok,impacts=absorb_neighbor(candidate,candidate_target,service,side,delta,mpp)
+        if not ok:
+            continue
+        validation=validate_plan(candidate)
+        if any(item.severity=="critical" for item in validation.findings):
+            continue
+        warnings=[
+            f"هذا خيار جذري: سيتم إلغاء {service.name} بالكامل وضم مساحته إلى {target.name}.",
+            *[item.text for item in validation.findings if item.severity=="warning"],
+        ]
+        return Proposal(
+            id=f"absorb:{target.id}:{service.id}:{side}:{target_w:g}x{target_h:g}",
+            title=f"إلغاء {service.name} وضم مساحته",
+            summary=f"تصبح {target.name} {target_w:g}×{target_h:g} م عبر ضم {service.name}",
+            confidence=max(0.55,min(0.78,plan.quality.overall-0.16)),
+            validationScore=validation.score,
+            impacts=[
+                Impact(kind="room_resize",text=f"تغيير {target.name} من {current_w:.2f}×{current_h:.2f} م إلى {target_w:g}×{target_h:g} م"),
+                *impacts,
+            ],
+            warnings=list(dict.fromkeys(warnings)),
+            previewPlan=candidate,
+        )
+    return None
 
 def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:float,command:str)->ProposalResponse:
     mpp=plan.metersPerPixel
@@ -119,6 +173,10 @@ def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:fl
             previewPlan=candidate
         )
         ranked.append((penalty,len(affected),proposal))
+
+    absorb=_absorb_service_alternative(plan,target,target_w,target_h,command)
+    if absorb is not None:
+        ranked.append((0.26,1,absorb))
 
     if not ranked:
         return ProposalResponse(

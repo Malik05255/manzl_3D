@@ -57,7 +57,7 @@ export interface ProjectView {
   accessToken?: string;
 }
 export interface ProposalImpact {
-  kind: "room_resize" | "wall_move" | "door_move" | "warning" | "info";
+  kind: "room_resize" | "room_remove" | "wall_move" | "door_move" | "warning" | "info";
   text: string;
   severity: "info" | "warning" | "critical";
 }

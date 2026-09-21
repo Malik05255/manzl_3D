@@ -151,3 +151,86 @@ def apply_side(plan:FloorPlan,target:Room,side:str,delta_px:float,mpp:float)->tu
             severity="warning",
         ))
     return True,impacts,[room.name for room in neighbors]
+
+
+def absorb_neighbor(plan:FloorPlan,target:Room,neighbor:Room,side:str,delta_px:float,mpp:float)->tuple[bool,list[Impact]]:
+    if abs(delta_px)<1 or not is_rectangular_room(target) or not is_rectangular_room(neighbor):
+        return False,[]
+
+    tol=max(6.0,0.15/mpp)
+    tx1,ty1,tx2,ty2=bbox(target)
+    nx1,ny1,nx2,ny2=bbox(neighbor)
+    shared_wall_ids=set()
+
+    if side=="right":
+        if abs(nx1-tx2)>tol or abs(ny1-ty1)>tol or abs(ny2-ty2)>tol:
+            return False,[]
+        desired=tx2+delta_px
+        if abs(desired-nx2)>tol:
+            return False,[]
+        shared_axis=tx2
+        span=(ty1,ty2)
+        new_box=(tx1,ty1,nx2,ty2)
+    elif side=="left":
+        if abs(nx2-tx1)>tol or abs(ny1-ty1)>tol or abs(ny2-ty2)>tol:
+            return False,[]
+        desired=tx1-delta_px
+        if abs(desired-nx1)>tol:
+            return False,[]
+        shared_axis=tx1
+        span=(ty1,ty2)
+        new_box=(nx1,ty1,tx2,ty2)
+    elif side=="bottom":
+        if abs(ny1-ty2)>tol or abs(nx1-tx1)>tol or abs(nx2-tx2)>tol:
+            return False,[]
+        desired=ty2+delta_px
+        if abs(desired-ny2)>tol:
+            return False,[]
+        shared_axis=ty2
+        span=(tx1,tx2)
+        new_box=(tx1,ty1,tx2,ny2)
+    elif side=="top":
+        if abs(ny2-ty1)>tol or abs(nx1-tx1)>tol or abs(nx2-tx2)>tol:
+            return False,[]
+        desired=ty1-delta_px
+        if abs(desired-ny1)>tol:
+            return False,[]
+        shared_axis=ty1
+        span=(tx1,tx2)
+        new_box=(tx1,ny1,tx2,ty2)
+    else:
+        return False,[]
+
+    for wall in plan.walls:
+        if side in ("left","right"):
+            aligned=abs(wall.a.x-wall.b.x)<=tol
+            axis=(wall.a.x+wall.b.x)/2
+            shared=overlap(min(wall.a.y,wall.b.y),max(wall.a.y,wall.b.y),span[0],span[1])
+        else:
+            aligned=abs(wall.a.y-wall.b.y)<=tol
+            axis=(wall.a.y+wall.b.y)/2
+            shared=overlap(min(wall.a.x,wall.b.x),max(wall.a.x,wall.b.x),span[0],span[1])
+        if aligned and abs(axis-shared_axis)<=tol and shared>0:
+            shared_wall_ids.add(wall.id)
+
+    set_rect(target,new_box,mpp)
+    plan.rooms=[room for room in plan.rooms if room.id!=neighbor.id]
+    plan.walls=[wall for wall in plan.walls if wall.id not in shared_wall_ids]
+    removed_openings=[
+        opening for opening in [*plan.doors,*plan.windows]
+        if opening.wallId in shared_wall_ids
+    ]
+    plan.doors=[opening for opening in plan.doors if opening.wallId not in shared_wall_ids]
+    plan.windows=[opening for opening in plan.windows if opening.wallId not in shared_wall_ids]
+
+    impacts=[
+        Impact(kind="room_remove",text=f"إزالة {neighbor.name} وضم مساحته إلى {target.name}",severity="critical"),
+        Impact(kind="wall_move",text="إزالة الجدار المشترك بين الفراغين",severity="warning"),
+    ]
+    if removed_openings:
+        impacts.append(Impact(
+            kind="door_move",
+            text=f"إزالة {len(removed_openings)} فتحة مرتبطة بالجدار الملغى",
+            severity="warning",
+        ))
+    return True,impacts
