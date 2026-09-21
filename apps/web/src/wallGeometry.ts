@@ -56,5 +56,9 @@ export function wallRemovalReason(plan:FloorPlanModel,wallId:string):string|null
 
 export function removeUnboundWall(plan:FloorPlanModel,wallId:string):FloorPlanModel|null{
   if(wallRemovalReason(plan,wallId))return null;
-  return {...plan,walls:plan.walls.filter(wall=>wall.id!==wallId)};
+  return {
+    ...plan,
+    walls:plan.walls.filter(wall=>wall.id!==wallId),
+    dimensions:plan.dimensions?.map(item=>item.referenceWallId===wallId?{...item,referenceWallId:null,orientation:"unknown"}:item),
+  };
 }
