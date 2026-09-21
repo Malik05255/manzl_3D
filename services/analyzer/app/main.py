@@ -19,7 +19,7 @@ from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
 from .topology import canonicalize_plan,classify_wall_roles,link_room_boundaries
 from .semantic import normalize_edit_semantics
-from .walls import detect_walls,enrich_walls_with_vector,rasterize_wall_mask
+from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,rasterize_wall_mask
 from .validation import validate_plan
 
 app=FastAPI(title="Manzil H Analyzer",version="0.1.0")
@@ -134,14 +134,16 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
 
     await progress(req.callback_url,req.project_id,"geometry",58,"استخراج الجدران والهندسة")
     walls,wall_mask=detect_walls(ink)
+    vector_lines=[]
     if req.mime_type=="application/pdf":
         try:
             vector_lines=extract_pdf_vector_lines(data,source_page)
             if vector_lines:
                 used_pdf_vector=True
             walls=enrich_walls_with_vector(walls,vector_lines)
+            walls=add_vector_wall_candidates(walls,vector_lines,h,w)
         except Exception:
-            pass
+            vector_lines=[]
     scale,scale_confidence,scale_warnings=estimate_scale_with_diagnostics(labels,walls,w,h)
     doors=detect_doors(image,walls,scale)
     windows=detect_windows(image,walls,scale)
