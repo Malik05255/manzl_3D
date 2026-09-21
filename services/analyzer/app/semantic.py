@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from .commands import find_target_room,normalize_arabic,parse_merge_rooms,resolve_target_size
+from .commands import find_target_room,normalize_arabic,parse_merge_rooms,parse_selected_opening_action,parse_selected_wall_action,resolve_target_size
 from .edit_geometry import bbox
 from .models import EditRequest
 
@@ -76,6 +76,18 @@ def _deterministic_understands(request:EditRequest)->bool:
     if parse_merge_rooms(request.command,request.plan.rooms) is not None:
         return True
     target=find_target_room(request.command,request.plan.rooms)
+    if target is not None and request.plan.metersPerPixel:
+        x1,y1,x2,y2=bbox(target)
+        current_width=(x2-x1)*request.plan.metersPerPixel
+        current_height=(y2-y1)*request.plan.metersPerPixel
+        if resolve_target_size(request.command,current_width,current_height) is not None:
+            return True
+
+    if request.target_opening_id and parse_selected_opening_action(request.command) is not None:
+        return True
+    if request.target_wall_id and parse_selected_wall_action(request.command) is not None:
+        return True
+
     if target is None and request.target_room_id:
         target=next((room for room in request.plan.rooms if room.id==request.target_room_id),None)
     if target is None or not request.plan.metersPerPixel:
@@ -121,6 +133,58 @@ def _canonical_from_payload(payload:dict,request:EditRequest)->tuple[str|None,st
             return None,None
         return f"ادمج {source.name} مع {target.name}",None
 
+    if action in ("opening_remove","opening_kind","opening_resize","opening_move"):
+        if not request.target_opening_id:
+            return None,None
+        if action=="opening_remove":
+            return "احذف الفتحة المحددة",None
+        if action=="opening_kind":
+            kind=str(payload.get("opening_kind") or "").strip().lower()
+            if kind=="door":
+                return "حول الفتحة المحددة إلى باب",None
+            if kind=="window":
+                return "حول الفتحة المحددة إلى نافذة",None
+            return None,None
+        try:
+            amount=float(payload.get("amount_m"))
+        except (TypeError,ValueError):
+            return None,None
+        if not (0.01<=amount<=20):
+            return None,None
+        if action=="opening_resize":
+            return f"اجعل عرض الفتحة المحددة {amount:g} متر",None
+        direction=str(payload.get("direction") or "").strip().lower()
+        direction_ar={"right":"يمين","left":"يسار","up":"أعلى","down":"أسفل"}.get(direction)
+        if not direction_ar:
+            return None,None
+        return f"حرك الفتحة المحددة {amount:g} متر {direction_ar}",None
+
+    if action in ("wall_move","wall_thickness","wall_add_opening"):
+        if not request.target_wall_id:
+            return None,None
+        if action=="wall_add_opening":
+            kind=str(payload.get("opening_kind") or "").strip().lower()
+            if kind=="door":
+                return "أضف باب على الجدار المحدد",None
+            if kind=="window":
+                return "أضف نافذة على الجدار المحدد",None
+            return None,None
+        try:
+            amount=float(payload.get("amount_m"))
+        except (TypeError,ValueError):
+            return None,None
+        if action=="wall_thickness":
+            if not (0.02<=amount<=1.0):
+                return None,None
+            return f"اجعل سماكة الجدار المحدد {amount:g} متر",None
+        if not (0.01<=amount<=20):
+            return None,None
+        direction=str(payload.get("direction") or "").strip().lower()
+        direction_ar={"right":"يمين","left":"يسار","up":"أعلى","down":"أسفل"}.get(direction)
+        if not direction_ar:
+            return None,None
+        return f"حرك الجدار المحدد {amount:g} متر {direction_ar}",None
+
     if action!="resize_room":
         return None,None
 
@@ -153,24 +217,38 @@ async def _ask_provider(provider:Provider,request:EditRequest)->tuple[str|None,s
         headers["authorization"]=f"Bearer {api_key}"
 
     selected_room=next((room.name for room in request.plan.rooms if room.id==request.target_room_id),None)
+    selected_wall=next((wall.id for wall in request.plan.walls if wall.id==request.target_wall_id),None)
+    selected_opening=next((opening for opening in [*request.plan.doors,*request.plan.windows] if opening.id==request.target_opening_id),None)
     context={
         "user_command":request.command,
         "selected_room":selected_room,
+        "selected_wall_id":selected_wall,
+        "selected_opening":{
+            "id":selected_opening.id,
+            "kind":selected_opening.kind,
+            "wall_id":selected_opening.wallId,
+        } if selected_opening else None,
         "rooms":_room_context(request),
         "rules":[
             "Do not invent a room that is not listed.",
             "Only interpret the requested change; do not redesign the house.",
             "If selected_room is set and the user says it/this room without naming another room, use selected_room.",
+            "If selected_opening is set, interpret pronouns like it/this door/this window as that exact opening.",
+            "If selected_wall_id is set, interpret this wall as that exact wall.",
+            "Never target a wall or opening unless that element is selected.",
             "Use merge_room only when the user explicitly asks to remove or merge one listed room into another.",
             "Convert relative resize changes into final width_m and height_m using current dimensions.",
             "If ambiguous, set needs_clarification instead of guessing.",
         ],
         "output_schema":{
-            "action":"resize_room or merge_room",
+            "action":"resize_room | merge_room | opening_remove | opening_kind | opening_resize | opening_move | wall_move | wall_thickness | wall_add_opening",
             "source_room":"exact room name when action is merge_room",
-            "target_room":"exact room name",
+            "target_room":"exact room name for room actions",
             "width_m":"number when action is resize_room",
             "height_m":"number when action is resize_room",
+            "amount_m":"meters for opening_resize/opening_move/wall_move/wall_thickness",
+            "direction":"right | left | up | down for move actions",
+            "opening_kind":"door | window for opening_kind or wall_add_opening",
             "needs_clarification":"empty string or short Arabic question",
         },
     }
