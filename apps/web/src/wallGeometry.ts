@@ -67,8 +67,8 @@ export function removeUnboundWall(plan:FloorPlanModel,wallId:string):FloorPlanMo
 function generatedSplitIds(plan:FloorPlanModel){
   const ids=new Set(plan.walls.map(wall=>wall.id));
   let index=1;
-  while(ids.has(\`wall-split-\${index}-a\`)||ids.has(\`wall-split-\${index}-b\`))index+=1;
-  return [\`wall-split-\${index}-a\`,\`wall-split-\${index}-b\`] as const;
+  while(ids.has(`wall-split-${index}-a`)||ids.has(`wall-split-${index}-b`))index+=1;
+  return [`wall-split-${index}-a`,`wall-split-${index}-b`] as const;
 }
 
 function projectParameter(point:Point,a:Point,b:Point){
