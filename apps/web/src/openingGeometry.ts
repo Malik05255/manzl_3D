@@ -47,7 +47,7 @@ export function removeOpening(plan:FloorPlanModel,id:string):FloorPlanModel{
 export function changeOpeningKind(plan:FloorPlanModel,id:string,kind:Opening["kind"]):FloorPlanModel|null{
   const opening=findOpening(plan,id);
   if(!opening)return null;
-  return replaceOpening(plan,markManual({...opening,kind}));
+  return replaceOpening(plan,markManual({...opening,kind,doorSubtype:kind==="door"?(opening.doorSubtype??"unknown"):undefined}));
 }
 
 function normalizedOpening(plan:FloorPlanModel,opening:Opening,widthPx:number,centerDistance:number):Opening|null{
@@ -149,6 +149,7 @@ export function addOpeningToWall(plan:FloorPlanModel,wallId:string,kind:Opening[
   const opening:Opening={
     id:nextOpeningId(plan,kind),
     kind,
+    doorSubtype:kind==="door"?"unknown":undefined,
     wallId,
     a:pointAt(wall,center-widthPx/2),
     b:pointAt(wall,center+widthPx/2),
