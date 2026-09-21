@@ -1,4 +1,6 @@
-from app.symbols import normalize_symbol_response
+import numpy as np
+
+from app.symbols import _decode_yolo_output,_prepare_yolo_rows,normalize_symbol_response
 
 
 def test_normalizes_supported_symbol_classes_and_boxes():
@@ -70,3 +72,57 @@ def test_rejects_page_sized_symbol_detection():
         {"label":"toilet","bbox":[0,0,950,780],"confidence":.99},
     ],1000,800)
     assert result==[]
+
+
+
+def test_decodes_yolov8_onnx_output():
+    # YOLOv8-style tensor: [1, 4 + classes, detections].
+    output=np.array([[
+        [160.0,500.0],
+        [180.0,500.0],
+        [80.0,40.0],
+        [100.0,40.0],
+        [0.94,0.10],
+        [0.06,0.91],
+    ]],dtype=np.float32)
+    result=_decode_yolo_output(
+        output,
+        class_names=["toilet","sink"],
+        confidence_threshold=.78,
+        original_width=640,
+        original_height=640,
+        input_size=640,
+        scale=1.0,
+        pad_x=0.0,
+        pad_y=0.0,
+    )
+    assert [item["kind"] for item in result]==["toilet","sink"]
+    assert result[0]["a"]=={"x":120.0,"y":130.0}
+    assert result[0]["b"]=={"x":200.0,"y":230.0}
+
+
+def test_decodes_yolo_objectness_output_and_applies_confidence():
+    # YOLOv5-style row: cx, cy, w, h, objectness, class scores...
+    output=np.array([
+        [200.0,200.0,100.0,80.0,.90,.05,.95],
+        [400.0,400.0,60.0,60.0,.50,.99,.01],
+    ],dtype=np.float32)
+    result=_decode_yolo_output(
+        output,
+        class_names=["toilet","sink"],
+        confidence_threshold=.78,
+        original_width=640,
+        original_height=640,
+        input_size=640,
+        scale=1.0,
+        pad_x=0.0,
+        pad_y=0.0,
+    )
+    assert len(result)==1
+    assert result[0]["kind"]=="sink"
+    assert result[0]["confidence"]>0.85
+
+
+def test_rejects_unknown_yolo_tensor_shape():
+    rows=_prepare_yolo_rows(np.zeros((1,7,12),dtype=np.float32),2)
+    assert rows.shape==(0,6)
