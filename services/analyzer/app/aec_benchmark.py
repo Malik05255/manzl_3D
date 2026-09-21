@@ -10,6 +10,10 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import cv2
+
+from .debug_render import render_extraction_overlay
+from .document import decode_document_with_page
 from .local_analysis import analyze_document_bytes_local
 
 
@@ -173,7 +177,9 @@ def run_dataset(dataset_dir:Path,output_dir:Path,limit:int|None=None)->list[Path
     manifest=json.loads((dataset_dir/"manifest.json").read_text(encoding="utf-8"))
     output_dir.mkdir(parents=True,exist_ok=True)
     canonical_dir=output_dir/"_canonical"
+    debug_dir=output_dir/"_debug"
     canonical_dir.mkdir(parents=True,exist_ok=True)
+    debug_dir.mkdir(parents=True,exist_ok=True)
     written=[]
     sheets=manifest.get("sheets",[])
     if limit is not None:
@@ -191,6 +197,14 @@ def run_dataset(dataset_dir:Path,output_dir:Path,limit:int|None=None)->list[Path
             json.dumps(plan,ensure_ascii=False,indent=2),
             encoding="utf-8",
         )
+        source_image,_=decode_document_with_page(
+            data,
+            "application/pdf",
+            int(plan.get("source",{}).get("page",1)),
+        )
+        overlay=render_extraction_overlay(source_image,plan)
+        cv2.imwrite(str(debug_dir/f"{sheet}.png"),overlay)
+
         prediction=plan_to_aec_prediction(
             plan,sheet=sheet,width=int(item["width"]),height=int(item["height"]),
         )
