@@ -157,7 +157,10 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
             walls=add_vector_wall_candidates(walls,vector_lines,h,w,labels=labels)
         except Exception:
             vector_lines=[]
-    quarantined_wall_ids=quarantine_dimension_aligned_walls(walls,labels,h,w,vector_lines=vector_lines)
+    dimensions=extract_dimension_evidence(labels,walls,w,h,ink=ink,vector_lines=vector_lines)
+    quarantined_wall_ids=quarantine_dimension_aligned_walls(
+        walls,labels,h,w,vector_lines=vector_lines,dimensions=dimensions,
+    )
     topology_walls=[
         wall for wall in walls
         if str(wall.get("id","")) not in quarantined_wall_ids
@@ -166,7 +169,6 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
             and float(wall.get("confidence",0.0))<.70
         )
     ]
-    dimensions=extract_dimension_evidence(labels,walls,w,h,ink=ink,vector_lines=vector_lines)
     scale,scale_confidence,scale_warnings=estimate_scale_with_diagnostics(dimensions,w,h)
     doors=detect_doors(image,topology_walls,scale)
     windows=detect_windows(image,topology_walls,scale)
