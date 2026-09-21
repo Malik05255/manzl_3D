@@ -36,6 +36,8 @@ describe("opening geometry",()=>{
     const window=next.windows[0];
     expect(window.wallId).toBe("w");
     expect(window.a.x).toBeGreaterThanOrEqual(300);
+    expect(window.reviewed).toBe(true);
+    expect(window.provenance).toBe("manual");
   });
 
   it("can correct opening type and remove it",()=>{
