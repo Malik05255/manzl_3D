@@ -30,6 +30,21 @@ function polygonArea(points:Point[]){
   return Math.abs(sum)/2;
 }
 
+function roomVisualMetrics(room:FloorPlanModel["rooms"][number],metersPerPixel?:number|null){
+  const xs=room.polygon.map(p=>p.x),ys=room.polygon.map(p=>p.y);
+  const left=Math.min(...xs),right=Math.max(...xs),top=Math.min(...ys),bottom=Math.max(...ys);
+  const widthPx=Math.max(0,right-left),heightPx=Math.max(0,bottom-top);
+  return {
+    cx:(left+right)/2,
+    cy:(top+bottom)/2,
+    widthPx,
+    heightPx,
+    widthM:metersPerPixel?widthPx*metersPerPixel:null,
+    heightM:metersPerPixel?heightPx*metersPerPixel:null,
+    areaM2:metersPerPixel?polygonArea(room.polygon)*metersPerPixel*metersPerPixel:(room.areaM2??null),
+  };
+}
+
 function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall):FloorPlanModel{
   const vertical=Math.abs(original.a.x-original.b.x)<=Math.abs(original.a.y-original.b.y);
   const oldAxis=vertical?(original.a.x+original.b.x)/2:(original.a.y+original.b.y)/2;
@@ -150,13 +165,18 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,onPlanChange,readon
           if(!changed)return null;
           return <line key={`old-wall-${oldWall.id}`} x1={oldWall.a.x} y1={oldWall.a.y} x2={oldWall.b.x} y2={oldWall.b.y} stroke="#e11d48" strokeWidth={Math.max(3,oldWall.thicknessPx)} strokeDasharray="12 8" opacity={.8} pointerEvents="none"/>;
         })}
-        {plan.rooms.map(room=><g key={room.id}>
-          <polygon points={room.polygon.map(p=>`${p.x},${p.y}`).join(" ")} fill="rgba(37,99,235,.055)" stroke="rgba(37,99,235,.16)" strokeWidth={1}/>
-          {room.polygon.length>0&&<text
-            x={room.polygon.reduce((s,p)=>s+p.x,0)/room.polygon.length}
-            y={room.polygon.reduce((s,p)=>s+p.y,0)/room.polygon.length}
-            textAnchor="middle" dominantBaseline="middle" className="room-label">{room.name||"غرفة"}</text>}
-        </g>)}
+        {plan.rooms.map(room=>{
+          const metrics=roomVisualMetrics(room,plan.metersPerPixel);
+          const showMetrics=Boolean(plan.metersPerPixel)&&metrics.widthPx>=70&&metrics.heightPx>=55;
+          return <g key={room.id}>
+            <polygon points={room.polygon.map(p=>`${p.x},${p.y}`).join(" ")} fill="rgba(37,99,235,.055)" stroke="rgba(37,99,235,.16)" strokeWidth={1}/>
+            {room.polygon.length>0&&<text x={metrics.cx} y={metrics.cy} textAnchor="middle" dominantBaseline="middle" className="room-label">
+              <tspan x={metrics.cx} dy={showMetrics?-10:0}>{room.name||"غرفة"}</tspan>
+              {showMetrics&&<tspan x={metrics.cx} dy={18} className="room-dimensions">{metrics.widthM!.toFixed(2)} × {metrics.heightM!.toFixed(2)} م</tspan>}
+              {showMetrics&&metrics.areaM2!==null&&<tspan x={metrics.cx} dy={16} className="room-area">{metrics.areaM2.toFixed(1)} م²</tspan>}
+            </text>}
+          </g>;
+        })}
         {plan.walls.map(wall=><line key={wall.id}
           x1={wall.a.x} y1={wall.a.y} x2={wall.b.x} y2={wall.b.y}
           stroke={selectedWallId===wall.id?"#2563eb":"#0f172a"}
