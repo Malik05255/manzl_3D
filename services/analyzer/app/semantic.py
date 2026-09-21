@@ -67,6 +67,7 @@ def _room_context(request:EditRequest)->list[dict]:
             "width_m":round(width,3) if width else None,
             "height_m":round(height,3) if height else None,
             "area_m2":room.areaM2,
+            "selected":room.id==request.target_room_id,
         })
     return result
 
@@ -75,6 +76,8 @@ def _deterministic_understands(request:EditRequest)->bool:
     if parse_merge_rooms(request.command,request.plan.rooms) is not None:
         return True
     target=find_target_room(request.command,request.plan.rooms)
+    if target is None and request.target_room_id:
+        target=next((room for room in request.plan.rooms if room.id==request.target_room_id),None)
     if target is None or not request.plan.metersPerPixel:
         return False
     x1,y1,x2,y2=bbox(target)
@@ -122,14 +125,13 @@ def _canonical_from_payload(payload:dict,request:EditRequest)->tuple[str|None,st
         return None,None
 
     target_name=str(payload.get("target_room") or "").strip()
-    if not target_name:
-        return None,None
-
     exact=next(
-        (room for room in request.plan.rooms if normalize_arabic(room.name)==normalize_arabic(target_name)),
+        (room for room in request.plan.rooms if target_name and normalize_arabic(room.name)==normalize_arabic(target_name)),
         None,
     )
-    target=exact or find_target_room(target_name,request.plan.rooms)
+    target=exact or (find_target_room(target_name,request.plan.rooms) if target_name else None)
+    if target is None and request.target_room_id:
+        target=next((room for room in request.plan.rooms if room.id==request.target_room_id),None)
     if target is None:
         return None,None
 
@@ -150,12 +152,15 @@ async def _ask_provider(provider:Provider,request:EditRequest)->tuple[str|None,s
     if api_key:
         headers["authorization"]=f"Bearer {api_key}"
 
+    selected_room=next((room.name for room in request.plan.rooms if room.id==request.target_room_id),None)
     context={
         "user_command":request.command,
+        "selected_room":selected_room,
         "rooms":_room_context(request),
         "rules":[
             "Do not invent a room that is not listed.",
             "Only interpret the requested change; do not redesign the house.",
+            "If selected_room is set and the user says it/this room without naming another room, use selected_room.",
             "Use merge_room only when the user explicitly asks to remove or merge one listed room into another.",
             "Convert relative resize changes into final width_m and height_m using current dimensions.",
             "If ambiguous, set needs_clarification instead of guessing.",
