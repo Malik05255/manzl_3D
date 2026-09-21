@@ -135,8 +135,9 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(secured instanceof Response) return secured;
     const body=await request.json<{plan?:FloorPlanModel;expectedRevision?:number}>();
     if(!body.plan||body.plan.id!==id||body.plan.schemaVersion!==1) return json({error:"صيغة المسودة غير صالحة"},400);
-    if(!Number.isInteger(body.expectedRevision)||body.expectedRevision!<0) return json({error:"رقم النسخة المرجعية للمسودة غير صالح"},400);
-    try{await persistDraft(env,id,body.plan,body.expectedRevision);}
+    const expectedRevision=body.expectedRevision;
+    if(typeof expectedRevision!=="number"||!Number.isInteger(expectedRevision)||expectedRevision<0) return json({error:"رقم النسخة المرجعية للمسودة غير صالح"},400);
+    try{await persistDraft(env,id,body.plan,expectedRevision);}
     catch(error){
       if(error instanceof Error&&error.message==="STALE_DRAFT") return json({error:"المسودة متقادمة بعد حفظ نسخة أحدث"},409);
       throw error;
