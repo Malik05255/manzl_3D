@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.openings import detect_doors,detect_windows,normalize_opening_hosts
+from app.openings import _door_arc_evidence_details,detect_doors,detect_windows,normalize_opening_hosts
 
 
 def wall(wall_id,x1,y1,x2,y2):
@@ -217,3 +217,33 @@ def test_detects_double_swing_door_from_two_hinged_leaves():
     assert doors[0]["doorSubtype"]=="double_swing"
     assert doors[0]["doorSwingSide"]=="negative"
     assert doors[0]["doorSwingDepthPx"]>30
+
+
+
+def test_arc_only_swing_is_detected_from_hinge_center():
+    image=np.full((320,380,3),255,dtype=np.uint8)
+    cv2.line(image,(30,150),(120,150),(0,0,0),5)
+    cv2.line(image,(210,150),(350,150),(0,0,0),5)
+    # Quarter-circle swing arc centred on the left hinge. No door-leaf line.
+    cv2.ellipse(image,(120,150),(86,86),0,270,360,(0,0,0),3)
+
+    evidence,hinges,side,depth=_door_arc_evidence_details(
+        image,
+        {"x":120.0,"y":150.0},
+        {"x":210.0,"y":150.0},
+        90.0,
+    )
+    assert evidence>=1
+    assert "a" in hinges
+    assert side=="negative"
+    assert depth>55
+
+    doors=detect_doors(
+        image,
+        [wall("left",30,150,120,150),wall("right",210,150,350,150)],
+        meters_per_pixel=.01,
+    )
+    assert len(doors)==1
+    assert doors[0]["doorSubtype"]=="single_swing"
+    assert doors[0]["doorSwingSide"]=="negative"
+    assert doors[0]["doorSwingDepthPx"]>55
