@@ -38,6 +38,10 @@ function provenanceLabel(value?:ElementProvenance){
   return labels[value];
 }
 
+function manualProvenance(value?:ElementProvenance):ElementProvenance{
+  return value?"mixed":"manual";
+}
+
 function Brand({compact=false}:{compact?:boolean}){return <div className={`brand ${compact?"brand-compact":""}`}><img src="/icon.svg" alt=""/><div><strong>منزل H</strong>{!compact&&<span>محرر المخططات الذكي</span>}</div></div>;}
 function UpdateBanner({onInstall}:{onInstall:()=>void}){return <div className="update-banner"><span>يتوفر إصدار أحدث من منزل H.</span><button onClick={onInstall}>تثبيت التحديث</button></div>;}
 
@@ -219,7 +223,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     if(!Number.isFinite(cm)||cm<2||cm>100){setNotice("أدخل سماكة جدار بين 2 و100 سم.");return;}
     const px=(cm/100)/plan.metersPerPixel;
     if(px<=0||px>200){setNotice("السماكة المطلوبة لا تتوافق مع مقياس المخطط الحالي.");return;}
-    applyLocalPlan({...plan,walls:plan.walls.map(wall=>wall.id===selectedWall?{...wall,thicknessPx:Number(px.toFixed(2))}:wall)});
+    applyLocalPlan({...plan,walls:plan.walls.map(wall=>wall.id===selectedWall?{...wall,thicknessPx:Number(px.toFixed(2)),reviewed:true,provenance:manualProvenance(wall.provenance)}:wall)});
     setNotice("تم تحديث سماكة الجدار محليًا.");
   };
   const moveSelectedWallExact=(direction:-1|1)=>{
@@ -330,7 +334,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     const room=plan.rooms.find(item=>item.id===selectedRoom);
     const name=exactName.trim().replace(/\s+/g," ").slice(0,80);
     if(!room||!name||name===room.name)return;
-    applyLocalPlan({...plan,rooms:plan.rooms.map(item=>item.id===room.id?{...item,name}:item)});
+    applyLocalPlan({...plan,rooms:plan.rooms.map(item=>item.id===room.id?{...item,name,reviewed:true,provenance:manualProvenance(item.provenance)}:item)});
     setNotice("تم تحديث اسم الغرفة محليًا. احفظ المشروع لتثبيت التغيير.");
   };
   const precisePreview=async()=>{
