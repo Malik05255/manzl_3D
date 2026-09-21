@@ -18,6 +18,16 @@ export interface Opening {
   reviewed?: boolean;
   provenance?: ElementProvenance;
 }
+export type SymbolKind = "sink" | "toilet" | "bathtub" | "shower" | "cooktop" | "stairs";
+export interface PlanSymbol {
+  id: string;
+  kind: SymbolKind;
+  a: Point;
+  b: Point;
+  confidence: number;
+  reviewed?: boolean;
+  provenance?: ElementProvenance;
+}
 export interface PlanLabel {
   id: string;
   text: string;
@@ -70,6 +80,7 @@ export interface FloorPlanModel {
   windows: Opening[];
   labels: PlanLabel[];
   dimensions?: Dimension[];
+  symbols?: PlanSymbol[];
   quality: FloorPlanQuality;
   source: { fileName: string; mimeType: string; page: number; pageCount?: number | null; };
   analysis?: AnalysisMetadata;
@@ -192,6 +203,15 @@ function fpOpening(value:unknown):value is Opening{
     &&(value.sillHeightM===undefined||value.sillHeightM===null||(fpFinite(value.sillHeightM)&&value.sillHeightM>=0&&value.sillHeightM<=10))
     &&fpElementMetadata(value);
 }
+function fpSymbol(value:unknown):value is PlanSymbol{
+  return fpObject(value)
+    &&typeof value.id==="string"&&value.id.length>0
+    &&["sink","toilet","bathtub","shower","cooktop","stairs"].includes(String(value.kind))
+    &&fpPoint(value.a)&&fpPoint(value.b)
+    &&value.b.x>value.a.x&&value.b.y>value.a.y
+    &&fpConfidence(value.confidence)
+    &&fpElementMetadata(value);
+}
 function fpLabel(value:unknown):value is PlanLabel{
   return fpObject(value)
     &&typeof value.id==="string"&&value.id.length>0
@@ -232,6 +252,7 @@ export function floorPlanValidationError(value:unknown,expectedId?:string):strin
   if(!Array.isArray(value.windows)||value.windows.length>5000||!value.windows.every(fpOpening))return "PLAN_WINDOWS";
   if(!Array.isArray(value.labels)||value.labels.length>10000||!value.labels.every(fpLabel))return "PLAN_LABELS";
   if(value.dimensions!==undefined&&(!Array.isArray(value.dimensions)||value.dimensions.length>10000||!value.dimensions.every(fpDimension)))return "PLAN_DIMENSIONS";
+  if(value.symbols!==undefined&&(!Array.isArray(value.symbols)||value.symbols.length>5000||!value.symbols.every(fpSymbol)))return "PLAN_SYMBOLS";
 
   if(!fpObject(value.quality))return "PLAN_QUALITY";
   const quality=value.quality;
@@ -254,6 +275,7 @@ export function floorPlanValidationError(value:unknown,expectedId?:string):strin
     ...value.doors.map(item=>(item as Opening).id),
     ...value.windows.map(item=>(item as Opening).id),
     ...(value.dimensions??[]).map(item=>(item as Dimension).id),
+    ...(value.symbols??[]).map(item=>(item as PlanSymbol).id),
   ];
   if(new Set(ids).size!==ids.length)return "PLAN_DUPLICATE_IDS";
 
