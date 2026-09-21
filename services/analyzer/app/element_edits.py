@@ -76,6 +76,8 @@ def _normalize_opening_on_wall(plan:FloorPlan,opening:Opening,width_px:float,cen
         a=_point_at(wall,clamped-half),
         b=_point_at(wall,clamped+half),
         confidence=max(opening.confidence,0.95),
+        reviewed=opening.reviewed,
+        provenance=opening.provenance,
     ),shifted
 
 
