@@ -76,6 +76,26 @@ def move_boundary(plan:FloorPlan,side:str,old:float,new:float,span:tuple[float,f
             shared=overlap(min(wall.a.x,wall.b.x),max(wall.a.x,wall.b.x),span[0],span[1])
             if aligned and abs((wall.a.y+wall.b.y)/2-old)<=tol and shared>0:
                 wall.a.y=new; wall.b.y=new; changed.append(wall.id)
+    for wall in plan.walls:
+        if wall.id in changed:
+            continue
+        if side in ("left","right"):
+            perpendicular=abs(wall.a.y-wall.b.y)<=tol
+            if not perpendicular:
+                continue
+            if abs(wall.a.x-old)<=tol and span[0]-tol<=wall.a.y<=span[1]+tol:
+                wall.a.x=new
+            if abs(wall.b.x-old)<=tol and span[0]-tol<=wall.b.y<=span[1]+tol:
+                wall.b.x=new
+        else:
+            perpendicular=abs(wall.a.x-wall.b.x)<=tol
+            if not perpendicular:
+                continue
+            if abs(wall.a.y-old)<=tol and span[0]-tol<=wall.a.x<=span[1]+tol:
+                wall.a.y=new
+            if abs(wall.b.y-old)<=tol and span[0]-tol<=wall.b.x<=span[1]+tol:
+                wall.b.y=new
+
     delta=new-old; moved=0
     for opening in [*plan.doors,*plan.windows]:
         if opening.wallId not in changed: continue

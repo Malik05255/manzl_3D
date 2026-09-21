@@ -88,10 +88,21 @@ export function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall)
   movedWallIds.add(original.id);
 
   const walls=plan.walls.map(wall=>{
-    if(!movedWallIds.has(wall.id))return wall;
-    return vertical
-      ?{...wall,a:{...wall.a,x:wall.a.x+delta},b:{...wall.b,x:wall.b.x+delta}}
-      :{...wall,a:{...wall.a,y:wall.a.y+delta},b:{...wall.b,y:wall.b.y+delta}};
+    if(movedWallIds.has(wall.id)){
+      return vertical
+        ?{...wall,a:{...wall.a,x:wall.a.x+delta},b:{...wall.b,x:wall.b.x+delta}}
+        :{...wall,a:{...wall.a,y:wall.a.y+delta},b:{...wall.b,y:wall.b.y+delta}};
+    }
+
+    const wallVertical=Math.abs(wall.a.x-wall.b.x)<=Math.abs(wall.a.y-wall.b.y);
+    if(wallVertical===vertical)return wall;
+
+    if(vertical){
+      const movePoint=(point:Point)=>Math.abs(point.x-oldAxis)<=tolerance&&point.y>=span1-tolerance&&point.y<=span2+tolerance?{...point,x:axis}:point;
+      return {...wall,a:movePoint(wall.a),b:movePoint(wall.b)};
+    }
+    const movePoint=(point:Point)=>Math.abs(point.y-oldAxis)<=tolerance&&point.x>=span1-tolerance&&point.x<=span2+tolerance?{...point,y:axis}:point;
+    return {...wall,a:movePoint(wall.a),b:movePoint(wall.b)};
   });
 
   const rooms=plan.rooms.map(room=>{

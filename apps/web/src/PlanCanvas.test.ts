@@ -9,6 +9,8 @@ function plan():FloorPlanModel{
       {id:"left",a:{x:0,y:0},b:{x:0,y:300},thicknessPx:8,confidence:.9},
       {id:"shared",a:{x:200,y:0},b:{x:200,y:300},thicknessPx:8,confidence:.9},
       {id:"right",a:{x:500,y:0},b:{x:500,y:300},thicknessPx:8,confidence:.9},
+      {id:"top-left",a:{x:0,y:0},b:{x:200,y:0},thicknessPx:8,confidence:.9},
+      {id:"top-right",a:{x:200,y:0},b:{x:500,y:0},thicknessPx:8,confidence:.9},
     ],
     rooms:[
       {id:"a",name:"A",polygon:[{x:0,y:0},{x:200,y:0},{x:200,y:300},{x:0,y:300}],confidence:.9,areaM2:6},
@@ -30,6 +32,8 @@ describe("manual wall topology",()=>{
     expect(moved.rooms[0].polygon.some(point=>point.x===220)).toBe(true);
     expect(moved.rooms[1].polygon.some(point=>point.x===220)).toBe(true);
     expect(moved.doors[0].a.x).toBe(220);
+    expect(moved.walls.find(wall=>wall.id==="top-left")!.b.x).toBe(220);
+    expect(moved.walls.find(wall=>wall.id==="top-right")!.a.x).toBe(220);
     expect(moved.rooms[0].areaM2).toBe(6.6);
     expect(moved.rooms[1].areaM2).toBe(8.4);
   });

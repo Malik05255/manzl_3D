@@ -230,3 +230,22 @@ def test_explicit_merge_room_command():
     proposal=response.proposals[0]
     assert proposal.id=="merge:bath:into:bed"
     assert not any(room.id=="bath" for room in proposal.previewPlan.rooms)
+
+
+def test_resize_keeps_perpendicular_wall_junctions_connected():
+    plan=sample_plan()
+    plan.walls.extend([
+        Wall(id="top-left",a=Point(x=100,y=100),b=Point(x=500,y=100),thicknessPx=4,confidence=.9),
+        Wall(id="top-right",a=Point(x=500,y=100),b=Point(x=900,y=100),thicknessPx=4,confidence=.9),
+    ])
+    response=build_proposals(EditRequest(
+        project_id="project-1",
+        command="عدل غرفة النوم إلى 5×4",
+        plan=plan,
+    ))
+    assert response.proposals
+    preview=response.proposals[0].previewPlan
+    left=next(wall for wall in preview.walls if wall.id=="top-left")
+    right=next(wall for wall in preview.walls if wall.id=="top-right")
+    assert left.b.x==600
+    assert right.a.x==600
