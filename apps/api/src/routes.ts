@@ -17,6 +17,19 @@ async function analyzerProposals(env:Env,id:string,command:string,plan:FloorPlan
   return upstream.json<EditProposalResponse>();
 }
 
+async function analyzerResizeProposals(env:Env,id:string,roomId:string,widthM:number,heightM:number,plan:FloorPlanModel):Promise<EditProposalResponse>{
+  const upstream=await fetch(`${env.ANALYZER_URL.replace(/\/$/,"")}/v1/edit/resize-proposals`,{
+    method:"POST",
+    headers:{"content-type":"application/json","x-manzil-internal":env.INTERNAL_TOKEN},
+    body:JSON.stringify({project_id:id,room_id:roomId,width_m:widthM,height_m:heightM,plan})
+  });
+  if(!upstream.ok){
+    const detail=await upstream.text().catch(()=>"");
+    throw new Error(detail||"تعذر إنشاء المعاينة الهندسية");
+  }
+  return upstream.json<EditProposalResponse>();
+}
+
 async function protectedRow(request:Request,env:Env,id:string):Promise<ProjectRow|Response>{
   const row=await getProjectRow(env,id);
   if(!row) return json({error:"المشروع غير موجود"},404);
@@ -143,6 +156,25 @@ export async function route(request:Request,env:Env):Promise<Response>{
     await persistPlan(env,id,plan,`استعادة النسخة ${revisionNumber}`);
     const row=await getProjectRow(env,id);
     return json(await projectView(env,row!,true));
+  }
+
+  const preciseResize=path.match(/^\/v1\/projects\/([^/]+)\/geometry\/resize-proposals$/);
+  if(preciseResize&&request.method==="POST"){
+    const id=preciseResize[1];
+    const secured=await protectedRow(request,env,id);
+    if(secured instanceof Response) return secured;
+    const plan=await currentPlan(env,secured);
+    if(!plan) return json({error:"المخطط غير جاهز للتحرير"},409);
+    const body=await request.json<{roomId?:string;widthM?:number;heightM?:number}>();
+    const roomId=(body.roomId??"").trim();
+    const widthM=Number(body.widthM);
+    const heightM=Number(body.heightM);
+    if(!roomId||!Number.isFinite(widthM)||!Number.isFinite(heightM)||widthM<=0||heightM<=0){
+      return json({error:"بيانات المقاس غير مكتملة"},400);
+    }
+    if(!plan.rooms.some(room=>room.id===roomId)) return json({error:"الغرفة المحددة غير موجودة"},404);
+    try{return json(await analyzerResizeProposals(env,id,roomId,widthM,heightM,plan));}
+    catch(error){return json({error:error instanceof Error?error.message:"تعذر إنشاء المعاينة الهندسية"},502);}
   }
 
   const proposals=path.match(/^\/v1\/projects\/([^/]+)\/ai\/proposals$/);

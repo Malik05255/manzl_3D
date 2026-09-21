@@ -6,6 +6,8 @@ interface Props{
   plan:FloorPlanModel;
   selectedWallId?:string|null;
   onSelectWall?:(id:string|null)=>void;
+  selectedRoomId?:string|null;
+  onSelectRoom?:(id:string|null)=>void;
   onPlanChange?:(plan:FloorPlanModel)=>void;
   readonly?:boolean;
   calibrationMode?:boolean;
@@ -109,7 +111,7 @@ function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall):FloorP
   };
 }
 
-export function PlanCanvas({plan,selectedWallId,onSelectWall,onPlanChange,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint,backgroundUrl=null,backgroundOpacity=.38,comparisonPlan=null}:Props){
+export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSelectRoom,onPlanChange,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint,backgroundUrl=null,backgroundOpacity=.38,comparisonPlan=null}:Props){
   const[zoom,setZoom]=useState(1);
   const[drag,setDrag]=useState<DragState>(null);
   const svgRef=useRef<SVGSVGElement|null>(null);
@@ -168,8 +170,16 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,onPlanChange,readon
         {plan.rooms.map(room=>{
           const metrics=roomVisualMetrics(room,plan.metersPerPixel);
           const showMetrics=Boolean(plan.metersPerPixel)&&metrics.widthPx>=70&&metrics.heightPx>=55;
+          const selected=selectedRoomId===room.id;
           return <g key={room.id}>
-            <polygon points={room.polygon.map(p=>`${p.x},${p.y}`).join(" ")} fill="rgba(37,99,235,.055)" stroke="rgba(37,99,235,.16)" strokeWidth={1}/>
+            <polygon
+              points={room.polygon.map(p=>`${p.x},${p.y}`).join(" ")}
+              fill={selected?"rgba(37,99,235,.14)":"rgba(37,99,235,.055)"}
+              stroke={selected?"#2563eb":"rgba(37,99,235,.16)"}
+              strokeWidth={selected?3:1}
+              className={readonly||calibrationMode?undefined:"editable-room"}
+              onPointerDown={event=>{if(readonly||calibrationMode)return;event.stopPropagation();onSelectRoom?.(room.id);}}
+            />
             {room.polygon.length>0&&<text x={metrics.cx} y={metrics.cy} textAnchor="middle" dominantBaseline="middle" className="room-label">
               <tspan x={metrics.cx} dy={showMetrics?-10:0}>{room.name||"غرفة"}</tspan>
               {showMetrics&&<tspan x={metrics.cx} dy={18} className="room-dimensions">{metrics.widthM!.toFixed(2)} × {metrics.heightM!.toFixed(2)} م</tspan>}

@@ -1,7 +1,7 @@
 import { useEffect,useMemo,useRef,useState } from "react";
-import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Clock3,Cloud,FileImage,FileText,Hammer,Layers3,LoaderCircle,Save,Sparkles,Undo2,UploadCloud,WandSparkles,X } from "lucide-react";
+import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Clock3,Cloud,FileImage,FileText,Hammer,Layers3,LoaderCircle,Ruler,Save,Sparkles,Undo2,UploadCloud,WandSparkles,X } from "lucide-react";
 import type { EditProposal,FloorPlanModel,Point,ProjectView,RevisionView } from "@manzil/contracts";
-import { applyProposal,askEngineer,createProject,forgetLastProject,getLastProjectId,getProject,getProjectPreview,listRevisions,restoreRevision,saveRevision,uploadSource } from "./api";
+import { applyProposal,askEngineer,createProject,forgetLastProject,getLastProjectId,getProject,getProjectPreview,listRevisions,resizeRoomPrecisely,restoreRevision,saveRevision,uploadSource } from "./api";
 import { PlanCanvas } from "./PlanCanvas";
 import { useAppUpdate } from "./useAppUpdate";
 
@@ -56,11 +56,35 @@ function Processing({projectId,onReady,onHome}:{projectId:string;onReady:(p:Proj
 
 function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>void}){
   const[project,setProject]=useState(initialProject);const[plan,setPlan]=useState<FloorPlanModel>(initialProject.plan!);const[savedPlan,setSavedPlan]=useState<FloorPlanModel>(initialProject.plan!);
-  const[selectedWall,setSelectedWall]=useState<string|null>(null);const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
+  const[selectedWall,setSelectedWall]=useState<string|null>(null);const[selectedRoom,setSelectedRoom]=useState<string|null>(null);const[exactWidth,setExactWidth]=useState("");const[exactHeight,setExactHeight]=useState("");const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
   const[calibrating,setCalibrating]=useState(false);const[calibrationPoints,setCalibrationPoints]=useState<Point[]>([]);const[knownDistance,setKnownDistance]=useState("");
   const[sourcePreview,setSourcePreview]=useState<string|null>(null);const[sourceOpacity,setSourceOpacity]=useState(.42);
   const[historyOpen,setHistoryOpen]=useState(false);const[historyBusy,setHistoryBusy]=useState(false);const[revisions,setRevisions]=useState<RevisionView[]>([]);
   const dirty=useMemo(()=>JSON.stringify(plan)!==JSON.stringify(savedPlan),[plan,savedPlan]);
+  const selectRoom=(roomId:string|null)=>{
+    setSelectedRoom(roomId);setSelectedWall(null);setPreview(null);setProposals([]);
+    const room=plan.rooms.find(item=>item.id===roomId);
+    if(!room||!plan.metersPerPixel){setExactWidth("");setExactHeight("");return;}
+    const xs=room.polygon.map(p=>p.x),ys=room.polygon.map(p=>p.y);
+    setExactWidth(((Math.max(...xs)-Math.min(...xs))*plan.metersPerPixel).toFixed(2));
+    setExactHeight(((Math.max(...ys)-Math.min(...ys))*plan.metersPerPixel).toFixed(2));
+  };
+  const precisePreview=async()=>{
+    const room=plan.rooms.find(item=>item.id===selectedRoom);
+    const width=Number(exactWidth.replace(",","."));
+    const height=Number(exactHeight.replace(",","."));
+    if(!room){setNotice("حدد غرفة من المخطط أولًا.");return;}
+    if(!plan.metersPerPixel){setNotice("ثبّت مقياس المخطط أولًا.");return;}
+    if(!Number.isFinite(width)||!Number.isFinite(height)||width<=0||height<=0){setNotice("أدخل العرض والطول بالمتر.");return;}
+    const canonical=`عدل ${room.name} إلى ${width}×${height}`;
+    setThinking(true);setNotice(null);setPreview(null);
+    try{
+      const result=await resizeRoomPrecisely(project.id,room.id,width,height);
+      setCommand(canonical);setProposals(result.proposals);
+      if(result.needsClarification)setNotice(result.needsClarification);
+    }catch(e){setNotice(e instanceof Error?e.message:"تعذر إنشاء المعاينة الهندسية");}
+    finally{setThinking(false);}
+  };
 
   useEffect(()=>{
     let active=true;let objectUrl:string|null=null;
@@ -71,7 +95,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   const save=async()=>{setSaving(true);try{const u=await saveRevision(project.id,plan,"تعديل يدوي");setProject(u);setSavedPlan(plan);setNotice("تم حفظ التعديل في السحابة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر الحفظ");}finally{setSaving(false);}};
   const openHistory=async()=>{setHistoryOpen(true);setHistoryBusy(true);try{const r=await listRevisions(project.id);setRevisions(r.items);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحميل سجل النسخ");setHistoryOpen(false);}finally{setHistoryBusy(false);}};
   const restore=async(revision:number)=>{if(dirty){setNotice("احفظ التغييرات الحالية أو تراجع عنها قبل استعادة نسخة سابقة.");return;}setSaving(true);try{const u=await restoreRevision(project.id,revision);if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);}setProject(u);setHistoryOpen(false);setNotice(`تمت استعادة النسخة ${revision} كنسخة جديدة محفوظة.`);}catch(e){setNotice(e instanceof Error?e.message:"تعذر استعادة النسخة");}finally{setSaving(false);}};
-  const apply=async()=>{if(!preview)return;setSaving(true);try{const u=await applyProposal(project.id,{command,proposal:preview});if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);}setProject(u);setPreview(null);setProposals([]);setCommand("");setNotice("تم اعتماد التعديل وحفظ نسخة جديدة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر تطبيق التعديل");}finally{setSaving(false);}};
+  const apply=async()=>{if(!preview)return;setSaving(true);try{const u=await applyProposal(project.id,{command,proposal:preview});if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);}setProject(u);setPreview(null);setProposals([]);setCommand("");setSelectedRoom(null);setExactWidth("");setExactHeight("");setNotice("تم اعتماد التعديل وحفظ نسخة جديدة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر تطبيق التعديل");}finally{setSaving(false);}};
   const applyCalibration=()=>{
     if(calibrationPoints.length!==2)return;
     const meters=Number(knownDistance.replace(",","."));
@@ -93,7 +117,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     <header className="editor-header"><Brand compact/><div className="project-name"><FileText size={17}/><strong>{project.name}</strong></div><div className="editor-actions"><button className="ghost" onClick={openHistory}><Clock3 size={17}/> النسخ</button><button className="ghost" onClick={onHome}><ArrowLeft size={17}/> الرئيسية</button><button className="ghost" disabled={!dirty} onClick={()=>setPlan(savedPlan)}><Undo2 size={17}/> تراجع</button><button className="primary small" disabled={!dirty||saving} onClick={save}><Save size={17}/> حفظ</button></div></header>
     <div className="editor-workspace">
       <section className="plan-panel"><div className="panel-title"><div><strong>منطقة التعديل</strong><span>اسحب جدارًا لتحريكه أو استخدم H Engineer</span></div><div className="panel-status">{sourcePreview&&<label className="overlay-control"><span>الأصل</span><input type="range" min="0" max=".85" step=".05" value={sourceOpacity} onChange={e=>setSourceOpacity(Number(e.target.value))}/></label>}<div className="quality-pill">جودة التحليل {Math.round(plan.quality.overall*100)}%</div></div></div>
-        <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)} selectedWallId={selectedWall} onSelectWall={setSelectedWall} onPlanChange={setPlan}
+        <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)} selectedWallId={selectedWall} onSelectWall={id=>{setSelectedWall(id);if(id)setSelectedRoom(null);}} selectedRoomId={selectedRoom} onSelectRoom={selectRoom} onPlanChange={setPlan}
           calibrationMode={calibrating} calibrationPoints={calibrationPoints}
           onCalibrationPoint={point=>setCalibrationPoints(points=>points.length<2?[...points,point]:points)}
           backgroundUrl={sourcePreview} backgroundOpacity={sourceOpacity} comparisonPlan={preview?plan:null}/>
@@ -101,6 +125,12 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
         {calibrating&&<div className="calibration-bar"><div><strong>معايرة المقياس</strong><span>{calibrationPoints.length<2?`حدد نقطتين على بُعد معروف · ${calibrationPoints.length}/2`:"أدخل المسافة الحقيقية بين النقطتين"}</span></div>{calibrationPoints.length===2&&<input inputMode="decimal" value={knownDistance} onChange={e=>setKnownDistance(e.target.value)} placeholder="مثال: 4.20 م"/>}<button className="ghost" onClick={()=>{setCalibrating(false);setCalibrationPoints([]);setKnownDistance("");}}>إلغاء</button>{calibrationPoints.length===2&&<button className="primary small" onClick={applyCalibration}><Check size={16}/> تثبيت</button>}</div>}
       </section>
       <aside className="ai-panel"><div className="ai-title"><div className="ai-avatar"><BrainCircuit size={22}/></div><div><strong>H Engineer</strong><span>يفهم الأثر قبل التنفيذ</span></div></div>
+        <div className="precise-editor"><div className="precise-title"><div><strong>تعديل دقيق</strong><span>اختر الغرفة ثم أدخل المقاس بالمتر</span></div><Ruler size={19}/></div>
+          <select value={selectedRoom??""} onChange={e=>selectRoom(e.target.value||null)}><option value="">اختر غرفة</option>{plan.rooms.map(room=><option key={room.id} value={room.id}>{room.name}</option>)}</select>
+          <div className="dimension-grid"><label><span>العرض</span><input inputMode="decimal" value={exactWidth} onChange={e=>setExactWidth(e.target.value)} placeholder="5.00"/></label><label><span>الطول</span><input inputMode="decimal" value={exactHeight} onChange={e=>setExactHeight(e.target.value)} placeholder="4.00"/></label></div>
+          <button className="ghost precise-preview" disabled={thinking||!selectedRoom||!exactWidth||!exactHeight||!plan.metersPerPixel} onClick={precisePreview}>{thinking?<LoaderCircle className="spin" size={17}/>:<Ruler size={17}/>} معاينة هندسية</button>
+        </div>
+        <div className="prompt-divider"><span>أو اكتب طلبك</span></div>
         <div className="prompt-box"><textarea value={command} onChange={e=>setCommand(e.target.value)} placeholder="مثال: عدّل غرفة النوم إلى 5×5"/><button className="primary" disabled={thinking||!command.trim()} onClick={ask}>{thinking?<LoaderCircle className="spin" size={18}/>:<Sparkles size={18}/>} تحليل الطلب</button></div>
         {notice&&<div className="notice-box">{notice}</div>}
         {!preview&&proposals.length>0&&<div className="proposal-list"><span className="section-caption">الخيارات الممكنة</span>{proposals.map(p=><button key={p.id} className="proposal-card" onClick={()=>setPreview(p)}><div><strong>{p.title}</strong><span>{p.summary}</span></div><ChevronLeft size={18}/></button>)}</div>}
