@@ -13,6 +13,7 @@ interface Props{
   onCalibrationPoint?:(point:Point)=>void;
   backgroundUrl?:string|null;
   backgroundOpacity?:number;
+  comparisonPlan?:FloorPlanModel|null;
 }
 type DragState={wallId:string;startClient:Point;original:Wall}|null;
 
@@ -93,7 +94,7 @@ function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall):FloorP
   };
 }
 
-export function PlanCanvas({plan,selectedWallId,onSelectWall,onPlanChange,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint,backgroundUrl=null,backgroundOpacity=.38}:Props){
+export function PlanCanvas({plan,selectedWallId,onSelectWall,onPlanChange,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint,backgroundUrl=null,backgroundOpacity=.38,comparisonPlan=null}:Props){
   const[zoom,setZoom]=useState(1);
   const[drag,setDrag]=useState<DragState>(null);
   const svgRef=useRef<SVGSVGElement|null>(null);
@@ -135,6 +136,20 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,onPlanChange,readon
       <svg ref={svgRef} className="plan-svg" viewBox={viewBox} style={{transform:`scale(${zoom})`}} onPointerDown={addCalibrationPoint}>
         <rect width={plan.widthPx} height={plan.heightPx} fill="#fff"/>
         {backgroundUrl&&<image href={backgroundUrl} x={0} y={0} width={plan.widthPx} height={plan.heightPx} preserveAspectRatio="none" opacity={backgroundOpacity} pointerEvents="none"/>}
+        {comparisonPlan&&comparisonPlan.rooms.map(oldRoom=>{
+          const current=plan.rooms.find(room=>room.id===oldRoom.id);
+          const oldPoints=oldRoom.polygon.map(p=>`${p.x},${p.y}`).join(" ");
+          const currentPoints=current?.polygon.map(p=>`${p.x},${p.y}`).join(" ");
+          if(!current||oldPoints===currentPoints)return null;
+          return <polygon key={`old-room-${oldRoom.id}`} points={oldPoints} fill="rgba(244,63,94,.045)" stroke="#e11d48" strokeWidth={3} strokeDasharray="12 8" pointerEvents="none"/>;
+        })}
+        {comparisonPlan&&comparisonPlan.walls.map(oldWall=>{
+          const current=plan.walls.find(wall=>wall.id===oldWall.id);
+          if(!current)return null;
+          const changed=Math.abs(current.a.x-oldWall.a.x)>1||Math.abs(current.a.y-oldWall.a.y)>1||Math.abs(current.b.x-oldWall.b.x)>1||Math.abs(current.b.y-oldWall.b.y)>1;
+          if(!changed)return null;
+          return <line key={`old-wall-${oldWall.id}`} x1={oldWall.a.x} y1={oldWall.a.y} x2={oldWall.b.x} y2={oldWall.b.y} stroke="#e11d48" strokeWidth={Math.max(3,oldWall.thicknessPx)} strokeDasharray="12 8" opacity={.8} pointerEvents="none"/>;
+        })}
         {plan.rooms.map(room=><g key={room.id}>
           <polygon points={room.polygon.map(p=>`${p.x},${p.y}`).join(" ")} fill="rgba(37,99,235,.055)" stroke="rgba(37,99,235,.16)" strokeWidth={1}/>
           {room.polygon.length>0&&<text
