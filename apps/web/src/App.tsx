@@ -56,7 +56,7 @@ function Processing({projectId,onReady,onHome}:{projectId:string;onReady:(p:Proj
 
 function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>void}){
   const[project,setProject]=useState(initialProject);const[plan,setPlan]=useState<FloorPlanModel>(initialProject.plan!);const[savedPlan,setSavedPlan]=useState<FloorPlanModel>(initialProject.plan!);const[undoStack,setUndoStack]=useState<FloorPlanModel[]>([]);const[redoStack,setRedoStack]=useState<FloorPlanModel[]>([]);
-  const[selectedWall,setSelectedWall]=useState<string|null>(null);const[selectedRoom,setSelectedRoom]=useState<string|null>(null);const[exactWidth,setExactWidth]=useState("");const[exactHeight,setExactHeight]=useState("");const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
+  const[selectedWall,setSelectedWall]=useState<string|null>(null);const[selectedRoom,setSelectedRoom]=useState<string|null>(null);const[exactName,setExactName]=useState("");const[exactWidth,setExactWidth]=useState("");const[exactHeight,setExactHeight]=useState("");const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
   const[calibrating,setCalibrating]=useState(false);const[calibrationPoints,setCalibrationPoints]=useState<Point[]>([]);const[knownDistance,setKnownDistance]=useState("");
   const[sourcePreview,setSourcePreview]=useState<string|null>(null);const[sourceOpacity,setSourceOpacity]=useState(.42);
   const[historyOpen,setHistoryOpen]=useState(false);const[historyBusy,setHistoryBusy]=useState(false);const[revisions,setRevisions]=useState<RevisionView[]>([]);
@@ -89,10 +89,18 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   const selectRoom=(roomId:string|null)=>{
     setSelectedRoom(roomId);setSelectedWall(null);setPreview(null);setProposals([]);
     const room=plan.rooms.find(item=>item.id===roomId);
+    setExactName(room?.name??"");
     if(!room||!plan.metersPerPixel){setExactWidth("");setExactHeight("");return;}
     const xs=room.polygon.map(p=>p.x),ys=room.polygon.map(p=>p.y);
     setExactWidth(((Math.max(...xs)-Math.min(...xs))*plan.metersPerPixel).toFixed(2));
     setExactHeight(((Math.max(...ys)-Math.min(...ys))*plan.metersPerPixel).toFixed(2));
+  };
+  const renameSelectedRoom=()=>{
+    const room=plan.rooms.find(item=>item.id===selectedRoom);
+    const name=exactName.trim().replace(/\s+/g," ").slice(0,80);
+    if(!room||!name||name===room.name)return;
+    applyLocalPlan({...plan,rooms:plan.rooms.map(item=>item.id===room.id?{...item,name}:item)});
+    setNotice("تم تحديث اسم الغرفة محليًا. احفظ المشروع لتثبيت التغيير.");
   };
   const precisePreview=async()=>{
     const room=plan.rooms.find(item=>item.id===selectedRoom);
@@ -134,7 +142,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   const openHistory=async()=>{setHistoryOpen(true);setHistoryBusy(true);try{const r=await listRevisions(project.id);setRevisions(r.items);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحميل سجل النسخ");setHistoryOpen(false);}finally{setHistoryBusy(false);}};
   const runValidation=async()=>{setValidationBusy(true);setNotice(null);try{setValidationReport(await validateProject(project.id,plan));}catch(e){setNotice(e instanceof Error?e.message:"تعذر فحص المخطط");}finally{setValidationBusy(false);}};
   const restore=async(revision:number)=>{if(dirty){setNotice("احفظ التغييرات الحالية أو تراجع عنها قبل استعادة نسخة سابقة.");return;}setSaving(true);try{const u=await restoreRevision(project.id,revision);if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);setUndoStack([]);setRedoStack([]);}setProject(u);setHistoryOpen(false);setNotice(`تمت استعادة النسخة ${revision} كنسخة جديدة محفوظة.`);}catch(e){setNotice(e instanceof Error?e.message:"تعذر استعادة النسخة");}finally{setSaving(false);}};
-  const apply=async()=>{if(!preview)return;setSaving(true);try{const u=await applyProposal(project.id,{command,proposal:preview});if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);setUndoStack([]);setRedoStack([]);}setProject(u);setPreview(null);setProposals([]);setCommand("");setSelectedRoom(null);setExactWidth("");setExactHeight("");setNotice("تم اعتماد التعديل وحفظ نسخة جديدة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر تطبيق التعديل");}finally{setSaving(false);}};
+  const apply=async()=>{if(!preview)return;setSaving(true);try{const u=await applyProposal(project.id,{command,proposal:preview});if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);setUndoStack([]);setRedoStack([]);}setProject(u);setPreview(null);setProposals([]);setCommand("");setSelectedRoom(null);setExactName("");setExactWidth("");setExactHeight("");setNotice("تم اعتماد التعديل وحفظ نسخة جديدة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر تطبيق التعديل");}finally{setSaving(false);}};
   const applyCalibration=()=>{
     if(calibrationPoints.length!==2)return;
     const meters=Number(knownDistance.replace(",","."));
@@ -167,6 +175,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
         {validationReport&&<div className="validation-card"><div className="validation-summary"><div><strong>الفحص الهندسي الداخلي</strong><span>سلامة النموذج {Math.round(validationReport.score*100)}%</span></div><div className={`validation-score ${validationReport.findings.some(item=>item.severity==="critical")?"bad":validationReport.findings.length?"warn":"good"}`}>{Math.round(validationReport.score*100)}</div></div>{validationReport.findings.length?<div className="validation-findings">{validationReport.findings.slice(0,6).map((item,index)=><div key={`${item.code}-${index}`} className={`validation-finding ${item.severity}`}><span>{item.severity==="critical"?"!":"•"}</span><p>{item.text}</p></div>)}</div>:<div className="validation-clean"><Check size={16}/> لا توجد مشاكل هندسية واضحة في النموذج الحالي.</div>}<small>هذا فحص اتساق واستخدام داخلي، وليس اعتمادًا لكود البناء.</small></div>}
         <div className="precise-editor"><div className="precise-title"><div><strong>تعديل دقيق</strong><span>اختر الغرفة ثم أدخل المقاس بالمتر</span></div><Ruler size={19}/></div>
           <select value={selectedRoom??""} onChange={e=>selectRoom(e.target.value||null)}><option value="">اختر غرفة</option>{plan.rooms.map(room=><option key={room.id} value={room.id}>{room.name}</option>)}</select>
+          {selectedRoom&&<div className="room-name-edit"><label><span>اسم الغرفة</span><input value={exactName} onChange={e=>setExactName(e.target.value)} maxLength={80}/></label><button className="ghost" disabled={!exactName.trim()||exactName.trim()===plan.rooms.find(room=>room.id===selectedRoom)?.name||Boolean(preview)} onClick={renameSelectedRoom}>تحديث</button></div>}
           <div className="dimension-grid"><label><span>العرض</span><input inputMode="decimal" value={exactWidth} onChange={e=>setExactWidth(e.target.value)} placeholder="5.00"/></label><label><span>الطول</span><input inputMode="decimal" value={exactHeight} onChange={e=>setExactHeight(e.target.value)} placeholder="4.00"/></label></div>
           <button className="ghost precise-preview" disabled={thinking||!selectedRoom||!exactWidth||!exactHeight||!plan.metersPerPixel} onClick={precisePreview}>{thinking?<LoaderCircle className="spin" size={17}/>:<Ruler size={17}/>} معاينة هندسية</button>
         </div>
