@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import math
 
+import cv2
+import numpy as np
+
 from .edit_geometry import bbox,is_rectangular_room,minimum_clear_span_m
 from .models import FloorPlan,Point,ValidationFinding,ValidationReport
 
@@ -20,6 +23,69 @@ def _polygon_area_px2(points:list[Point])->float:
         other=points[(index+1)%len(points)]
         total+=point.x*other.y-other.x*point.y
     return abs(total)/2.0
+
+
+def _cross(a:Point,b:Point,c:Point)->float:
+    return (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x)
+
+
+def _segments_properly_intersect(a:Point,b:Point,c:Point,d:Point,eps:float=1e-7)->bool:
+    ab_c=_cross(a,b,c)
+    ab_d=_cross(a,b,d)
+    cd_a=_cross(c,d,a)
+    cd_b=_cross(c,d,b)
+    return ((ab_c>eps and ab_d<-eps) or (ab_c<-eps and ab_d>eps)) and ((cd_a>eps and cd_b<-eps) or (cd_a<-eps and cd_b>eps))
+
+
+def _polygon_self_intersects(points:list[Point])->bool:
+    count=len(points)
+    if count<4:
+        return False
+    for i in range(count):
+        a=points[i]
+        b=points[(i+1)%count]
+        for j in range(i+1,count):
+            if j==i or j==(i+1)%count or (j+1)%count==i:
+                continue
+            if i==0 and j==count-1:
+                continue
+            c=points[j]
+            d=points[(j+1)%count]
+            if _segments_properly_intersect(a,b,c,d):
+                return True
+    return False
+
+
+def _polygon_overlap_area_px2(left:list[Point],right:list[Point],max_side:int=720)->float:
+    if len(left)<3 or len(right)<3:
+        return 0.0
+    lx=[p.x for p in left]; ly=[p.y for p in left]
+    rx=[p.x for p in right]; ry=[p.y for p in right]
+    x1=max(min(lx),min(rx)); y1=max(min(ly),min(ry))
+    x2=min(max(lx),max(rx)); y2=min(max(ly),max(ry))
+    width=x2-x1; height=y2-y1
+    if width<=0 or height<=0:
+        return 0.0
+
+    scale=min(1.0,max_side/max(width,height))
+    canvas_w=max(3,int(math.ceil(width*scale))+3)
+    canvas_h=max(3,int(math.ceil(height*scale))+3)
+    left_mask=np.zeros((canvas_h,canvas_w),dtype=np.uint8)
+    right_mask=np.zeros((canvas_h,canvas_w),dtype=np.uint8)
+
+    def contour(points:list[Point])->np.ndarray:
+        values=[
+            [int(round((point.x-x1)*scale))+1,int(round((point.y-y1)*scale))+1]
+            for point in points
+        ]
+        return np.array(values,dtype=np.int32).reshape((-1,1,2))
+
+    cv2.fillPoly(left_mask,[contour(left)],255)
+    cv2.fillPoly(right_mask,[contour(right)],255)
+    overlap=cv2.countNonZero(cv2.bitwise_and(left_mask,right_mask))
+    if overlap<=0:
+        return 0.0
+    return float(overlap)/(scale*scale)
 
 
 def _point_segment_metrics(point:Point,a:Point,b:Point)->tuple[float,float]:
@@ -114,6 +180,15 @@ def validate_plan(plan:FloorPlan)->ValidationReport:
             ))
             continue
 
+        if _polygon_self_intersects(room.polygon):
+            findings.append(ValidationFinding(
+                code="room_self_intersection",
+                severity="critical",
+                text=f"حدود {room.name} تتقاطع مع نفسها وتحتاج تصحيحًا قبل الحفظ.",
+                roomIds=[room.id],
+            ))
+            continue
+
         x1,y1,x2,y2=bbox(room)
         width_px=max(0.0,x2-x1)
         height_px=max(0.0,y2-y1)
@@ -158,19 +233,31 @@ def validate_plan(plan:FloorPlan)->ValidationReport:
                         roomIds=[room.id],
                     ))
 
-    if mpp and mpp>0:
-        rectangular=[room for room in plan.rooms if is_rectangular_room(room)]
-        for index,left in enumerate(rectangular):
-            for right in rectangular[index+1:]:
+    for index,left in enumerate(plan.rooms):
+        lx1,ly1,lx2,ly2=bbox(left)
+        for right in plan.rooms[index+1:]:
+            rx1,ry1,rx2,ry2=bbox(right)
+            bbox_overlap=max(0.0,min(lx2,rx2)-max(lx1,rx1))*max(0.0,min(ly2,ry2)-max(ly1,ry1))
+            if bbox_overlap<=0:
+                continue
+            if is_rectangular_room(left) and is_rectangular_room(right):
                 overlap_px2=_rect_overlap_area(left,right)
+            else:
+                overlap_px2=_polygon_overlap_area_px2(left.polygon,right.polygon)
+            threshold_px2=(0.08/(mpp**2)) if mpp and mpp>0 else 25.0
+            if overlap_px2<=threshold_px2:
+                continue
+            if mpp and mpp>0:
                 overlap_m2=overlap_px2*(mpp**2)
-                if overlap_m2>0.08:
-                    findings.append(ValidationFinding(
-                        code="rooms_overlap",
-                        severity="critical",
-                        text=f"يوجد تداخل هندسي بين {left.name} و{right.name} بمساحة تقارب {overlap_m2:.2f} م².",
-                        roomIds=[left.id,right.id],
-                    ))
+                text=f"يوجد تداخل هندسي بين {left.name} و{right.name} بمساحة تقارب {overlap_m2:.2f} م²."
+            else:
+                text=f"يوجد تداخل هندسي بين {left.name} و{right.name}."
+            findings.append(ValidationFinding(
+                code="rooms_overlap",
+                severity="critical",
+                text=text,
+                roomIds=[left.id,right.id],
+            ))
 
     walls_by_id={wall.id:wall for wall in plan.walls}
     openings=[*plan.doors,*plan.windows]
