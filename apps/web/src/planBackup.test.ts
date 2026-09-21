@@ -26,7 +26,9 @@ describe("plan backup",()=>{
   });
 
   it("round trips canonical dimension evidence",()=>{
-    const source={...plan(),dimensions:[{
+    const source={...plan(),labels:[{
+      id:"label-1",text:"4.20 m",center:{x:200,y:30},confidence:.92,kind:"dimension" as const,provenance:"ocr" as const,
+    }],dimensions:[{
       id:"dimension-1",sourceLabelId:"label-1",text:"4.20 m",center:{x:200,y:30},
       valueM:4.2,unit:"m" as const,orientation:"horizontal" as const,referenceWallId:"wall-1",
       confidence:.92,reviewed:false,provenance:"ocr" as const,
@@ -34,6 +36,15 @@ describe("plan backup",()=>{
     const parsed=parsePlanBackup(JSON.stringify(source));
     expect(parsed.dimensions?.[0].valueM).toBe(4.2);
     expect(parsed.dimensions?.[0].referenceWallId).toBe("wall-1");
+  });
+
+  it("rejects orphaned dimension source label references",()=>{
+    const source={...plan(),dimensions:[{
+      id:"dimension-1",sourceLabelId:"missing-label",text:"4.20 m",center:{x:200,y:30},
+      valueM:4.2,unit:"m" as const,orientation:"horizontal" as const,referenceWallId:"wall-1",
+      confidence:.92,
+    }]};
+    expect(()=>parsePlanBackup(JSON.stringify(source))).toThrow("BACKUP_DIMENSION_LABEL");
   });
 
   it("rejects orphaned dimension wall references",()=>{
