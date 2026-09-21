@@ -170,7 +170,17 @@ def validate_plan(plan:FloorPlan)->ValidationReport:
                     wallIds=[wall.id],
                 ))
 
+    wall_ids={wall.id for wall in plan.walls}
     for room in plan.rooms:
+        missing_boundaries=[wall_id for wall_id in room.boundaryWallIds if wall_id not in wall_ids]
+        if missing_boundaries:
+            findings.append(ValidationFinding(
+                code="room_boundary_wall_missing",
+                severity="critical",
+                text=f"حدود {room.name} تشير إلى جدار غير موجود وتحتاج إعادة ربط هندسي.",
+                roomIds=[room.id],
+                wallIds=missing_boundaries,
+            ))
         if len(room.polygon)<4:
             findings.append(ValidationFinding(
                 code="room_geometry_invalid",
