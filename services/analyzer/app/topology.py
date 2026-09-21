@@ -133,3 +133,32 @@ def classify_wall_roles(walls:list,rooms:list)->list:
             _set_wall_value(wall,"role","unknown")
             _set_wall_value(wall,"locked",False)
     return walls
+
+
+def _polygon_area_px2(points)->float:
+    if len(points)<3:
+        return 0.0
+    total=0.0
+    for index,point in enumerate(points):
+        other=points[(index+1)%len(points)]
+        ax,ay=_point(point)
+        bx,by=_point(other)
+        total+=ax*by-bx*ay
+    return abs(total)/2.0
+
+
+def canonicalize_plan(plan:FloorPlan)->FloorPlan:
+    """Refresh derived topology without rewriting user-authored geometry."""
+    candidate=plan.model_copy(deep=True)
+    relink_plan_boundaries(candidate)
+
+    if candidate.metersPerPixel and candidate.metersPerPixel>0:
+        factor=candidate.metersPerPixel**2
+        for room in candidate.rooms:
+            room.areaM2=round(_polygon_area_px2(room.polygon)*factor,2)
+
+    valid_wall_ids={wall.id for wall in candidate.walls}
+    for room in candidate.rooms:
+        room.boundaryWallIds=[wall_id for wall_id in room.boundaryWallIds if wall_id in valid_wall_ids]
+
+    return candidate
