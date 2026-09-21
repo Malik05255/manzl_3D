@@ -63,3 +63,17 @@ describe("manual wall geometry",()=>{
     expect(removeUnboundWall(source,"free")).toBeNull();
   });
 });
+
+
+it("detaches dimension evidence when deleting an unbound wall",()=>{
+  const source=plan();
+  source.dimensions=[{
+    id:"dimension-1",text:"4.20 m",center:{x:300,y:80},valueM:4.2,
+    unit:"m",orientation:"horizontal",referenceWallId:"free",
+    confidence:.9,provenance:"ocr",
+  }];
+  const next=removeUnboundWall(source,"free")!;
+  expect(next.walls.some(item=>item.id==="free")).toBe(false);
+  expect(next.dimensions?.[0].referenceWallId).toBeNull();
+  expect(next.dimensions?.[0].orientation).toBe("unknown");
+});
