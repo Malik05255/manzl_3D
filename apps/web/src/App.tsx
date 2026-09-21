@@ -1,11 +1,12 @@
 import { useEffect,useMemo,useRef,useState } from "react";
-import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Clock3,Cloud,Download,FileImage,FileText,Hammer,Layers3,LoaderCircle,Redo2,Ruler,Save,ShieldCheck,Sparkles,Undo2,UploadCloud,WandSparkles,X } from "lucide-react";
-import type { EditProposal,FloorPlanModel,Point,ProjectView,RevisionView,ValidationReport } from "@manzil/contracts";
+import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Clock3,Cloud,DoorOpen,Download,FileImage,FileText,Hammer,Layers3,LoaderCircle,Redo2,Ruler,Save,ShieldCheck,Sparkles,Square,Trash2,Undo2,UploadCloud,WandSparkles,X } from "lucide-react";
+import type { EditProposal,FloorPlanModel,Opening,Point,ProjectView,RevisionView,ValidationReport } from "@manzil/contracts";
 import { ApiError,applyProposal,askEngineer,clearProjectDraft,createProject,forgetKnownProject,forgetLastProject,getKnownProjects,getLastProjectId,getProject,getProjectPreview,importProjectBackup,inferSourceMime,listRevisions,resizeRoomPrecisely,restoreRevision,saveDraft,saveRevision,uploadSource,validateProject } from "./api";
 import type { KnownProject } from "./api";
 import { PlanCanvas } from "./PlanCanvas";
 import { exportPlanJson,exportPlanPng,exportPlanSvg } from "./exportPlan";
 import { parsePlanBackup } from "./planBackup";
+import { addOpeningToWall,changeOpeningKind,findOpening,openingMetrics,positionOpening,removeOpening,resizeOpening } from "./openingGeometry";
 import { useAppUpdate } from "./useAppUpdate";
 
 function validationFromApiError(error:unknown):ValidationReport|null{
@@ -91,7 +92,7 @@ function Processing({projectId,onReady,onHome}:{projectId:string;onReady:(p:Proj
 
 function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>void}){
   const[project,setProject]=useState(initialProject);const[plan,setPlan]=useState<FloorPlanModel>(initialProject.plan!);const[savedPlan,setSavedPlan]=useState<FloorPlanModel>(initialProject.plan!);const[undoStack,setUndoStack]=useState<FloorPlanModel[]>([]);const[redoStack,setRedoStack]=useState<FloorPlanModel[]>([]);
-  const[selectedWall,setSelectedWall]=useState<string|null>(null);const[selectedRoom,setSelectedRoom]=useState<string|null>(null);const[exactName,setExactName]=useState("");const[exactWidth,setExactWidth]=useState("");const[exactHeight,setExactHeight]=useState("");const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
+  const[selectedWall,setSelectedWall]=useState<string|null>(null);const[selectedRoom,setSelectedRoom]=useState<string|null>(null);const[selectedOpening,setSelectedOpening]=useState<string|null>(null);const[openingWidth,setOpeningWidth]=useState("");const[openingPosition,setOpeningPosition]=useState(50);const[exactName,setExactName]=useState("");const[exactWidth,setExactWidth]=useState("");const[exactHeight,setExactHeight]=useState("");const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
   const[calibrating,setCalibrating]=useState(false);const[calibrationPoints,setCalibrationPoints]=useState<Point[]>([]);const[knownDistance,setKnownDistance]=useState("");
   const[sourcePreview,setSourcePreview]=useState<string|null>(null);const[sourceOpacity,setSourceOpacity]=useState(.42);
   const[historyOpen,setHistoryOpen]=useState(false);const[historyBusy,setHistoryBusy]=useState(false);const[revisions,setRevisions]=useState<RevisionView[]>([]);const[exportOpen,setExportOpen]=useState(false);const[exportBusy,setExportBusy]=useState(false);
@@ -141,23 +142,66 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     if(!previous)return;
     setUndoStack(stack=>stack.slice(0,-1));
     setRedoStack(stack=>[...stack.slice(-49),plan]);
-    setPlan(previous);setSelectedWall(null);setSelectedRoom(null);setPreview(null);setProposals([]);
+    setPlan(previous);setSelectedWall(null);setSelectedRoom(null);setSelectedOpening(null);setPreview(null);setProposals([]);
   };
   const redoLocal=()=>{
     const next=redoStack.at(-1);
     if(!next)return;
     setRedoStack(stack=>stack.slice(0,-1));
     setUndoStack(stack=>[...stack.slice(-49),plan]);
-    setPlan(next);setSelectedWall(null);setSelectedRoom(null);setPreview(null);setProposals([]);
+    setPlan(next);setSelectedWall(null);setSelectedRoom(null);setSelectedOpening(null);setPreview(null);setProposals([]);
   };
   const selectRoom=(roomId:string|null)=>{
-    setSelectedRoom(roomId);setSelectedWall(null);setPreview(null);setProposals([]);
+    setSelectedRoom(roomId);setSelectedWall(null);setSelectedOpening(null);setPreview(null);setProposals([]);
     const room=plan.rooms.find(item=>item.id===roomId);
     setExactName(room?.name??"");
     if(!room||!plan.metersPerPixel){setExactWidth("");setExactHeight("");return;}
     const xs=room.polygon.map(p=>p.x),ys=room.polygon.map(p=>p.y);
     setExactWidth(((Math.max(...xs)-Math.min(...xs))*plan.metersPerPixel).toFixed(2));
     setExactHeight(((Math.max(...ys)-Math.min(...ys))*plan.metersPerPixel).toFixed(2));
+  };
+  const selectOpening=(openingId:string|null)=>{
+    setSelectedOpening(openingId);setSelectedRoom(null);setSelectedWall(null);setPreview(null);setProposals([]);
+    if(!openingId){setOpeningWidth("");setOpeningPosition(50);return;}
+    const metrics=openingMetrics(plan,openingId);
+    setOpeningWidth(metrics?.widthM?.toFixed(2)??"");
+    setOpeningPosition(Math.round(metrics?.positionPct??50));
+  };
+  const addOpening=(kind:Opening["kind"])=>{
+    if(!selectedWall)return;
+    const next=addOpeningToWall(plan,selectedWall,kind);
+    if(!next){setNotice("لا توجد مساحة كافية على الجدار المحدد لإضافة فتحة جديدة.");return;}
+    const beforeIds=new Set([...plan.doors,...plan.windows].map(item=>item.id));
+    const created=[...next.doors,...next.windows].find(item=>!beforeIds.has(item.id));
+    applyLocalPlan(next);setSelectedRoom(null);setSelectedWall(null);setNotice(kind==="door"?"تمت إضافة باب. اضبط عرضه وموقعه ثم احفظ.":"تمت إضافة نافذة. اضبط عرضها وموقعها ثم احفظ.");
+    if(created)queueMicrotask(()=>selectOpening(created.id));
+  };
+  const updateOpeningWidth=()=>{
+    if(!selectedOpening)return;
+    const width=Number(openingWidth.replace(",","."));
+    const next=resizeOpening(plan,selectedOpening,width);
+    if(!next){setNotice("تعذر تطبيق العرض المطلوب على هذا الجدار.");return;}
+    applyLocalPlan(next);
+    const metrics=openingMetrics(next,selectedOpening);
+    setOpeningWidth(metrics?.widthM?.toFixed(2)??openingWidth);
+    setOpeningPosition(Math.round(metrics?.positionPct??openingPosition));
+    setNotice("تم تحديث عرض الفتحة محليًا.");
+  };
+  const updateOpeningPosition=(position:number)=>{
+    if(!selectedOpening)return;
+    const next=positionOpening(plan,selectedOpening,position);
+    if(!next)return;
+    applyLocalPlan(next);setOpeningPosition(position);
+  };
+  const updateOpeningKind=(kind:Opening["kind"])=>{
+    if(!selectedOpening)return;
+    const next=changeOpeningKind(plan,selectedOpening,kind);
+    if(!next)return;
+    applyLocalPlan(next);setNotice(kind==="door"?"تم تصحيح الفتحة إلى باب.":"تم تصحيح الفتحة إلى نافذة.");
+  };
+  const deleteOpening=()=>{
+    if(!selectedOpening)return;
+    applyLocalPlan(removeOpening(plan,selectedOpening));setSelectedOpening(null);setOpeningWidth("");setNotice("تم حذف الفتحة محليًا. يمكنك التراجع قبل الحفظ.");
   };
   const renameSelectedRoom=()=>{
     const room=plan.rooms.find(item=>item.id===selectedRoom);
@@ -234,7 +278,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   const runValidation=async()=>{setValidationBusy(true);setNotice(null);try{setValidationReport(await validateProject(project.id,plan));}catch(e){setNotice(e instanceof Error?e.message:"تعذر فحص المخطط");}finally{setValidationBusy(false);}};
   const runExport=async(format:"svg"|"png"|"json")=>{setExportBusy(true);setNotice(null);try{if(format==="svg")exportPlanSvg(plan,project.name);else if(format==="json")exportPlanJson(plan,project.name);else await exportPlanPng(plan,project.name);setExportOpen(false);}catch{setNotice("تعذر إنشاء ملف التصدير. جرّب صيغة أخرى.");}finally{setExportBusy(false);}};
   const restore=async(revision:number)=>{if(localDirty){setNotice("احفظ التغييرات الحالية أو تراجع عنها قبل استعادة نسخة سابقة.");return;}setSaving(true);++draftGeneration.current;try{await draftChain.current.catch(()=>undefined);const u=await restoreRevision(project.id,revision);if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);setUndoStack([]);setRedoStack([]);}setProject(u);setRecoveredDraft(false);setHistoryOpen(false);setNotice(`تمت استعادة النسخة ${revision} كنسخة جديدة محفوظة.`);}catch(e){setNotice(e instanceof Error?e.message:"تعذر استعادة النسخة");}finally{setSaving(false);}};
-  const apply=async()=>{if(!preview)return;setSaving(true);++draftGeneration.current;try{await draftChain.current.catch(()=>undefined);const u=await applyProposal(project.id,{command,proposal:preview});if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);setUndoStack([]);setRedoStack([]);}setProject(u);setRecoveredDraft(false);setPreview(null);setProposals([]);setCommand("");setSelectedRoom(null);setExactName("");setExactWidth("");setExactHeight("");setValidationReport(null);setNotice("تم اعتماد التعديل وحفظ نسخة جديدة.");}catch(e){const report=validationFromApiError(e);if(report)setValidationReport(report);setNotice(e instanceof Error?e.message:"تعذر تطبيق التعديل");}finally{setSaving(false);}};
+  const apply=async()=>{if(!preview)return;setSaving(true);++draftGeneration.current;try{await draftChain.current.catch(()=>undefined);const u=await applyProposal(project.id,{command,proposal:preview});if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);setUndoStack([]);setRedoStack([]);}setProject(u);setRecoveredDraft(false);setPreview(null);setProposals([]);setCommand("");setSelectedRoom(null);setSelectedOpening(null);setExactName("");setExactWidth("");setExactHeight("");setValidationReport(null);setNotice("تم اعتماد التعديل وحفظ نسخة جديدة.");}catch(e){const report=validationFromApiError(e);if(report)setValidationReport(report);setNotice(e instanceof Error?e.message:"تعذر تطبيق التعديل");}finally{setSaving(false);}};
   const applyCalibration=()=>{
     if(calibrationPoints.length!==2)return;
     const meters=Number(knownDistance.replace(",","."));
@@ -269,7 +313,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     <div className="editor-workspace">
       <section className="plan-panel"><div className="panel-title"><div><strong>منطقة التعديل</strong><span>اسحب جدارًا لتحريكه أو استخدم H Engineer</span></div><div className="panel-status"><span className={`draft-pill ${draftState}`}>{draftState==="saving"?"حفظ...":draftState==="saved"?"مسودة سحابية":draftState==="error"?"تعذر الحفظ":"سحابي"}</span><button className="validate-chip export-chip" onClick={()=>setExportOpen(true)}><Download size={14}/> تصدير</button>{sourcePreview&&<label className="overlay-control"><span>الأصل</span><input type="range" min="0" max=".85" step=".05" value={sourceOpacity} onChange={e=>setSourceOpacity(Number(e.target.value))}/></label>}<button className="validate-chip" disabled={validationBusy} onClick={runValidation}>{validationBusy?<LoaderCircle className="spin" size={14}/>:<ShieldCheck size={14}/>} فحص</button><div className="quality-pill">جودة التحليل {Math.round(plan.quality.overall*100)}%</div></div></div>
         {recoveredDraft&&<div className="recovered-draft"><div><strong>تمت استعادة مسودة تلقائية</strong><span>هذه التغييرات محفوظة سحابيًا لكنها ليست Revision رسمية بعد.</span></div><div><button className="ghost" disabled={saving} onClick={()=>void discardRecoveredDraft()}>تجاهل المسودة</button><button className="primary small" disabled={saving} onClick={save}><Save size={15}/> حفظ كنسخة</button></div></div>}
-        <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)} selectedWallId={selectedWall} onSelectWall={id=>{setSelectedWall(id);if(id)setSelectedRoom(null);}} selectedRoomId={selectedRoom} onSelectRoom={selectRoom} onPlanChange={applyLocalPlan} onPlanCommit={commitTransientPlan}
+        <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)} selectedWallId={selectedWall} onSelectWall={id=>{setSelectedWall(id);if(id){setSelectedRoom(null);setSelectedOpening(null);}}} selectedRoomId={selectedRoom} onSelectRoom={selectRoom} selectedOpeningId={selectedOpening} onSelectOpening={selectOpening} onPlanChange={applyLocalPlan} onPlanCommit={commitTransientPlan}
           calibrationMode={calibrating} calibrationPoints={calibrationPoints}
           onCalibrationPoint={point=>setCalibrationPoints(points=>points.length<2?[...points,point]:points)}
           backgroundUrl={sourcePreview} backgroundOpacity={sourceOpacity} comparisonPlan={preview?plan:null} validationFindings={validationReport?.findings??[]}/>
@@ -278,6 +322,8 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
       </section>
       <aside className="ai-panel"><div className="ai-title"><div className="ai-avatar"><BrainCircuit size={22}/></div><div><strong>H Engineer</strong><span>يفهم الأثر قبل التنفيذ</span></div></div>
         {validationReport&&<div className="validation-card"><div className="validation-summary"><div><strong>الفحص الهندسي الداخلي</strong><span>سلامة النموذج {Math.round(validationReport.score*100)}%</span></div><div className={`validation-score ${validationReport.findings.some(item=>item.severity==="critical")?"bad":validationReport.findings.length?"warn":"good"}`}>{Math.round(validationReport.score*100)}</div></div>{validationReport.findings.length?<div className="validation-findings">{validationReport.findings.slice(0,6).map((item,index)=><button type="button" key={`${item.code}-${index}`} className={`validation-finding ${item.severity} ${item.roomIds.length?"clickable":""}`} disabled={!item.roomIds.length} onClick={()=>item.roomIds[0]&&selectRoom(item.roomIds[0])}><span>{item.severity==="critical"?"!":"•"}</span><p>{item.text}</p></button>)}</div>:<div className="validation-clean"><Check size={16}/> لا توجد مشاكل هندسية واضحة في النموذج الحالي.</div>}<small>هذا فحص اتساق واستخدام داخلي، وليس اعتمادًا لكود البناء.</small></div>}
+        {selectedWall&&<div className="opening-add-card"><div><strong>الجدار محدد</strong><span>أضف فتحة في أكبر مساحة خالية على الجدار.</span></div><div><button className="ghost" disabled={Boolean(preview)} onClick={()=>addOpening("door")}><DoorOpen size={16}/> إضافة باب</button><button className="ghost" disabled={Boolean(preview)} onClick={()=>addOpening("window")}><Square size={15}/> إضافة نافذة</button></div></div>}
+        {selectedOpening&&findOpening(plan,selectedOpening)&&<div className="opening-editor"><div className="precise-title"><div><strong>تعديل الفتحة</strong><span>صحح النوع والعرض والموقع على الجدار</span></div>{findOpening(plan,selectedOpening)?.kind==="door"?<DoorOpen size={19}/>:<Square size={18}/>}</div><div className="opening-kind"><button className={findOpening(plan,selectedOpening)?.kind==="door"?"active":""} onClick={()=>updateOpeningKind("door")}>باب</button><button className={findOpening(plan,selectedOpening)?.kind==="window"?"active":""} onClick={()=>updateOpeningKind("window")}>نافذة</button></div><label className="opening-width"><span>العرض بالمتر</span><div><input inputMode="decimal" disabled={!plan.metersPerPixel} value={openingWidth} onChange={e=>setOpeningWidth(e.target.value)} placeholder={plan.metersPerPixel?"0.90":"ثبّت المقياس"}/><button className="ghost" disabled={!plan.metersPerPixel||!openingWidth} onClick={updateOpeningWidth}>تطبيق</button></div></label><label className="opening-position"><span>الموقع على الجدار · {openingPosition}%</span><input type="range" min="2" max="98" step="1" value={openingPosition} onChange={e=>updateOpeningPosition(Number(e.target.value))}/></label><button className="delete-opening" onClick={deleteOpening}><Trash2 size={15}/> حذف الفتحة</button></div>}
         <div className="precise-editor"><div className="precise-title"><div><strong>تعديل دقيق</strong><span>اختر الغرفة ثم أدخل المقاس بالمتر</span></div><Ruler size={19}/></div>
           <select value={selectedRoom??""} onChange={e=>selectRoom(e.target.value||null)}><option value="">اختر غرفة</option>{plan.rooms.map(room=><option key={room.id} value={room.id}>{room.name}</option>)}</select>
           {selectedRoom&&<div className="room-name-edit"><label><span>اسم الغرفة</span><input value={exactName} onChange={e=>setExactName(e.target.value)} maxLength={80}/></label><button className="ghost" disabled={!exactName.trim()||exactName.trim()===plan.rooms.find(room=>room.id===selectedRoom)?.name||Boolean(preview)} onClick={renameSelectedRoom}>تحديث</button></div>}

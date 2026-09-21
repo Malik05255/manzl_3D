@@ -8,6 +8,8 @@ interface Props{
   onSelectWall?:(id:string|null)=>void;
   selectedRoomId?:string|null;
   onSelectRoom?:(id:string|null)=>void;
+  selectedOpeningId?:string|null;
+  onSelectOpening?:(id:string|null)=>void;
   onPlanChange?:(plan:FloorPlanModel,recordHistory?:boolean)=>void;
   onPlanCommit?:(basePlan:FloorPlanModel)=>void;
   readonly?:boolean;
@@ -138,7 +140,7 @@ export function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall)
   };
 }
 
-export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSelectRoom,onPlanChange,onPlanCommit,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint,backgroundUrl=null,backgroundOpacity=.38,comparisonPlan=null,validationFindings=[]}:Props){
+export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSelectRoom,selectedOpeningId,onSelectOpening,onPlanChange,onPlanCommit,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint,backgroundUrl=null,backgroundOpacity=.38,comparisonPlan=null,validationFindings=[]}:Props){
   const[zoom,setZoom]=useState(1);
   const[drag,setDrag]=useState<DragState>(null);
   const svgRef=useRef<SVGSVGElement|null>(null);
@@ -259,10 +261,16 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
           stroke={selectedWallId===wall.id?"#2563eb":"#0f172a"}
           strokeWidth={Math.max(wall.thicknessPx,selectedWallId===wall.id?5:3)}
           strokeLinecap="round" className={readonly||calibrationMode?undefined:"editable-wall"}
-          onPointerDown={e=>{if(readonly||calibrationMode)return;e.currentTarget.setPointerCapture(e.pointerId);onSelectWall?.(wall.id);setDrag({wallId:wall.id,startClient:{x:e.clientX,y:e.clientY},original:wall,basePlan:plan,changed:false});}}
+          onPointerDown={e=>{if(readonly||calibrationMode)return;e.currentTarget.setPointerCapture(e.pointerId);onSelectOpening?.(null);onSelectWall?.(wall.id);setDrag({wallId:wall.id,startClient:{x:e.clientX,y:e.clientY},original:wall,basePlan:plan,changed:false});}}
         />)}
-        {plan.doors.map(o=><line key={o.id} x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="#0ea5e9" strokeWidth={4}/>)}
-        {plan.windows.map(o=><line key={o.id} x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="#38bdf8" strokeWidth={3}/>)}
+        {plan.doors.map(o=><g key={o.id} className={readonly||calibrationMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
+          {!readonly&&!calibrationMode&&<line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="transparent" strokeWidth={18}/>}
+          <line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke={selectedOpeningId===o.id?"#1d4ed8":"#0ea5e9"} strokeWidth={selectedOpeningId===o.id?7:4} strokeLinecap="round"/>
+        </g>)}
+        {plan.windows.map(o=><g key={o.id} className={readonly||calibrationMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
+          {!readonly&&!calibrationMode&&<line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="transparent" strokeWidth={18}/>}
+          <line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke={selectedOpeningId===o.id?"#1d4ed8":"#38bdf8"} strokeWidth={selectedOpeningId===o.id?6:3} strokeLinecap="round"/>
+        </g>)}
         {calibrationPoints.length===2&&<line x1={calibrationPoints[0].x} y1={calibrationPoints[0].y} x2={calibrationPoints[1].x} y2={calibrationPoints[1].y} stroke="#e11d48" strokeWidth={3} strokeDasharray="10 7"/>}
         {calibrationPoints.map((point,index)=><g key={index}><circle cx={point.x} cy={point.y} r={9} fill="#e11d48"/><text x={point.x+14} y={point.y-12} className="calibration-label">{index+1}</text></g>)}
       </svg>
