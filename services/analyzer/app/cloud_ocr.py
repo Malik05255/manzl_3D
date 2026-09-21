@@ -106,9 +106,9 @@ async def extract_google_vision_labels(image:np.ndarray,api_key:str,timeout_s:fl
             "imageContext":{"languageHints":["ar","en"]},
         }]
     }
-    url=f"https://vision.googleapis.com/v1/images:annotate?key={api_key}"
+    url="https://vision.googleapis.com/v1/images:annotate"
     async with httpx.AsyncClient(timeout=timeout_s) as client:
-        response=await client.post(url,json=body)
+        response=await client.post(url,headers={"x-goog-api-key":api_key},json=body)
         response.raise_for_status()
         payload=response.json()
     if isinstance(payload,dict):
