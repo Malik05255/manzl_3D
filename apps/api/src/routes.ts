@@ -232,7 +232,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(secured instanceof Response) return secured;
     if(analysisBusy(secured)) return json({error:"تحليل المصدر جارٍ الآن. انتظر اكتماله قبل تعديل بيانات الطابق."},409);
     if(secured.draft_key) return json({error:"احفظ المسودة أو تجاهلها قبل تعديل بيانات الطابق."},409);
-    const body=await request.json<{expectedRevision?:number;name?:string;elevationM?:number|null;heightM?:number|null}>().catch(()=>({}));
+    const body:{expectedRevision?:number;name?:string;elevationM?:number|null;heightM?:number|null}=await request.json<{expectedRevision?:number;name?:string;elevationM?:number|null;heightM?:number|null}>().catch(()=>({}));
     if(!Number.isInteger(body.expectedRevision)||body.expectedRevision!==secured.revision) return json({error:"تغير المشروع. أعد تحميله قبل تعديل بيانات الطابق."},409);
 
     const floor=await env.DB.prepare("SELECT id,name,elevation_m,height_m FROM project_floors WHERE id=? AND project_id=?")
