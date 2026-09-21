@@ -99,3 +99,10 @@ def test_generic_room_word_does_not_guess_between_rooms():
         areaM2=2.8,
     ))
     assert find_target_room("عدل الغرفة إلى 5×4",plan.rooms) is None
+
+
+def test_minor_room_name_typo_is_understood():
+    plan=sample_plan()
+    target=find_target_room("عدل غرفه النؤم إلى 5×4",plan.rooms)
+    assert target is not None
+    assert target.id=="bed"
