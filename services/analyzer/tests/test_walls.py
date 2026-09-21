@@ -489,3 +489,41 @@ def test_dimension_span_does_not_quarantine_thick_real_wall():
     )
     assert quarantined==set()
     assert walls[0]["confidence"]==.91
+
+
+
+def test_dimension_quarantine_expands_to_parallel_duplicate_band():
+    walls=[
+        {
+            "id":"dim-a",
+            "a":{"x":100.0,"y":100.0},
+            "b":{"x":500.0,"y":100.0},
+            "thicknessPx":3.0,
+            "confidence":.80,
+            "provenance":"opencv",
+        },
+        {
+            "id":"dim-b",
+            "a":{"x":100.0,"y":111.0},
+            "b":{"x":500.0,"y":111.0},
+            "thicknessPx":18.0,
+            "confidence":.80,
+            "provenance":"opencv",
+        },
+    ]
+    labels=[{
+        "text":"4.00 m",
+        "center":{"x":300.0,"y":82.0},
+        "confidence":.99,
+        "kind":"dimension",
+    }]
+    vectors=[{
+        "a":{"x":100.0,"y":100.0},
+        "b":{"x":500.0,"y":100.0},
+        "widthPx":2.0,
+    }]
+    quarantined=quarantine_dimension_aligned_walls(
+        walls,labels,800,1000,vector_lines=vectors,
+    )
+    assert quarantined=={"dim-a","dim-b"}
+    assert all(wall["confidence"]<=.64 for wall in walls)
