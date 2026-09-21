@@ -41,7 +41,7 @@ export interface FloorPlanModel {
   windows: Opening[];
   labels: PlanLabel[];
   quality: FloorPlanQuality;
-  source: { fileName: string; mimeType: string; page: number; };
+  source: { fileName: string; mimeType: string; page: number; pageCount?: number | null; };
 }
 export interface ProjectView {
   id: string;
@@ -160,6 +160,7 @@ export function floorPlanValidationError(value:unknown,expectedId?:string):strin
   if(!fpConfidence(quality.overall)||!fpConfidence(quality.walls)||!fpConfidence(quality.rooms)||!fpConfidence(quality.text)||!fpConfidence(quality.dimensions)||typeof quality.needsCalibration!=="boolean"||!Array.isArray(quality.warnings)||quality.warnings.length>500||!quality.warnings.every(item=>typeof item==="string"&&item.length<=500))return "PLAN_QUALITY";
 
   if(!fpObject(value.source)||typeof value.source.fileName!=="string"||value.source.fileName.length>500||typeof value.source.mimeType!=="string"||value.source.mimeType.length>160||!fpFinite(value.source.page)||!Number.isInteger(value.source.page)||value.source.page<1||value.source.page>10000)return "PLAN_SOURCE";
+  if(value.source.pageCount!==undefined&&value.source.pageCount!==null&&(!fpFinite(value.source.pageCount)||!Number.isInteger(value.source.pageCount)||value.source.pageCount<1||value.source.pageCount>10000||value.source.page>value.source.pageCount))return "PLAN_SOURCE";
 
   const ids=[
     ...value.walls.map(item=>(item as Wall).id),
