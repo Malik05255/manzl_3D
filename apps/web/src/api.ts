@@ -126,6 +126,16 @@ export async function activateFloor(id:string,floorId:string,expectedRevision:nu
   return project;
 }
 
+export async function updateFloorMetadata(id:string,floorId:string,payload:{expectedRevision:number;name?:string;elevationM?:number|null;heightM?:number|null}){
+  const project=await request<ProjectView>(`/v1/projects/${id}/floors/${encodeURIComponent(floorId)}`,{
+    method:"PATCH",
+    body:JSON.stringify(payload),
+  });
+  rememberKnownProject(project);
+  rememberLastProjectId(id);
+  return project;
+}
+
 export async function getProject(id:string){
   const project=await request<ProjectView>(`/v1/projects/${id}`);
   rememberLastProjectId(id);
