@@ -1,7 +1,7 @@
 from __future__ import annotations
 from itertools import product
 from .commands import find_target_room,normalize_arabic,parse_merge_rooms,resize_neighbor_constraints,resolve_target_size
-from .edit_geometry import absorb_neighbor,adjacent,apply_side,bbox,is_rectangular_room,merge_neighbor,minimum_clear_span_m
+from .edit_geometry import absorb_neighbor,adjacent,apply_side,bbox,is_orthogonal_room,is_rectangular_room,merge_neighbor,minimum_clear_span_m
 from .element_edits import build_selected_element_proposals
 from .models import EditRequest,FloorPlan,Impact,Proposal,ProposalResponse,Room
 from .validation import validate_plan
@@ -76,11 +76,11 @@ def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:fl
     if not mpp or mpp<=0:
         return ProposalResponse(command=command,proposals=[],needsClarification="يجب تثبيت مقياس المخطط أولًا قبل تنفيذ تعديل بالمتر.")
 
-    if not is_rectangular_room(target):
+    if not is_orthogonal_room(target):
         return ProposalResponse(
             command=command,
             proposals=[],
-            needsClarification="هذه الغرفة ذات شكل غير مستطيل. لن أختصر هندستها إلى مستطيل تلقائيًا؛ استخدم التعديل اليدوي حتى يدعم المحرك التحريك متعدد الأضلاع.",
+            needsClarification="شكل الغرفة غير متعامد ولا يمكن تحريك حدوده بأمان تلقائيًا حاليًا. استخدم التعديل اليدوي لهذه الحالة.",
         )
 
     if not (0.8<=target_w<=50 and 0.8<=target_h<=50):
