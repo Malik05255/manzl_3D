@@ -6,12 +6,16 @@ class Point(BaseModel):
     x: float
     y: float
 
+ElementProvenance = Literal["opencv","pdf-vector","ocr","pdf-text","manual","ai","mixed"]
+
 class Wall(BaseModel):
     id: str
     a: Point
     b: Point
     thicknessPx: float = 4.0
     confidence: float = Field(ge=0, le=1)
+    reviewed: bool = False
+    provenance: ElementProvenance | None = None
 
 class Room(BaseModel):
     id: str
@@ -19,6 +23,8 @@ class Room(BaseModel):
     polygon: list[Point]
     confidence: float = Field(ge=0, le=1)
     areaM2: float | None = None
+    reviewed: bool = False
+    provenance: ElementProvenance | None = None
 
 class Opening(BaseModel):
     id: str
@@ -27,6 +33,8 @@ class Opening(BaseModel):
     a: Point
     b: Point
     confidence: float = Field(ge=0, le=1)
+    reviewed: bool = False
+    provenance: ElementProvenance | None = None
 
 class PlanLabel(BaseModel):
     id: str
@@ -34,6 +42,8 @@ class PlanLabel(BaseModel):
     center: Point
     confidence: float = Field(ge=0, le=1)
     kind: Literal["room_name", "dimension", "note", "unknown"]
+    reviewed: bool = False
+    provenance: ElementProvenance | None = None
 
 class Quality(BaseModel):
     overall: float
