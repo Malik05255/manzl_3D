@@ -61,12 +61,32 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   const[sourcePreview,setSourcePreview]=useState<string|null>(null);const[sourceOpacity,setSourceOpacity]=useState(.42);
   const[historyOpen,setHistoryOpen]=useState(false);const[historyBusy,setHistoryBusy]=useState(false);const[revisions,setRevisions]=useState<RevisionView[]>([]);
   const[validationReport,setValidationReport]=useState<ValidationReport|null>(null);const[validationBusy,setValidationBusy]=useState(false);const[draftState,setDraftState]=useState<"idle"|"saving"|"saved"|"error">("idle");
+  const draftGeneration=useRef(0);const draftChain=useRef<Promise<void>>(Promise.resolve());
   const dirty=useMemo(()=>JSON.stringify(plan)!==JSON.stringify(savedPlan),[plan,savedPlan]);
+  const enqueueDraft=(snapshot:FloorPlanModel,revision:number,generation:number)=>{
+    const run=async()=>{
+      if(generation!==draftGeneration.current)return;
+      setDraftState("saving");
+      try{
+        const synced=await saveDraft(project.id,snapshot,revision);
+        if(generation===draftGeneration.current){
+          setProject(current=>({...current,...synced,plan:current.plan}));
+          setDraftState("saved");
+        }
+      }catch(error){
+        if(generation===draftGeneration.current)setDraftState("error");
+        throw error;
+      }
+    };
+    const queued=draftChain.current.catch(()=>undefined).then(run);
+    draftChain.current=queued.catch(()=>undefined);
+    return queued;
+  };
   const syncPlanForEngineer=async()=>{
     if(!dirty)return;
-    setDraftState("saving");
-    try{const synced=await saveDraft(project.id,plan,project.revision);setProject(current=>({...current,...synced,plan:current.plan}));setDraftState("saved");}
-    catch(error){setDraftState("error");throw error;}
+    const generation=++draftGeneration.current;
+    await draftChain.current.catch(()=>undefined);
+    await enqueueDraft(plan,project.revision,generation);
   };
   const applyLocalPlan=(next:FloorPlanModel)=>{
     setUndoStack(stack=>[...stack.slice(-49),plan]);
@@ -128,15 +148,15 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   },[project.id]);
   useEffect(()=>{
     if(!dirty||preview)return;
+    const generation=++draftGeneration.current;
     setDraftState("idle");
     const snapshot=plan;
-    const timer=window.setTimeout(async()=>{
-      setDraftState("saving");
-      try{const synced=await saveDraft(project.id,snapshot,project.revision);setProject(current=>({...current,...synced,plan:current.plan}));setDraftState("saved");}
-      catch{setDraftState("error");}
+    const revision=project.revision;
+    const timer=window.setTimeout(()=>{
+      void enqueueDraft(snapshot,revision,generation).catch(()=>undefined);
     },1400);
     return()=>window.clearTimeout(timer);
-  },[plan,dirty,preview,project.id]);
+  },[plan,dirty,preview,project.id,project.revision]);
   useEffect(()=>{
     const handle=(event:KeyboardEvent)=>{
       const modifier=event.ctrlKey||event.metaKey;
@@ -150,11 +170,11 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     return()=>window.removeEventListener("keydown",handle);
   },[undoStack,redoStack,plan]);
   const ask=async()=>{if(!command.trim())return;setThinking(true);setNotice(null);setPreview(null);try{await syncPlanForEngineer();const r=await askEngineer(project.id,command.trim());setProposals(r.proposals);if(r.needsClarification)setNotice(r.needsClarification);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحليل الطلب");}finally{setThinking(false);}};
-  const save=async()=>{setSaving(true);try{const u=await saveRevision(project.id,plan,"تعديل يدوي");setProject(u);setSavedPlan(plan);setDraftState("saved");setNotice("تم حفظ التعديل في السحابة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر الحفظ");}finally{setSaving(false);}};
+  const save=async()=>{setSaving(true);const generation=++draftGeneration.current;try{await draftChain.current.catch(()=>undefined);if(generation!==draftGeneration.current)return;const u=await saveRevision(project.id,plan,"تعديل يدوي");setProject(u);setSavedPlan(plan);setDraftState("saved");setNotice("تم حفظ التعديل في السحابة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر الحفظ");}finally{setSaving(false);}};
   const openHistory=async()=>{setHistoryOpen(true);setHistoryBusy(true);try{const r=await listRevisions(project.id);setRevisions(r.items);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحميل سجل النسخ");setHistoryOpen(false);}finally{setHistoryBusy(false);}};
   const runValidation=async()=>{setValidationBusy(true);setNotice(null);try{setValidationReport(await validateProject(project.id,plan));}catch(e){setNotice(e instanceof Error?e.message:"تعذر فحص المخطط");}finally{setValidationBusy(false);}};
-  const restore=async(revision:number)=>{if(dirty){setNotice("احفظ التغييرات الحالية أو تراجع عنها قبل استعادة نسخة سابقة.");return;}setSaving(true);try{const u=await restoreRevision(project.id,revision);if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);setUndoStack([]);setRedoStack([]);}setProject(u);setHistoryOpen(false);setNotice(`تمت استعادة النسخة ${revision} كنسخة جديدة محفوظة.`);}catch(e){setNotice(e instanceof Error?e.message:"تعذر استعادة النسخة");}finally{setSaving(false);}};
-  const apply=async()=>{if(!preview)return;setSaving(true);try{const u=await applyProposal(project.id,{command,proposal:preview});if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);setUndoStack([]);setRedoStack([]);}setProject(u);setPreview(null);setProposals([]);setCommand("");setSelectedRoom(null);setExactName("");setExactWidth("");setExactHeight("");setNotice("تم اعتماد التعديل وحفظ نسخة جديدة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر تطبيق التعديل");}finally{setSaving(false);}};
+  const restore=async(revision:number)=>{if(dirty){setNotice("احفظ التغييرات الحالية أو تراجع عنها قبل استعادة نسخة سابقة.");return;}setSaving(true);++draftGeneration.current;try{await draftChain.current.catch(()=>undefined);const u=await restoreRevision(project.id,revision);if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);setUndoStack([]);setRedoStack([]);}setProject(u);setHistoryOpen(false);setNotice(`تمت استعادة النسخة ${revision} كنسخة جديدة محفوظة.`);}catch(e){setNotice(e instanceof Error?e.message:"تعذر استعادة النسخة");}finally{setSaving(false);}};
+  const apply=async()=>{if(!preview)return;setSaving(true);++draftGeneration.current;try{await draftChain.current.catch(()=>undefined);const u=await applyProposal(project.id,{command,proposal:preview});if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);setUndoStack([]);setRedoStack([]);}setProject(u);setPreview(null);setProposals([]);setCommand("");setSelectedRoom(null);setExactName("");setExactWidth("");setExactHeight("");setNotice("تم اعتماد التعديل وحفظ نسخة جديدة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر تطبيق التعديل");}finally{setSaving(false);}};
   const applyCalibration=()=>{
     if(calibrationPoints.length!==2)return;
     const meters=Number(knownDistance.replace(",","."));
