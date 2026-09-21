@@ -98,3 +98,48 @@ def test_slanted_extraction_regression_gate():
     assert report["walls"]["f1"]>=.80,report
     assert report["rooms"]["f1"]>=.80,report
     assert report["macroF1"]>=.90,report
+
+
+
+def test_dimension_line_does_not_split_room_topology():
+    document=fitz.open()
+    page=document.new_page(width=420,height=320)
+
+    shell=page.new_shape()
+    for a,b in [
+        ((60,55),(360,55)),
+        ((360,55),(360,265)),
+        ((360,265),(60,265)),
+        ((60,265),(60,55)),
+    ]:
+        shell.draw_line(a,b)
+    shell.finish(width=8,color=(0,0,0))
+    shell.commit()
+
+    dimension=page.new_shape()
+    dimension.draw_line((60,160),(360,160))
+    dimension.finish(width=1,color=(0,0,0))
+    dimension.commit()
+    page.insert_text((185,150),"4.00 m",fontsize=11)
+
+    data=document.tobytes()
+    document.close()
+    prediction=analyze_document_bytes_local(
+        data,
+        "application/pdf",
+        project_id="dimension-quarantine",
+        filename="dimension-line.pdf",
+    )
+
+    suspicious=[
+        wall for wall in prediction["walls"]
+        if wall["confidence"]<=.64
+        and abs(wall["a"]["y"]-wall["b"]["y"])<4
+        and min(wall["a"]["y"],wall["b"]["y"])>300
+    ]
+    assert suspicious,prediction["walls"]
+    assert len(prediction["rooms"])==1,prediction["rooms"]
+    assert not (
+        set(prediction["rooms"][0].get("boundaryWallIds",[]))
+        & {wall["id"] for wall in suspicious}
+    )
