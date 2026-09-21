@@ -5,7 +5,7 @@ import { ApiError,activateFloor,applyProposal,askEngineer,clearProjectDraft,crea
 import type { KnownProject } from "./api";
 import { DEFAULT_PLAN_LAYERS,PlanCanvas,moveWallAndTopology } from "./PlanCanvas";
 import type { PlanLayerVisibility } from "./PlanCanvas";
-import { calibratePlanFromDimension,correctDimensionValue } from "./dimensionGeometry";
+import { calibratePlanFromDimension,correctDimensionValue,dimensionWallCandidates,linkDimensionToWall } from "./dimensionGeometry";
 import { exportPlanJson,exportPlanPng,exportPlanSvg } from "./exportPlan";
 import { parsePlanBackup } from "./planBackup";
 import { addOpeningToWall,changeOpeningKind,findOpening,openingMetrics,positionOpening,removeOpening,resizeOpening } from "./openingGeometry";
@@ -425,6 +425,13 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     setDimensionValue(value.toFixed(2));
     setNotice("تم تصحيح قيمة البعد مع الاحتفاظ بنص القراءة الأصلي للمراجعة.");
   };
+  const linkSelectedDimension=(wallId:string)=>{
+    if(!selectedDimension)return;
+    const next=linkDimensionToWall(plan,selectedDimension,wallId||null);
+    if(!next){setNotice("تعذر ربط البعد بالجدار المحدد.");return;}
+    applyLocalPlan(next);
+    setNotice(wallId?"تم ربط البعد بالجدار المحدد وتسجيل المراجعة البشرية.":"تم إلغاء ربط البعد بالجدار.");
+  };
   const calibrateFromSelectedDimension=()=>{
     if(!selectedDimension)return;
     const dimension=(plan.dimensions??[]).find(item=>item.id===selectedDimension);
@@ -650,7 +657,8 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
           if(!dimension)return null;
           const wall=dimension.referenceWallId?plan.walls.find(item=>item.id===dimension.referenceWallId):null;
           const currentWallM=wall&&plan.metersPerPixel?Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y)*plan.metersPerPixel:null;
-          return <div className="dimension-evidence-editor"><div className="precise-title"><div><strong>مراجعة البعد المقروء</strong><span>{dimension.text} · {provenanceLabel(dimension.provenance)} · ثقة {Math.round(dimension.confidence*100)}%</span></div><Ruler size={18}/></div><label><span>القيمة الصحيحة بالمتر</span><div><input inputMode="decimal" value={dimensionValue} onChange={e=>setDimensionValue(e.target.value)} placeholder="مثال 4.20"/><button className="ghost" disabled={!dimensionValue||Boolean(preview)} onClick={updateSelectedDimensionValue}>تصحيح</button></div></label><div className="dimension-link-status"><span>{wall?`مرتبط بالجدار ${wall.id}`:"غير مرتبط بجدار واضح"}</span>{currentWallM!==null&&<small>طول الجدار الحالي {currentWallM.toFixed(2)} م</small>}</div><button className="primary small" disabled={!dimension.reviewed||!dimension.valueM||!wall||Boolean(preview)} onClick={calibrateFromSelectedDimension}><Check size={15}/> استخدم هذا البعد لمعايرة المقياس</button><small className="review-note">المعايرة من هذا البعد تغيّر المقياس العام فقط بعد تأكيدك، وتعيد حساب مساحات الغرف دون تحريك الجدران.</small></div>;
+          const wallCandidates=dimensionWallCandidates(plan,dimension.id,12);
+          return <div className="dimension-evidence-editor"><div className="precise-title"><div><strong>مراجعة البعد المقروء</strong><span>{dimension.text} · {provenanceLabel(dimension.provenance)} · ثقة {Math.round(dimension.confidence*100)}%</span></div><Ruler size={18}/></div><label><span>القيمة الصحيحة بالمتر</span><div><input inputMode="decimal" value={dimensionValue} onChange={e=>setDimensionValue(e.target.value)} placeholder="مثال 4.20"/><button className="ghost" disabled={!dimensionValue||Boolean(preview)} onClick={updateSelectedDimensionValue}>تصحيح</button></div></label><label><span>الجدار المرجعي</span><select value={dimension.referenceWallId??""} onChange={e=>linkSelectedDimension(e.target.value)}><option value="">بدون ربط</option>{wallCandidates.map(candidate=><option key={candidate.wallId} value={candidate.wallId}>{candidate.wallId}{plan.metersPerPixel?` · ${(candidate.lengthPx*plan.metersPerPixel).toFixed(2)} م`:""}</option>)}</select></label><div className="dimension-link-status"><span>{wall?`مرتبط بالجدار ${wall.id}`:"غير مرتبط بجدار واضح"}</span>{currentWallM!==null&&<small>طول الجدار الحالي {currentWallM.toFixed(2)} م</small>}</div><button className="primary small" disabled={!dimension.reviewed||!dimension.valueM||!wall||Boolean(preview)} onClick={calibrateFromSelectedDimension}><Check size={15}/> استخدم هذا البعد لمعايرة المقياس</button><small className="review-note">المعايرة من هذا البعد تغيّر المقياس العام فقط بعد تأكيدك، وتعيد حساب مساحات الغرف دون تحريك الجدران.</small></div>;
         })()}
         <div className="precise-editor"><div className="precise-title"><div><strong>تعديل دقيق</strong><span>اختر الغرفة ثم أدخل المقاس بالمتر</span></div><Ruler size={19}/></div>
           <select value={selectedRoom??""} onChange={e=>selectRoom(e.target.value||null)}><option value="">اختر غرفة</option>{plan.rooms.map(room=><option key={room.id} value={room.id}>{room.name}</option>)}</select>
