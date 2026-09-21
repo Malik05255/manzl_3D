@@ -131,15 +131,16 @@ export async function route(request:Request,env:Env):Promise<Response>{
     }
 
     const previousSourceKey=secured.source_key;
+    const previousPreviewKey=secured.preview_key;
     const now=new Date().toISOString();
-    await env.DB.prepare("UPDATE projects SET source_key=?, preview_key=NULL, status='queued', phase='upload', progress=10, message=?, error=NULL, updated_at=? WHERE id=? AND revision=?")
-      .bind(key,"اكتمل الرفع، بانتظار محرك التحليل",now,id,secured.revision).run();
-    const refreshed=await getProjectRow(env,id);
-    if(!refreshed||refreshed.source_key!==key){
+    const sourceUpdate=await env.DB.prepare("UPDATE projects SET source_key=?, preview_key=NULL, status='queued', phase='upload', progress=10, message=?, error=NULL, updated_at=? WHERE id=? AND revision=? AND (source_key IS NULL OR source_key=?)")
+      .bind(key,"اكتمل الرفع، بانتظار محرك التحليل",now,id,secured.revision,previousSourceKey).run();
+    if((sourceUpdate.meta.changes??0)<1){
       await env.ASSETS.delete(key).catch(()=>undefined);
       return json({error:"تغير المشروع أثناء رفع المصدر. أعد المحاولة."},409);
     }
     if(previousSourceKey&&previousSourceKey!==key) await env.ASSETS.delete(previousSourceKey).catch(()=>undefined);
+    if(previousPreviewKey) await env.ASSETS.delete(previousPreviewKey).catch(()=>undefined);
     await env.ANALYZE_QUEUE.send({projectId:id,sourceKey:key,fileName,mimeType:mime,expectedRevision:secured.revision});
     return json({ok:true},202);
   }
@@ -174,8 +175,9 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const fileName=secured.source_key.split("/").at(-1)??"source";
     const now=new Date().toISOString();
     const message=requestedPage===null?"تمت إعادة جدولة التحليل السحابي":`تمت جدولة تحليل الصفحة ${requestedPage}`;
-    await env.DB.prepare("UPDATE projects SET status='queued', phase='upload', progress=10, message=?, error=NULL, updated_at=? WHERE id=?")
-      .bind(message,now,id).run();
+    const scheduled=await env.DB.prepare("UPDATE projects SET status='queued', phase='upload', progress=10, message=?, error=NULL, updated_at=? WHERE id=? AND source_key=? AND revision=? AND status NOT IN ('queued','analyzing')")
+      .bind(message,now,id,secured.source_key,secured.revision).run();
+    if((scheduled.meta.changes??0)<1) return json({error:"تغير المشروع أو بدأ تحليل آخر قبل جدولة الطلب. حدّث المشروع وحاول مرة أخرى."},409);
     await env.ANALYZE_QUEUE.send({
       projectId:id,sourceKey:secured.source_key,fileName,mimeType,
       sourcePage:requestedPage??undefined,expectedRevision:secured.revision
