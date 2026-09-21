@@ -239,8 +239,6 @@ def _merge_near_collinear_candidates(candidates:list[dict])->list[dict]:
                 axis_tol=max(5.0,thickness*.85)
                 if abs(co-ro)>axis_tol:
                     continue
-                axial_gap=max(0.0,max(rs-cs,cs-re,rs-ce,cs-re))
-                # Equivalent, easier to reason about using sorted intervals.
                 if re<cs:
                     axial_gap=cs-re
                 elif rs>ce:
