@@ -19,7 +19,7 @@ from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
 from .symbols import extract_symbol_detections
-from .topology import canonicalize_plan,classify_wall_roles,link_room_boundaries
+from .topology import canonicalize_plan,classify_wall_roles,link_room_boundaries,recalibrate_extracted_room_confidence
 from .semantic import normalize_edit_semantics
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,rasterize_wall_mask
 from .validation import validate_plan
@@ -167,6 +167,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     await progress(req.callback_url,req.project_id,"rooms",78,"فهم الغرف والعلاقات")
     rooms=detect_rooms(room_barrier_mask,labels,scale)
     link_room_boundaries(rooms,walls)
+    recalibrate_extracted_room_confidence(rooms,walls,w,h)
     classify_wall_roles(walls,rooms)
 
     await progress(req.callback_url,req.project_id,"validation",93,"التحقق من جودة النتيجة")
