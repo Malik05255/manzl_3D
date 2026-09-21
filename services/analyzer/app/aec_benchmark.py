@@ -96,6 +96,11 @@ def plan_to_aec_prediction(plan:dict,*,sheet:str,width:int,height:int)->dict:
     objects=[]
     for door in plan.get("doors",[]):
         subtype=door.get("doorSubtype")
+        # The official released AEC object taxonomy scores swing doors but not
+        # Sliding Door annotations. Do not turn an explicit sliding correction
+        # into a false Single Swing Door prediction.
+        if subtype=="sliding":
+            continue
         object_class="Double Swing Door" if subtype=="double_swing" else "Single Swing Door"
         objects.append({
             "class":object_class,
