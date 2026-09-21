@@ -203,6 +203,7 @@ function fpOpening(value:unknown):value is Opening{
     &&(value.doorSubtype===undefined||["unknown","single_swing","double_swing","sliding"].includes(String(value.doorSubtype)))
     &&(value.doorSwingSide===undefined||["positive","negative","unknown"].includes(String(value.doorSwingSide)))
     &&(value.doorSwingDepthPx===undefined||value.doorSwingDepthPx===null||(fpFinite(value.doorSwingDepthPx)&&value.doorSwingDepthPx>=0&&value.doorSwingDepthPx<=30000))
+    &&(value.kind==="door"||(value.doorSubtype===undefined&&value.doorSwingSide===undefined&&(value.doorSwingDepthPx===undefined||value.doorSwingDepthPx===null)))
     &&(value.wallId===undefined||value.wallId===null||typeof value.wallId==="string")
     &&fpPoint(value.a)&&fpPoint(value.b)
     &&fpConfidence(value.confidence)
