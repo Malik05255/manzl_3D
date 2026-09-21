@@ -513,6 +513,11 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
             event.stopPropagation();
             onSelectRoom?.(null);onSelectWall?.(null);onSelectOpening?.(null);onSelectDimension?.(dimension.id);
           }}>
+            {dimension.spanA&&dimension.spanB&&<>
+              <line x1={dimension.spanA.x} y1={dimension.spanA.y} x2={dimension.spanB.x} y2={dimension.spanB.y} stroke={stroke} strokeWidth={selected?3:2} strokeDasharray={uncertain?"7 5":undefined} pointerEvents="none"/>
+              <circle cx={dimension.spanA.x} cy={dimension.spanA.y} r={selected?6:4} fill="#fff" stroke={stroke} strokeWidth={2} pointerEvents="none"/>
+              <circle cx={dimension.spanB.x} cy={dimension.spanB.y} r={selected?6:4} fill="#fff" stroke={stroke} strokeWidth={2} pointerEvents="none"/>
+            </>}
             {!readonly&&!calibrationMode&&<circle cx={dimension.center.x} cy={dimension.center.y} r={16} fill="transparent"/>}
             <circle cx={dimension.center.x} cy={dimension.center.y} r={selected?7:5} fill="#fff" stroke={stroke} strokeWidth={selected?3:2}/>
             <text x={dimension.center.x+10} y={dimension.center.y-10} textAnchor="start" className="plan-dimension-evidence" fill={stroke}>{dimension.text}</text>
