@@ -23,12 +23,15 @@ For a quick development pass, add `--limit 1` or `--limit 3`.
 Do not vendor the benchmark drawings into this repository. The released AEC dataset is licensed separately from its scoring code. Keep a licensed local copy outside the application source tree and use the adapter above.
 
 The adapter currently maps:
-- Manzil doors -> `Single Swing Door`
+- detected `single_swing` / unknown doors -> `Single Swing Door`
+- detected `double_swing` doors -> `Double Swing Door`
+- explicitly corrected `sliding` doors are excluded because the released scorer does not score Sliding Door as an object class
+- detected door swing side/depth -> a door-symbol envelope instead of a thin wall-gap box
 - Manzil windows -> `Window`
 - rooms -> benchmark areas
 - wall centerlines + thickness -> wall polygons
 
-The analyzer now supports an optional server-side architectural symbol detector for sink, toilet, bathtub, shower, cooktop and stairs. Detected fixtures are canonical FloorPlanModel elements, rendered in the editor/export, and mapped into the official AEC object classes where applicable. If no detector is configured, those classes remain explicit recall gaps rather than being guessed. Door subtype classification (single/double/sliding) is still not inferred.
+The analyzer now supports an optional server-side architectural symbol detector for sink, toilet, bathtub, shower, cooktop and stairs. Detected fixtures are canonical FloorPlanModel elements, rendered in the editor/export, and mapped into the official AEC object classes where applicable. If no detector is configured, those classes remain explicit recall gaps rather than being guessed. Single- versus double-swing subtype is inferred only when hinge-linked leaf evidence is present. Sliding remains a manual correction because parallel sliding geometry is too easy to confuse with window glazing.
 
 ## Core E2E
 
