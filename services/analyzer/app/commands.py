@@ -283,7 +283,7 @@ def parse_selected_wall_action(command:str)->tuple[str,dict]|None:
         if "نافذه" in text:
             return "add_opening",{"kind":"window"}
 
-    if "سماكه" in text or "سمك" in text:
+    if any(marker in text for marker in ("سماكه","سماكت","سمك")):
         amount=parse_metric_amount(command,0.02,1.0)
         if amount is not None:
             return "thickness",{"thickness_m":amount}
