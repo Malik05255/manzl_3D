@@ -140,11 +140,11 @@ def enrich_walls_with_vector(walls:list[dict],vector_lines:list[dict])->list[dic
 
 
 def add_vector_wall_candidates(walls:list[dict],vector_lines:list[dict],height:int,width:int)->list[dict]:
-    """Add only high-confidence vector wall centerlines supported by a close parallel pair.
+    """Add high-confidence wall centerlines from native PDF vectors.
 
-    A single PDF vector line is not enough evidence because dimension and guide
-    lines are common in architectural drawings. Parallel-pair evidence is a
-    conservative signal for double-line walls.
+    Preferred evidence is a close parallel pair (double-line wall). A single
+    vector stroke is promoted only when it is unusually thick and long enough
+    to be credible wall geometry; ordinary dimension/guide lines stay ignored.
     """
     if not vector_lines:
         return walls
@@ -172,6 +172,39 @@ def add_vector_wall_candidates(walls:list[dict],vector_lines:list[dict],height:i
         )
 
     candidates=[]
+    widths=[
+        max(0.1,float(line.get("widthPx",1.0)))
+        for line in vector_lines
+        if math.isfinite(float(line.get("widthPx",1.0)))
+    ]
+    median_stroke=float(np.median(widths)) if widths else 1.0
+    thick_stroke_threshold=max(7.0,min_side*0.0035)
+
+    # Some CAD/PDF exports encode walls as one heavy centerline rather than two
+    # thin parallel outlines. Recover only unusually thick, long strokes.
+    for vector in vector_lines:
+        axis=orientation(vector)
+        start,end,center_axis=ordered(vector,axis)
+        length=end-start
+        stroke=max(0.1,float(vector.get("widthPx",1.0)))
+        unusually_thick=stroke>=thick_stroke_threshold and (
+            median_stroke>=thick_stroke_threshold*0.70
+            or stroke>=median_stroke*1.8
+        )
+        if length<min_length*1.35 or not unusually_thick:
+            continue
+        if axis=="h":
+            a={"x":start,"y":center_axis}; b={"x":end,"y":center_axis}
+        else:
+            a={"x":center_axis,"y":start}; b={"x":center_axis,"y":end}
+        candidates.append({
+            "a":a,"b":b,
+            "thicknessPx":round(max(2.0,min(48.0,stroke)),2),
+            "confidence":0.91,
+            "reviewed":False,
+            "provenance":"pdf-vector",
+        })
+
     for index,left in enumerate(vector_lines):
         axis=orientation(left)
         ls,le,la=ordered(left,axis)
