@@ -1,0 +1,174 @@
+name: Stages 2-5 Validation
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  benchmark-symbols:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'feat/cloud-floorplan-editor'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Manzil H
+        uses: actions/checkout@v4
+
+      - name: Checkout AEC-Geometric-Bench
+        uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+
+      - name: Install OCR, analyzer, scorer, and ONNX export dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely
+          pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
+
+      - name: Export real FloorCAD checkpoint to ONNX
+        env:
+          HF_REPO: mudasir13cs/floorcad-yolov8n-detect
+          HF_FILE: floorcad-yolov8n-detect.pt
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, shutil
+          from pathlib import Path
+          from huggingface_hub import hf_hub_download
+          from ultralytics import YOLO
+
+          source=hf_hub_download(os.environ["HF_REPO"],os.environ["HF_FILE"])
+          model=YOLO(source)
+          exported=model.export(
+              format="onnx",
+              imgsz=640,
+              opset=12,
+              simplify=False,
+              dynamic=False,
+          )
+          target=Path("/tmp/floorcad-symbols.onnx")
+          shutil.copy2(exported,target)
+          classes=[str(model.names[index]) for index in sorted(model.names)]
+          info={
+              "sourceRepo":os.environ["HF_REPO"],
+              "sourceFile":os.environ["HF_FILE"],
+              "sourceLicense":"AGPL-3.0",
+              "classes":classes,
+              "onnxSha256":hashlib.sha256(target.read_bytes()).hexdigest(),
+              "onnxBytes":target.stat().st_size,
+          }
+          Path("benchmark-output").mkdir(exist_ok=True)
+          Path("benchmark-output/symbol-model-info.json").write_text(
+              json.dumps(info,indent=2),encoding="utf-8"
+          )
+          print(json.dumps(info,indent=2))
+          PY
+
+      - name: Verify ONNX with production OpenCV decoder
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+          SYMBOL_ONNX_MODEL: /tmp/floorcad-symbols.onnx
+          SYMBOL_ONNX_CLASSES: '["wall","window","bay_window","blind_window","single_door","double_door","sliding_door","opening_symbol","railing","stair","elevator","escalator","bath","bath_tub","toilet","squat_toilet","urinal","sink","gas_stove","refrigerator","washing_machine","bed","bedside_cupboard","sofa","chair","table","wardrobe","tv_cabinet","half_height_cabinet","high_cabinet","parking","class_31","class_32","class_34","class_35"]'
+          SYMBOL_MIN_CONFIDENCE: "0.55"
+        run: |
+          python - <<'PY'
+          import cv2, numpy as np
+          from app.symbols import extract_local_onnx_symbols
+          net=cv2.dnn.readNetFromONNX("/tmp/floorcad-symbols.onnx")
+          assert net is not None
+          image=np.full((640,640,3),255,dtype=np.uint8)
+          result=extract_local_onnx_symbols(image)
+          assert isinstance(result,list)
+          print("ONNX production decoder smoke passed; detections on blank:",len(result))
+          PY
+
+      - name: Run AEC-15 with real ONNX symbols
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+          SYMBOL_ONNX_MODEL: /tmp/floorcad-symbols.onnx
+          SYMBOL_ONNX_CLASSES: '["wall","window","bay_window","blind_window","single_door","double_door","sliding_door","opening_symbol","railing","stair","elevator","escalator","bath","bath_tub","toilet","squat_toilet","urinal","sink","gas_stove","refrigerator","washing_machine","bed","bedside_cupboard","sofa","chair","table","wardrobe","tv_cabinet","half_height_cabinet","high_cabinet","parking","class_31","class_32","class_34","class_35"]'
+          SYMBOL_MIN_CONFIDENCE: "0.55"
+        run: |
+          mkdir -p ../../benchmark-output/aec15
+          set -o pipefail
+          python -m app.aec_benchmark \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --output ../../benchmark-output/aec15/predictions \
+            --limit 15 \
+            --scorer ../../external/aec-geometric-bench/scoring/score.py \
+            --report-json ../../benchmark-output/aec15/report.json \
+            | tee ../../benchmark-output/aec15/score.txt
+
+      - name: Publish AEC summary
+        if: always()
+        run: |
+          if [ -f benchmark-output/aec15/report.json ]; then
+            python - <<'PY'
+          import json, os
+          from pathlib import Path
+          report=json.loads(Path("benchmark-output/aec15/report.json").read_text())
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## AEC-15 real drawing benchmark\n\n")
+              for key in ("objectMicro","wallPixel","areaPixel","areaInstance"):
+                  item=report.get(key,{})
+                  out.write(f"- {key}: P {item.get('precision',0):.3f} / R {item.get('recall',0):.3f} / F1 {item.get('f1',0):.3f}\n")
+              out.write(f"- macroF1: {report.get('macroF1',0):.3f}\n")
+          PY
+          fi
+
+      - name: Upload diagnostic results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stages-2-4-\${{ github.sha }}
+          path: |
+            benchmark-output/symbol-model-info.json
+            benchmark-output/aec15/score.txt
+            benchmark-output/aec15/report.json
+            benchmark-output/aec15/predictions/*.json
+            benchmark-output/aec15/predictions/_canonical/*.json
+            benchmark-output/aec15/predictions/_debug/*.png
+          if-no-files-found: warn
+          retention-days: 14
+
+  staging-e2e:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'feat/cloud-floorplan-editor'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pip install PyMuPDF==1.26.4
+      - run: python services/analyzer/tools/generate_e2e_fixture.py /tmp/manzil-e2e.pdf
+      - name: Require deployed staging endpoint
+        env:
+          MANZIL_API_URL: \${{ secrets.MANZIL_E2E_API_URL }}
+        run: |
+          test -n "$MANZIL_API_URL" || {
+            echo "::error::MANZIL_E2E_API_URL repository secret is not configured"
+            exit 2
+          }
+          curl -fsS "$MANZIL_API_URL/health"
+          curl -fsS "$MANZIL_API_URL/ready"
+      - name: Run upload-to-restore against staging
+        env:
+          MANZIL_API_URL: \${{ secrets.MANZIL_E2E_API_URL }}
+          MANZIL_E2E_SOURCE: /tmp/manzil-e2e.pdf
+          MANZIL_E2E_TIMEOUT_MS: "240000"
+        run: node scripts/e2e_remote.mjs
