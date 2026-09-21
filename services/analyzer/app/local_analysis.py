@@ -91,7 +91,7 @@ def analyze_document_bytes_local(
     walls,wall_mask=detect_walls(ink)
     if vector_lines:
         walls=enrich_walls_with_vector(walls,vector_lines)
-        walls=add_vector_wall_candidates(walls,vector_lines,h,w)
+        walls=add_vector_wall_candidates(walls,vector_lines,h,w,labels=labels)
 
     dimensions=extract_dimension_evidence(
         labels,walls,w,h,ink=ink,vector_lines=vector_lines,
@@ -100,7 +100,7 @@ def analyze_document_bytes_local(
     doors=detect_doors(image,walls,scale)
     windows=detect_windows(image,walls,scale)
     walls,doors,windows=normalize_opening_hosts(walls,doors,windows)
-    barrier=rasterize_wall_mask(walls,h,w,wall_mask)
+    barrier=rasterize_wall_mask(walls,h,w,wall_mask,min_pdf_vector_confidence=.70)
     rooms=detect_rooms(barrier,labels,scale)
     link_room_boundaries(rooms,walls)
     recalibrate_extracted_room_confidence(rooms,walls,w,h)
