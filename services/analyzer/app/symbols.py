@@ -12,18 +12,24 @@ ALIASES={
     "sink":"sink",
     "basin":"sink",
     "lavatory":"sink",
+    "wash basin":"sink",
+    "washbasin":"sink",
     "toilet":"toilet",
     "wc":"toilet",
+    "water closet":"toilet",
     "bathtub":"bathtub",
     "bath":"bathtub",
     "tub":"bathtub",
     "shower":"shower",
+    "shower tray":"shower",
     "cooktop":"cooktop",
     "cooktops":"cooktop",
     "stove":"cooktop",
     "hob":"cooktop",
+    "range":"cooktop",
     "stairs":"stairs",
     "stair":"stairs",
+    "staircase":"stairs",
 }
 
 
@@ -34,27 +40,59 @@ def _normalize_kind(value:object)->str|None:
     return ALIASES.get(text) or ALIASES.get(compact)
 
 
-def _bbox(item:dict,width:int,height:int)->tuple[float,float,float,float]|None:
-    value=item.get("bbox")
+def _raw_bbox(item:dict)->tuple[float,float,float,float]|None:
+    value=item.get("bbox",item.get("box"))
     if isinstance(value,(list,tuple)) and len(value)==4:
         try:
-            x1,y1,x2,y2=map(float,value)
+            first,second,third,fourth=map(float,value)
         except (TypeError,ValueError):
             return None
-    elif isinstance(value,dict):
+        fmt=str(item.get("bbox_format",item.get("format","xyxy"))).strip().lower()
+        if fmt in {"xywh","x_y_width_height"}:
+            return first,second,first+third,second+fourth
+        if fmt in {"cxcywh","center"}:
+            return first-third/2,second-fourth/2,first+third/2,second+fourth/2
+        return first,second,third,fourth
+
+    if isinstance(value,dict):
         try:
-            x1=float(value.get("x",value.get("x1")))
-            y1=float(value.get("y",value.get("y1")))
-            if value.get("x2") is not None:
-                x2=float(value["x2"])
-                y2=float(value["y2"])
+            if value.get("cx") is not None and value.get("cy") is not None:
+                cx=float(value["cx"]); cy=float(value["cy"])
+                width=float(value["width"]); height=float(value["height"])
+                return cx-width/2,cy-height/2,cx+width/2,cy+height/2
+            x1=float(value.get("x",value.get("x1",value.get("left"))))
+            y1=float(value.get("y",value.get("y1",value.get("top"))))
+            if value.get("x2") is not None or value.get("right") is not None:
+                x2=float(value.get("x2",value.get("right")))
+                y2=float(value.get("y2",value.get("bottom")))
             else:
                 x2=x1+float(value["width"])
                 y2=y1+float(value["height"])
+            return x1,y1,x2,y2
         except (KeyError,TypeError,ValueError):
             return None
-    else:
+
+    # Some detectors return top-level coordinates instead of bbox.
+    if any(key in item for key in ("x1","left","cx")):
+        return _raw_bbox({"bbox":item,"bbox_format":item.get("bbox_format","xyxy")})
+    return None
+
+
+def _bbox(item:dict,width:int,height:int)->tuple[float,float,float,float]|None:
+    raw=_raw_bbox(item)
+    if raw is None:
         return None
+    x1,y1,x2,y2=raw
+
+    explicit_normalized=bool(item.get("normalized",False))
+    coordinate_space=str(item.get("coordinate_space","")).lower()
+    inferred_normalized=(
+        min(x1,y1,x2,y2)>=-0.05
+        and max(x1,y1,x2,y2)<=1.05
+    )
+    if explicit_normalized or coordinate_space in {"normalized","relative","0-1"} or inferred_normalized:
+        x1*=width; x2*=width
+        y1*=height; y2*=height
 
     x1=max(0.0,min(float(width),x1))
     y1=max(0.0,min(float(height),y1))
@@ -63,8 +101,20 @@ def _bbox(item:dict,width:int,height:int)->tuple[float,float,float,float]|None:
     if x2<x1:
         x1,x2=x2,x1
     if y2<y1:
-        y1,y2=y2,y1
-    if x2-x1<4 or y2-y1<4:
+        y1,y2=y2,x1  # placeholder fixed below
+    # Correct the y ordering independently from x.
+    if raw[3]<raw[1]:
+        y1=max(0.0,min(float(height),raw[3]*(height if (explicit_normalized or coordinate_space in {"normalized","relative","0-1"} or inferred_normalized) else 1.0)))
+        y2=max(0.0,min(float(height),raw[1]*(height if (explicit_normalized or coordinate_space in {"normalized","relative","0-1"} or inferred_normalized) else 1.0)))
+
+    box_width=x2-x1
+    box_height=y2-y1
+    if box_width<4 or box_height<4:
+        return None
+    area_ratio=(box_width*box_height)/max(1.0,float(width*height))
+    if area_ratio>.35:
+        return None
+    if box_width>width*.80 or box_height>height*.80:
         return None
     return x1,y1,x2,y2
 
@@ -84,7 +134,7 @@ def _iou(left:dict,right:dict)->float:
 
 def normalize_symbol_response(payload:object,width:int,height:int,min_confidence:float=.78)->list[dict]:
     if isinstance(payload,dict):
-        raw=payload.get("symbols",payload.get("detections",[]))
+        raw=payload.get("symbols",payload.get("detections",payload.get("predictions",[])))
     else:
         raw=payload
     if not isinstance(raw,list):
@@ -94,11 +144,11 @@ def normalize_symbol_response(payload:object,width:int,height:int,min_confidence
     for item in raw:
         if not isinstance(item,dict):
             continue
-        kind=_normalize_kind(item.get("kind",item.get("class",item.get("label"))))
+        kind=_normalize_kind(item.get("kind",item.get("class",item.get("label",item.get("name")))))
         if kind not in KINDS:
             continue
         try:
-            confidence=float(item.get("confidence",item.get("score",0.0)))
+            confidence=float(item.get("confidence",item.get("score",item.get("probability",0.0))))
         except (TypeError,ValueError):
             continue
         if not min_confidence<=confidence<=1.0:
