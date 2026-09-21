@@ -1,4 +1,4 @@
-import type { FloorPlanModel,Point,Wall } from "@manzil/contracts";
+import type { ElementProvenance,FloorPlanModel,Point,Wall } from "@manzil/contracts";
 
 function distance(a:Point,b:Point){
   return Math.hypot(b.x-a.x,b.y-a.y);
@@ -78,8 +78,12 @@ function projectParameter(point:Point,a:Point,b:Point){
   return ((point.x-a.x)*vx+(point.y-a.y)*vy)/lengthSq;
 }
 
-function mixedProvenance(wall:Wall):Wall["provenance"]{
-  return wall.provenance?"mixed":"manual";
+function editedProvenance(value?:ElementProvenance):ElementProvenance{
+  return value?"mixed":"manual";
+}
+
+function mixedProvenance(wall:Wall):ElementProvenance{
+  return editedProvenance(wall.provenance);
 }
 
 function protectedWall(wall:Wall){
@@ -107,25 +111,25 @@ export function splitWallAtPoint(plan:FloorPlanModel,wallId:string,point:Point):
     ...opening,
     wallId:hostForPoint({x:(opening.a.x+opening.b.x)/2,y:(opening.a.y+opening.b.y)/2}),
     reviewed:true,
-    provenance:opening.provenance?"mixed":"manual",
+    provenance:editedProvenance(opening.provenance),
   }:opening);
   const windows=plan.windows.map(opening=>opening.wallId===wallId?{
     ...opening,
     wallId:hostForPoint({x:(opening.a.x+opening.b.x)/2,y:(opening.a.y+opening.b.y)/2}),
     reviewed:true,
-    provenance:opening.provenance?"mixed":"manual",
+    provenance:editedProvenance(opening.provenance),
   }:opening);
   const rooms=plan.rooms.map(room=>room.boundaryWallIds?.includes(wallId)?{
     ...room,
     boundaryWallIds:room.boundaryWallIds.flatMap(id=>id===wallId?[firstId,secondId]:[id]),
-    provenance:room.provenance?"mixed":"manual",
+    provenance:editedProvenance(room.provenance),
   }:room);
   const dimensions=plan.dimensions?.map(item=>{
     if(item.referenceWallId!==wallId)return item;
     const anchor=item.spanA&&item.spanB
       ?{x:(item.spanA.x+item.spanB.x)/2,y:(item.spanA.y+item.spanB.y)/2}
       :item.center;
-    return {...item,referenceWallId:hostForPoint(anchor),provenance:item.provenance?"mixed":"manual"};
+    return {...item,referenceWallId:hostForPoint(anchor),provenance:editedProvenance(item.provenance)};
   });
   const walls=plan.walls.flatMap(item=>item.id===wallId?[first,second]:[item]);
   return {...plan,walls,rooms,doors,windows,dimensions};
@@ -188,9 +192,9 @@ export function joinCollinearWalls(plan:FloorPlanModel,firstId:string,secondId:s
     ...plan,
     walls,
     rooms:plan.rooms.map(room=>({...room,boundaryWallIds:rewriteIds(room.boundaryWallIds)})),
-    doors:plan.doors.map(opening=>opening.wallId===secondId?{...opening,wallId:firstId,provenance:opening.provenance?"mixed":"manual"}:opening),
-    windows:plan.windows.map(opening=>opening.wallId===secondId?{...opening,wallId:firstId,provenance:opening.provenance?"mixed":"manual"}:opening),
-    dimensions:plan.dimensions?.map(item=>item.referenceWallId===secondId?{...item,referenceWallId:firstId,provenance:item.provenance?"mixed":"manual"}:item),
+    doors:plan.doors.map(opening=>opening.wallId===secondId?{...opening,wallId:firstId,provenance:editedProvenance(opening.provenance)}:opening),
+    windows:plan.windows.map(opening=>opening.wallId===secondId?{...opening,wallId:firstId,provenance:editedProvenance(opening.provenance)}:opening),
+    dimensions:plan.dimensions?.map(item=>item.referenceWallId===secondId?{...item,referenceWallId:firstId,provenance:editedProvenance(item.provenance)}:item),
   };
 }
 
