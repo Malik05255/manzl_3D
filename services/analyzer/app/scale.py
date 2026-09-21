@@ -5,8 +5,18 @@ from statistics import median
 from .ocr import normalize_digits
 
 
-def _explicit_metric_unit(text:str)->bool:
-    return bool(re.search(r"\d+(?:\.\d+)?\s*(?:m|م|متر)\b",text))
+def _metric_value(text:str)->tuple[float|None,bool]:
+    match=re.search(r"(\d+(?:\.\d+)?)\s*(mm|cm|m|مم|سم|متر|م)?\b",text)
+    if not match:
+        return None,False
+    value=float(match.group(1))
+    unit=(match.group(2) or "").lower()
+    if unit in ("mm","مم"):
+        value/=1000.0
+    elif unit in ("cm","سم"):
+        value/=100.0
+    explicit=bool(unit)
+    return value,explicit
 
 
 def estimate_scale(labels:list[dict],walls:list[dict],width:int,height:int)->tuple[float|None,float|None]:
@@ -19,11 +29,8 @@ def estimate_scale(labels:list[dict],walls:list[dict],width:int,height:int)->tup
         text=normalize_digits(label["text"]).lower()
         if re.search(r"(?:m|م)\s*[²2]",text):
             continue
-        match=re.search(r"(\d+(?:\.\d+)?)\s*(?:m|م|متر)?",text)
-        if not match:
-            continue
-        value=float(match.group(1))
-        if not 0.4<=value<=40:
+        value,explicit=_metric_value(text)
+        if value is None or not 0.4<=value<=40:
             continue
 
         cx,cy=label["center"]["x"],label["center"]["y"]
@@ -39,7 +46,7 @@ def estimate_scale(labels:list[dict],walls:list[dict],width:int,height:int)->tup
         if best:
             ratio=value/best[1]
             if 0.0005<=ratio<=0.25:
-                candidates.append((ratio,_explicit_metric_unit(text)))
+                candidates.append((ratio,explicit))
 
     if not candidates:
         return None,None
