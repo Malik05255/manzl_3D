@@ -185,6 +185,40 @@ def _polygon_area_px2(points)->float:
     return abs(total)/2.0
 
 
+def _point_in_polygon_xy(x:float,y:float,polygon)->bool:
+    points=[_point(point) for point in polygon]
+    if len(points)<3:
+        return False
+    inside=False
+    previous=points[-1]
+    for current in points:
+        x1,y1=previous
+        x2,y2=current
+        # Treat points on an edge as inside.
+        dx=x2-x1; dy=y2-y1
+        length_sq=dx*dx+dy*dy
+        if length_sq>1e-9:
+            t=((x-x1)*dx+(y-y1)*dy)/length_sq
+            if -1e-6<=t<=1+1e-6:
+                px=x1+max(0.0,min(1.0,t))*dx
+                py=y1+max(0.0,min(1.0,t))*dy
+                if math.hypot(x-px,y-py)<=1.5:
+                    return True
+        if ((y1>y)!=(y2>y)):
+            crossing=x1+(y-y1)*(x2-x1)/max(1e-12,(y2-y1))
+            if crossing>=x:
+                inside=not inside
+        previous=current
+    return inside
+
+
+def _polygon_nested_inside(inner,outer)->bool:
+    inner_points=[_point(point) for point in inner]
+    if len(inner_points)<3:
+        return False
+    return all(_point_in_polygon_xy(x,y,outer) for x,y in inner_points)
+
+
 def filter_nonarchitectural_enclosures(
     rooms:list,
     walls:list,
@@ -215,6 +249,10 @@ def filter_nonarchitectural_enclosures(
         return rooms
 
     page_area=max(1.0,float(width)*float(height))
+    room_areas={
+        id(room):_polygon_area_px2(_room_value(room,"polygon"))
+        for room in rooms
+    }
     kept=[]
     for room in rooms:
         name=str(_room_value(room,"name") or "").strip()
@@ -237,11 +275,34 @@ def filter_nonarchitectural_enclosures(
             for wall_id in ids
             if wall_id in wall_by_id
         ]
-        if not generated or reviewed or len(boundaries)<2:
+        if not generated or reviewed:
             kept.append(room)
             continue
 
-        area_ratio=_polygon_area_px2(_room_value(room,"polygon"))/page_area
+        room_polygon=_room_value(room,"polygon")
+        room_area=room_areas[id(room)]
+        nested_in_larger=any(
+            other is not room
+            and room_areas[id(other)]>=room_area*1.8
+            and _polygon_nested_inside(
+                room_polygon,
+                _room_value(other,"polygon"),
+            )
+            for other in rooms
+        )
+        # Free-space connected components around closed furniture often produce
+        # a large room contour that ignores the furniture hole plus a second
+        # tiny contour inside that hole. A legitimate architectural room should
+        # not be geometrically contained by another detected room. Named rooms
+        # were already protected above.
+        if nested_in_larger:
+            continue
+
+        if len(boundaries)<2:
+            kept.append(room)
+            continue
+
+        area_ratio=room_area/page_area
         boundary_thicknesses=sorted(
             float(_wall_value(wall,"thicknessPx"))
             for wall in boundaries
