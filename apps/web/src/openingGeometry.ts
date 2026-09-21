@@ -1,4 +1,12 @@
-import type { FloorPlanModel,Opening,Point,Wall } from "@manzil/contracts";
+import type { ElementProvenance,FloorPlanModel,Opening,Point,Wall } from "@manzil/contracts";
+
+function manualProvenance(value?:ElementProvenance):ElementProvenance{
+  return value?"mixed":"manual";
+}
+
+function markManual(opening:Opening):Opening{
+  return {...opening,reviewed:true,provenance:manualProvenance(opening.provenance)};
+}
 
 function wallVector(wall:Wall){
   const vx=wall.b.x-wall.a.x;
@@ -39,7 +47,7 @@ export function removeOpening(plan:FloorPlanModel,id:string):FloorPlanModel{
 export function changeOpeningKind(plan:FloorPlanModel,id:string,kind:Opening["kind"]):FloorPlanModel|null{
   const opening=findOpening(plan,id);
   if(!opening)return null;
-  return replaceOpening(plan,{...opening,kind});
+  return replaceOpening(plan,markManual({...opening,kind}));
 }
 
 function normalizedOpening(plan:FloorPlanModel,opening:Opening,widthPx:number,centerDistance:number):Opening|null{
@@ -54,7 +62,7 @@ function normalizedOpening(plan:FloorPlanModel,opening:Opening,widthPx:number,ce
   if(safeWidth<6)return null;
   const half=safeWidth/2;
   const center=Math.max(margin+half,Math.min(vector.length-margin-half,centerDistance));
-  return {...opening,a:pointAt(wall,center-half),b:pointAt(wall,center+half)};
+  return markManual({...opening,a:pointAt(wall,center-half),b:pointAt(wall,center+half)});
 }
 
 export function openingMetrics(plan:FloorPlanModel,id:string){
