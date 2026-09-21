@@ -30,7 +30,7 @@ def classify_text(text:str)->str:
     low=normalize_digits(text).lower().strip()
     if any(word in low for word in ROOM_WORDS): return "room_name"
     if re.search(r"(m\s*[²2]|م\s*[²2]|متر\s*مربع)",low): return "note"
-    if re.search(r"\d+(?:\.\d+)?\s*(?:m|م|متر)\b",low) or re.search(r"\d+(?:\.\d+)?\s*[x×*]\s*\d+(?:\.\d+)?",low): return "dimension"
+    if re.search(r"\d+(?:\.\d+)?\s*(?:mm|cm|m|مم|سم|متر|م)\b",low) or re.search(r"\d+(?:\.\d+)?\s*[x×*]\s*\d+(?:\.\d+)?",low): return "dimension"
     if re.fullmatch(r"\s*\d+\.\d+\s*",low):
         try:
             value=float(low.strip())
@@ -113,6 +113,23 @@ def _merge_labels(primary:list[dict],secondary:list[dict],distance_px:float)->li
     return result
 
 
+def _restore_rotated_labels(labels:list[dict],original_h:int,original_w:int,direction:str)->list[dict]:
+    restored=[]
+    for label in labels:
+        candidate=dict(label)
+        center=dict(candidate["center"])
+        xr=float(center["x"]); yr=float(center["y"])
+        if direction=="cw":
+            center={"x":yr,"y":float(original_h-1)-xr}
+        elif direction=="ccw":
+            center={"x":float(original_w-1)-yr,"y":xr}
+        else:
+            raise ValueError("ROTATION_DIRECTION")
+        candidate["center"]=center
+        restored.append(candidate)
+    return restored
+
+
 def extract_ocr_labels(image:np.ndarray)->list[dict]:
     lang=os.getenv("OCR_LANG","ara+eng")
     rgb=cv2.cvtColor(image,cv2.COLOR_BGR2RGB) if image.ndim==3 else cv2.cvtColor(image,cv2.COLOR_GRAY2RGB)
@@ -126,7 +143,7 @@ def extract_ocr_labels(image:np.ndarray)->list[dict]:
     )
     numeric_config=(
         "--psm 11 "
-        "-c tessedit_char_whitelist=0123456789٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹.xX×*mMمتر² "
+        "-c tessedit_char_whitelist=0123456789٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹.xX×*mMcCمترسم² "
         "-c preserve_interword_spaces=1"
     )
     numeric_labels=_ocr_pass(numeric,lang,numeric_config,30,"dim")
@@ -136,5 +153,18 @@ def extract_ocr_labels(image:np.ndarray)->list[dict]:
         and label["kind"] in ("dimension","unknown","note")
     ]
 
+    rotated_labels=[]
+    if os.getenv("OCR_ROTATED_DIMENSIONS","1").strip().lower() not in ("0","false","off","no"):
+        clockwise=cv2.rotate(numeric,cv2.ROTATE_90_CLOCKWISE)
+        counterclockwise=cv2.rotate(numeric,cv2.ROTATE_90_COUNTERCLOCKWISE)
+        cw=_ocr_pass(clockwise,lang,numeric_config,32,"dim-cw")
+        ccw=_ocr_pass(counterclockwise,lang,numeric_config,32,"dim-ccw")
+        rotated_labels=_restore_rotated_labels(cw,image.shape[0],image.shape[1],"cw")+_restore_rotated_labels(ccw,image.shape[0],image.shape[1],"ccw")
+        rotated_labels=[
+            label for label in rotated_labels
+            if re.search(r"[0-9٠-٩۰-۹]",label["text"])
+            and label["kind"] in ("dimension","unknown","note")
+        ]
+
     distance=max(12.0,min(image.shape[:2])*0.012)
-    return _merge_labels(base,numeric_labels,distance)
+    return _merge_labels(base,numeric_labels+rotated_labels,distance)
