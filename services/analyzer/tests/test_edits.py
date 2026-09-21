@@ -487,3 +487,41 @@ def test_ai_resize_marks_changed_geometry_provenance():
     assert bed.provenance=="mixed"
     assert hall.provenance=="mixed"
     assert wall.provenance=="mixed"
+
+
+def test_merge_relinks_boundary_wall_ids_after_shared_wall_removal():
+    plan=sample_plan()
+    plan.rooms=[
+        Room(
+            id="bed",name="غرفة النوم",
+            polygon=[Point(x=100,y=100),Point(x=500,y=100),Point(x=500,y=500),Point(x=100,y=500)],
+            confidence=.95,areaM2=16,
+            boundaryWallIds=["left","top-bed","shared","bottom-bed"],
+        ),
+        Room(
+            id="bath",name="حمام",
+            polygon=[Point(x=500,y=100),Point(x=600,y=100),Point(x=600,y=500),Point(x=500,y=500)],
+            confidence=.95,areaM2=4,
+            boundaryWallIds=["shared","top-bath","right","bottom-bath"],
+        ),
+    ]
+    plan.walls=[
+        Wall(id="left",a=Point(x=100,y=100),b=Point(x=100,y=500),thicknessPx=10,confidence=.9),
+        Wall(id="top-bed",a=Point(x=100,y=100),b=Point(x=500,y=100),thicknessPx=10,confidence=.9),
+        Wall(id="shared",a=Point(x=500,y=100),b=Point(x=500,y=500),thicknessPx=10,confidence=.9),
+        Wall(id="bottom-bed",a=Point(x=100,y=500),b=Point(x=500,y=500),thicknessPx=10,confidence=.9),
+        Wall(id="top-bath",a=Point(x=500,y=100),b=Point(x=600,y=100),thicknessPx=10,confidence=.9),
+        Wall(id="right",a=Point(x=600,y=100),b=Point(x=600,y=500),thicknessPx=10,confidence=.9),
+        Wall(id="bottom-bath",a=Point(x=500,y=500),b=Point(x=600,y=500),thicknessPx=10,confidence=.9),
+    ]
+    response=build_proposals(EditRequest(
+        project_id="project-1",
+        command="احذف حمام وضم مساحته الى غرفة النوم",
+        plan=plan,
+    ))
+    assert response.proposals
+    preview=response.proposals[0].previewPlan
+    assert not any(wall.id=="shared" for wall in preview.walls)
+    bed=next(room for room in preview.rooms if room.id=="bed")
+    assert "shared" not in bed.boundaryWallIds
+    assert set(bed.boundaryWallIds)=={"left","top-bed","top-bath","right","bottom-bed","bottom-bath"}
