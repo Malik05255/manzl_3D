@@ -97,6 +97,79 @@ def _dedupe(lines:list[tuple[int,int,int,int]],tol:int=8)->list[tuple[int,int,in
     return _merge_axis_lines(lines,axis_tol=tol)
 
 
+def _collapse_parallel_wall_bands(
+    ink:np.ndarray,
+    lines:list[tuple[int,int,int,int]],
+)->list[tuple[int,int,int,int]]:
+    """Collapse multiple Hough centerlines produced by one thick wall band.
+
+    Lines must substantially overlap along their run. Axial gaps are never
+    bridged here, so door/window gaps remain available to opening detection.
+    """
+    pending=[tuple(line) for line in lines]
+    changed=True
+    while changed:
+        changed=False
+        result=[]
+        used=[False]*len(pending)
+        for index,left in enumerate(pending):
+            if used[index]:
+                continue
+            current=left
+            for j in range(index+1,len(pending)):
+                if used[j]:
+                    continue
+                right=pending[j]
+                lh=abs(current[3]-current[1])<=abs(current[2]-current[0])
+                rh=abs(right[3]-right[1])<=abs(right[2]-right[0])
+                if lh!=rh:
+                    continue
+
+                if lh:
+                    c_axis=(current[1]+current[3])/2
+                    r_axis=(right[1]+right[3])/2
+                    cs,ce=sorted((current[0],current[2]))
+                    rs,re=sorted((right[0],right[2]))
+                else:
+                    c_axis=(current[0]+current[2])/2
+                    r_axis=(right[0]+right[2])/2
+                    cs,ce=sorted((current[1],current[3]))
+                    rs,re=sorted((right[1],right[3]))
+
+                shared=max(0.0,min(ce,re)-max(cs,rs))
+                overlap=shared/max(1.0,min(ce-cs,re-rs))
+                if overlap<.62:
+                    continue
+
+                c_thickness=_estimate_thickness(ink,current)
+                r_thickness=_estimate_thickness(ink,right)
+                axis_tol=max(4.0,(c_thickness+r_thickness)*.60)
+                if abs(c_axis-r_axis)>axis_tol:
+                    continue
+
+                c_len=max(1.0,ce-cs)
+                r_len=max(1.0,re-rs)
+                axis=(c_axis*c_len+r_axis*r_len)/(c_len+r_len)
+                start=min(cs,rs)
+                end=max(ce,re)
+                if lh:
+                    y=int(round(axis))
+                    current=(int(round(start)),y,int(round(end)),y)
+                else:
+                    x=int(round(axis))
+                    current=(x,int(round(start)),x,int(round(end)))
+                used[j]=True
+                changed=True
+            used[index]=True
+            result.append(current)
+        pending=result
+    return sorted(
+        pending,
+        key=lambda p:math.hypot(p[2]-p[0],p[3]-p[1]),
+        reverse=True,
+    )
+
+
 def _estimate_thickness(ink:np.ndarray,line:tuple[int,int,int,int])->float:
     x1,y1,x2,y2=line
     h,w=ink.shape[:2]
@@ -465,7 +538,7 @@ def detect_walls(ink:np.ndarray)->tuple[list[dict],np.ndarray]:
                 continue
             lines.append(candidate)
 
-    deduped=_merge_axis_lines(lines)
+    deduped=_collapse_parallel_wall_bands(ink,_merge_axis_lines(lines))
     walls=[]
     for i,(x1,y1,x2,y2) in enumerate(deduped,start=1):
         thickness=round(_estimate_thickness(ink,(x1,y1,x2,y2)),2)
