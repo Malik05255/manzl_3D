@@ -5,7 +5,7 @@ from .ocr import extract_ocr_labels
 from .openings import detect_doors,detect_windows,normalize_opening_hosts
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
-from .walls import detect_walls
+from .walls import detect_walls,rasterize_wall_mask
 
 def assemble_plan(image:np.ndarray,project_id:str,filename:str,mime_type:str,labels:list[dict],walls:list[dict],rooms:list[dict],scale:float|None,scale_confidence:float|None,source_page:int=1,source_page_count:int|None=None,doors:list[dict]|None=None,windows:list[dict]|None=None,scale_warnings:list[str]|None=None,analysis:dict|None=None)->dict:
     h,w=image.shape[:2]
@@ -46,5 +46,6 @@ def analyze_image(image:np.ndarray,project_id:str,filename:str,mime_type:str)->d
     doors=detect_doors(image,walls,scale)
     windows=detect_windows(image,walls,scale)
     walls,doors,windows=normalize_opening_hosts(walls,doors,windows)
-    rooms=detect_rooms(wall_mask,labels,scale)
+    room_barrier_mask=rasterize_wall_mask(walls,h,w,wall_mask)
+    rooms=detect_rooms(room_barrier_mask,labels,scale)
     return assemble_plan(image,project_id,filename,mime_type,labels,walls,rooms,scale,scale_confidence,doors=doors,windows=windows,scale_warnings=scale_warnings)
