@@ -1,7 +1,7 @@
 import { useEffect,useMemo,useRef,useState } from "react";
 import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Cloud,FileImage,FileText,Hammer,Layers3,LoaderCircle,Save,Sparkles,Undo2,UploadCloud,WandSparkles } from "lucide-react";
 import type { EditProposal,FloorPlanModel,Point,ProjectView } from "@manzil/contracts";
-import { applyProposal,askEngineer,createProject,getProject,saveRevision,uploadSource } from "./api";
+import { applyProposal,askEngineer,createProject,getProject,getProjectPreview,saveRevision,uploadSource } from "./api";
 import { PlanCanvas } from "./PlanCanvas";
 import { useAppUpdate } from "./useAppUpdate";
 
@@ -58,7 +58,14 @@ function Editor({initialProject}:{initialProject:ProjectView}){
   const[project,setProject]=useState(initialProject);const[plan,setPlan]=useState<FloorPlanModel>(initialProject.plan!);const[savedPlan,setSavedPlan]=useState<FloorPlanModel>(initialProject.plan!);
   const[selectedWall,setSelectedWall]=useState<string|null>(null);const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
   const[calibrating,setCalibrating]=useState(false);const[calibrationPoints,setCalibrationPoints]=useState<Point[]>([]);const[knownDistance,setKnownDistance]=useState("");
+  const[sourcePreview,setSourcePreview]=useState<string|null>(null);const[sourceOpacity,setSourceOpacity]=useState(.42);
   const dirty=useMemo(()=>JSON.stringify(plan)!==JSON.stringify(savedPlan),[plan,savedPlan]);
+
+  useEffect(()=>{
+    let active=true;let objectUrl:string|null=null;
+    getProjectPreview(project.id).then(url=>{objectUrl=url;if(active)setSourcePreview(url);else if(url)URL.revokeObjectURL(url);}).catch(()=>undefined);
+    return()=>{active=false;if(objectUrl)URL.revokeObjectURL(objectUrl);};
+  },[project.id]);
   const ask=async()=>{if(!command.trim())return;setThinking(true);setNotice(null);setPreview(null);try{const r=await askEngineer(project.id,command.trim());setProposals(r.proposals);if(r.needsClarification)setNotice(r.needsClarification);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحليل الطلب");}finally{setThinking(false);}};
   const save=async()=>{setSaving(true);try{const u=await saveRevision(project.id,plan,"تعديل يدوي");setProject(u);setSavedPlan(plan);setNotice("تم حفظ التعديل في السحابة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر الحفظ");}finally{setSaving(false);}};
   const apply=async()=>{if(!preview)return;setSaving(true);try{const u=await applyProposal(project.id,{command,proposal:preview});if(u.plan){setPlan(u.plan);setSavedPlan(u.plan);}setProject(u);setPreview(null);setProposals([]);setCommand("");setNotice("تم اعتماد التعديل وحفظ نسخة جديدة.");}catch(e){setNotice(e instanceof Error?e.message:"تعذر تطبيق التعديل");}finally{setSaving(false);}};
@@ -81,10 +88,11 @@ function Editor({initialProject}:{initialProject:ProjectView}){
   return <main className="editor-page">
     <header className="editor-header"><Brand compact/><div className="project-name"><FileText size={17}/><strong>{project.name}</strong></div><div className="editor-actions"><button className="ghost" disabled={!dirty} onClick={()=>setPlan(savedPlan)}><Undo2 size={17}/> تراجع</button><button className="primary small" disabled={!dirty||saving} onClick={save}><Save size={17}/> حفظ</button></div></header>
     <div className="editor-workspace">
-      <section className="plan-panel"><div className="panel-title"><div><strong>منطقة التعديل</strong><span>اسحب جدارًا لتحريكه أو استخدم H Engineer</span></div><div className="quality-pill">جودة التحليل {Math.round(plan.quality.overall*100)}%</div></div>
+      <section className="plan-panel"><div className="panel-title"><div><strong>منطقة التعديل</strong><span>اسحب جدارًا لتحريكه أو استخدم H Engineer</span></div><div className="panel-status">{sourcePreview&&<label className="overlay-control"><span>الأصل</span><input type="range" min="0" max=".85" step=".05" value={sourceOpacity} onChange={e=>setSourceOpacity(Number(e.target.value))}/></label>}<div className="quality-pill">جودة التحليل {Math.round(plan.quality.overall*100)}%</div></div></div>
         <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)} selectedWallId={selectedWall} onSelectWall={setSelectedWall} onPlanChange={setPlan}
           calibrationMode={calibrating} calibrationPoints={calibrationPoints}
-          onCalibrationPoint={point=>setCalibrationPoints(points=>points.length<2?[...points,point]:points)}/>
+          onCalibrationPoint={point=>setCalibrationPoints(points=>points.length<2?[...points,point]:points)}
+          backgroundUrl={sourcePreview} backgroundOpacity={sourceOpacity}/>
         {plan.quality.needsCalibration&&!calibrating&&<div className="inline-warning calibration-warning"><span>تعذر تثبيت المقياس تلقائيًا. ثبته مرة واحدة لتفعيل أوامر الأمتار بدقة.</span><button className="ghost" onClick={()=>{setCalibrating(true);setCalibrationPoints([]);}}>معايرة الآن</button></div>}
         {calibrating&&<div className="calibration-bar"><div><strong>معايرة المقياس</strong><span>{calibrationPoints.length<2?`حدد نقطتين على بُعد معروف · ${calibrationPoints.length}/2`:"أدخل المسافة الحقيقية بين النقطتين"}</span></div>{calibrationPoints.length===2&&<input inputMode="decimal" value={knownDistance} onChange={e=>setKnownDistance(e.target.value)} placeholder="مثال: 4.20 م"/>}<button className="ghost" onClick={()=>{setCalibrating(false);setCalibrationPoints([]);setKnownDistance("");}}>إلغاء</button>{calibrationPoints.length===2&&<button className="primary small" onClick={applyCalibration}><Check size={16}/> تثبيت</button>}</div>}
       </section>
