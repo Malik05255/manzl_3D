@@ -92,3 +92,23 @@ def test_semantic_merge_payload_is_canonicalized():
 def test_explicit_merge_bypasses_external_semantic_provider():
     request=sample_request("احذف الصالة وضمها الى غرفة النوم")
     assert _deterministic_understands(request) is True
+
+
+def test_selected_room_context_bypasses_provider_for_exact_size():
+    request=sample_request("خليها 5×4")
+    request.target_room_id="bed"
+    assert _deterministic_understands(request) is True
+
+
+def test_semantic_payload_can_use_selected_room_when_name_is_omitted():
+    request=sample_request("كبرها شوي")
+    request.target_room_id="bed"
+    normalized,clarification=_canonical_from_payload({
+        "action":"resize_room",
+        "target_room":"",
+        "width_m":5,
+        "height_m":4,
+        "needs_clarification":"",
+    },request)
+    assert clarification is None
+    assert normalized=="عدل غرفة النوم إلى 5×4"
