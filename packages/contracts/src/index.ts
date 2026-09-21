@@ -2,8 +2,9 @@ export type ProjectStatus = "created" | "uploaded" | "queued" | "analyzing" | "r
 export type AnalysisPhase = "created" | "upload" | "preprocess" | "ocr" | "geometry" | "rooms" | "validation" | "ready" | "error";
 
 export interface Point { x: number; y: number; }
-export interface Wall { id: string; a: Point; b: Point; thicknessPx: number; confidence: number; }
-export interface Room { id: string; name: string; polygon: Point[]; confidence: number; areaM2?: number | null; }
+export type ElementProvenance = "opencv" | "pdf-vector" | "ocr" | "pdf-text" | "manual" | "ai" | "mixed";
+export interface Wall { id: string; a: Point; b: Point; thicknessPx: number; confidence: number; reviewed?: boolean; provenance?: ElementProvenance; }
+export interface Room { id: string; name: string; polygon: Point[]; confidence: number; areaM2?: number | null; reviewed?: boolean; provenance?: ElementProvenance; }
 export interface Opening {
   id: string;
   kind: "door" | "window";
@@ -11,6 +12,8 @@ export interface Opening {
   a: Point;
   b: Point;
   confidence: number;
+  reviewed?: boolean;
+  provenance?: ElementProvenance;
 }
 export interface PlanLabel {
   id: string;
@@ -18,6 +21,8 @@ export interface PlanLabel {
   center: Point;
   confidence: number;
   kind: "room_name" | "dimension" | "note" | "unknown";
+  reviewed?: boolean;
+  provenance?: ElementProvenance;
 }
 export interface FloorPlanQuality {
   overall: number;
@@ -105,6 +110,11 @@ function fpFinite(value:unknown):value is number{
 function fpConfidence(value:unknown){
   return fpFinite(value)&&value>=0&&value<=1;
 }
+function fpElementMetadata(value:Record<string,unknown>){
+  const provenance=value.provenance;
+  return (value.reviewed===undefined||typeof value.reviewed==="boolean")
+    &&(provenance===undefined||["opencv","pdf-vector","ocr","pdf-text","manual","ai","mixed"].includes(String(provenance)));
+}
 function fpPoint(value:unknown):value is Point{
   return fpObject(value)&&fpFinite(value.x)&&fpFinite(value.y);
 }
@@ -113,7 +123,8 @@ function fpWall(value:unknown):value is Wall{
     &&typeof value.id==="string"&&value.id.length>0
     &&fpPoint(value.a)&&fpPoint(value.b)
     &&fpFinite(value.thicknessPx)&&value.thicknessPx>0&&value.thicknessPx<=200
-    &&fpConfidence(value.confidence);
+    &&fpConfidence(value.confidence)
+    &&fpElementMetadata(value);
 }
 function fpRoom(value:unknown):value is Room{
   return fpObject(value)
@@ -122,7 +133,8 @@ function fpRoom(value:unknown):value is Room{
     &&Array.isArray(value.polygon)&&value.polygon.length>=3&&value.polygon.length<=500
     &&value.polygon.every(fpPoint)
     &&fpConfidence(value.confidence)
-    &&(value.areaM2===undefined||value.areaM2===null||(fpFinite(value.areaM2)&&value.areaM2>=0&&value.areaM2<=100000));
+    &&(value.areaM2===undefined||value.areaM2===null||(fpFinite(value.areaM2)&&value.areaM2>=0&&value.areaM2<=100000))
+    &&fpElementMetadata(value);
 }
 function fpOpening(value:unknown):value is Opening{
   return fpObject(value)
@@ -130,7 +142,8 @@ function fpOpening(value:unknown):value is Opening{
     &&(value.kind==="door"||value.kind==="window")
     &&(value.wallId===undefined||value.wallId===null||typeof value.wallId==="string")
     &&fpPoint(value.a)&&fpPoint(value.b)
-    &&fpConfidence(value.confidence);
+    &&fpConfidence(value.confidence)
+    &&fpElementMetadata(value);
 }
 function fpLabel(value:unknown):value is PlanLabel{
   return fpObject(value)
@@ -138,7 +151,8 @@ function fpLabel(value:unknown):value is PlanLabel{
     &&typeof value.text==="string"&&value.text.length<=500
     &&fpPoint(value.center)
     &&fpConfidence(value.confidence)
-    &&["room_name","dimension","note","unknown"].includes(String(value.kind));
+    &&["room_name","dimension","note","unknown"].includes(String(value.kind))
+    &&fpElementMetadata(value);
 }
 
 export function floorPlanValidationError(value:unknown,expectedId?:string):string|null{
