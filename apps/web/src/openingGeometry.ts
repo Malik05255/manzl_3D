@@ -145,6 +145,8 @@ export function addOpeningToWall(plan:FloorPlanModel,wallId:string,kind:Opening[
     a:pointAt(wall,center-widthPx/2),
     b:pointAt(wall,center+widthPx/2),
     confidence:1,
+    reviewed:true,
+    provenance:"manual",
   };
   return replaceOpening(plan,opening);
 }
