@@ -45,7 +45,7 @@ function Choice({onEdit,onBack}:{onEdit:()=>void;onBack:()=>void}){return <main 
 </main>;}
 
 function Upload({onStarted,onBack}:{onStarted:(p:ProjectView)=>void;onBack:()=>void}){
-  const input=useRef<HTMLInputElement|null>(null);const[busy,setBusy]=useState(false);const[pct,setPct]=useState(0);const[error,setError]=useState<string|null>(null);const[mode,setMode]=useState<"upload"|"backup">("upload");
+  const input=useRef<HTMLInputElement|null>(null);const[busy,setBusy]=useState(false);const[dragActive,setDragActive]=useState(false);const[pct,setPct]=useState(0);const[error,setError]=useState<string|null>(null);const[mode,setMode]=useState<"upload"|"backup">("upload");
   const handle=async(file?:File)=>{
     if(!file)return;
     const backup=file.name.toLowerCase().endsWith(".json")||file.type==="application/json";
@@ -70,9 +70,26 @@ function Upload({onStarted,onBack}:{onStarted:(p:ProjectView)=>void;onBack:()=>v
       setBusy(false);
     }
   };
+  useEffect(()=>{
+    const onPaste=(event:ClipboardEvent)=>{
+      if(busy)return;
+      const file=[...(event.clipboardData?.files??[])].find(item=>Boolean(inferSourceMime(item)));
+      if(file){event.preventDefault();void handle(file);}
+    };
+    window.addEventListener("paste",onPaste);
+    return()=>window.removeEventListener("paste",onPaste);
+  },[busy]);
   return <main className="center-page"><div className="top-inline"><button className="ghost" onClick={onBack}><ArrowLeft size={18}/> رجوع</button><Brand compact/></div>
     <section className="upload-card"><span className="eyebrow"><Sparkles size={16}/> تعديل مخطط قائم</span><h2>ارفع المخطط</h2><p>ارفع PDF أو صورة للتحليل، أو استعد نسخة مشروع JSON سبق تصديرها من منزل H.</p>
-      <button className="drop-zone" onClick={()=>input.current?.click()} disabled={busy}>{busy?<LoaderCircle className="spin" size={44}/>:<UploadCloud size={44}/>}<strong>{busy?(mode==="backup"?"جارٍ استعادة المشروع...":`جارٍ الرفع ${pct}%`):"اختر ملفًا من جهازك"}</strong><span>PDF · PNG · JPG · WEBP · JSON</span></button>
+      <button className={`drop-zone ${dragActive?"drag-active":""}`} onClick={()=>input.current?.click()} disabled={busy}
+        onDragEnter={event=>{event.preventDefault();if(!busy)setDragActive(true);}}
+        onDragOver={event=>{event.preventDefault();if(!busy)setDragActive(true);}}
+        onDragLeave={event=>{event.preventDefault();if(event.currentTarget===event.target)setDragActive(false);}}
+        onDrop={event=>{event.preventDefault();setDragActive(false);if(!busy)void handle(event.dataTransfer.files?.[0]);}}>
+        {busy?<LoaderCircle className="spin" size={44}/>:<UploadCloud size={44}/>}
+        <strong>{busy?(mode==="backup"?"جارٍ استعادة المشروع...":`جارٍ الرفع ${pct}%`):dragActive?"أفلت الملف هنا":"اختر ملفًا أو اسحبه هنا"}</strong>
+        <span>PDF · PNG · JPG · WEBP · JSON · ويمكن لصق صورة مباشرة</span>
+      </button>
       <input ref={input} hidden type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.json,application/pdf,application/json,image/png,image/jpeg,image/webp" onChange={e=>handle(e.target.files?.[0])}/>{error&&<div className="error-box">{error}</div>}
     </section>
   </main>;
