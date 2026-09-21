@@ -1,7 +1,27 @@
 import { useEffect,useMemo,useRef,useState } from "react";
 import type { ElementProvenance,FloorPlanModel,Point,ValidationFinding,Wall } from "@manzil/contracts";
-import { Hand,Magnet,Minus,Plus,RotateCcw,Ruler } from "lucide-react";
+import { Hand,Magnet,Maximize2,Minus,Plus,RotateCcw,Ruler } from "lucide-react";
 import { easePreview,interpolatePlan } from "./previewInterpolation";
+
+export interface PlanLayerVisibility{
+  source:boolean;
+  rooms:boolean;
+  walls:boolean;
+  openings:boolean;
+  labels:boolean;
+  validation:boolean;
+  uncertainty:boolean;
+}
+
+export const DEFAULT_PLAN_LAYERS:PlanLayerVisibility={
+  source:true,
+  rooms:true,
+  walls:true,
+  openings:true,
+  labels:true,
+  validation:true,
+  uncertainty:true,
+};
 
 interface Props{
   plan:FloorPlanModel;
@@ -21,6 +41,7 @@ interface Props{
   backgroundOpacity?:number;
   comparisonPlan?:FloorPlanModel|null;
   validationFindings?:ValidationFinding[];
+  layers?:Partial<PlanLayerVisibility>;
 }
 type DragState={wallId:string;startClient:Point;original:Wall;basePlan:FloorPlanModel;changed:boolean}|null;
 type PanDragState={pointerId:number;startClient:Point;scrollLeft:number;scrollTop:number}|null;
@@ -159,10 +180,12 @@ export function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall)
   };
 }
 
-export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSelectRoom,selectedOpeningId,onSelectOpening,onPlanChange,onPlanCommit,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint,backgroundUrl=null,backgroundOpacity=.38,comparisonPlan=null,validationFindings=[]}:Props){
+export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSelectRoom,selectedOpeningId,onSelectOpening,onPlanChange,onPlanCommit,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint,backgroundUrl=null,backgroundOpacity=.38,comparisonPlan=null,validationFindings=[],layers}:Props){
   const[zoom,setZoom]=useState(1);
+  const layerState=useMemo(()=>({...DEFAULT_PLAN_LAYERS,...layers}),[layers]);
   const[drag,setDrag]=useState<DragState>(null);
   const[panMode,setPanMode]=useState(()=>typeof window!=="undefined"&&window.matchMedia?.("(pointer: coarse)").matches===true);
+  const[spacePan,setSpacePan]=useState(false);
   const[panDrag,setPanDrag]=useState<PanDragState>(null);
   const[measureMode,setMeasureMode]=useState(false);
   const[snapEnabled,setSnapEnabled]=useState(true);
@@ -170,6 +193,29 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
   const[previewProgress,setPreviewProgress]=useState(1);
   const svgRef=useRef<SVGSVGElement|null>(null);
   const viewportRef=useRef<HTMLDivElement|null>(null);
+  const effectivePan=panMode||spacePan;
+  useEffect(()=>{
+    const down=(event:KeyboardEvent)=>{
+      const target=event.target as HTMLElement|null;
+      const tag=target?.tagName?.toLowerCase();
+      if(tag==="input"||tag==="textarea"||tag==="select"||target?.isContentEditable)return;
+      if(event.code==="Space"){
+        event.preventDefault();
+        setSpacePan(true);
+      }
+      if(event.key==="Escape"){
+        setMeasureMode(false);
+        setMeasurePoints([]);
+      }
+    };
+    const up=(event:KeyboardEvent)=>{if(event.code==="Space")setSpacePan(false);};
+    const blur=()=>setSpacePan(false);
+    window.addEventListener("keydown",down);
+    window.addEventListener("keyup",up);
+    window.addEventListener("blur",blur);
+    return()=>{window.removeEventListener("keydown",down);window.removeEventListener("keyup",up);window.removeEventListener("blur",blur);};
+  },[]);
+
   useEffect(()=>{
     if(!comparisonPlan){setPreviewProgress(1);return;}
     if(typeof window!=="undefined"&&window.matchMedia?.("(prefers-reduced-motion: reduce)").matches){setPreviewProgress(1);return;}
@@ -240,7 +286,7 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
     return{x:dx*(plan.widthPx/rect.width),y:dy*(plan.heightPx/rect.height)};
   };
   const move=(event:React.PointerEvent)=>{
-    if(panDrag&&panMode&&!calibrationMode){
+    if(panDrag&&effectivePan&&!calibrationMode){
       const viewport=viewportRef.current;
       if(viewport){
         viewport.scrollLeft=panDrag.scrollLeft-(event.clientX-panDrag.startClient.x);
@@ -248,7 +294,7 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
       }
       return;
     }
-    if(!drag||!onPlanChange||readonly||calibrationMode||measureMode||panMode)return;
+    if(!drag||!onPlanChange||readonly||calibrationMode||measureMode||effectivePan)return;
     const d=toPlanDelta(event.clientX-drag.startClient.x,event.clientY-drag.startClient.y);
     const horizontal=Math.abs(drag.original.a.y-drag.original.b.y)<Math.abs(drag.original.a.x-drag.original.b.x);
     const rawAxis=horizontal?drag.original.a.y+d.y:drag.original.a.x+d.x;
@@ -271,7 +317,7 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
     setDrag(null);
   };
   const startPan=(event:React.PointerEvent<HTMLDivElement>)=>{
-    if(!panMode||calibrationMode||event.button!==0)return;
+    if(!effectivePan||calibrationMode||event.button!==0)return;
     const viewport=viewportRef.current;
     if(!viewport)return;
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -308,13 +354,13 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
     setZoom(value=>Math.max(.45,Math.min(3,value+step)));
   };
 
-  return <div className={`canvas-shell ${calibrationMode?"calibration-active":""} ${measureMode?"measure-active":""} ${panMode&&!calibrationMode?"pan-active":""}`}>
+  return <div className={`canvas-shell ${calibrationMode?"calibration-active":""} ${measureMode?"measure-active":""} ${effectivePan&&!calibrationMode?"pan-active":""}`}>
     <div className="canvas-toolbar">
       <button className="icon-button" onClick={()=>setZoom(z=>Math.min(z+.15,2.5))} aria-label="تكبير"><Plus size={18}/></button>
       <span>{Math.round(zoom*100)}%</span>
       <button className="icon-button" onClick={()=>setZoom(z=>Math.max(z-.15,.45))} aria-label="تصغير"><Minus size={18}/></button>
-      <button className="icon-button" onClick={()=>setZoom(1)} aria-label="إعادة الضبط"><RotateCcw size={18}/></button>
-      <button className={`icon-button ${panMode&&!calibrationMode?"active-tool":""}`} disabled={calibrationMode} onClick={()=>{setPanMode(value=>!value);setMeasureMode(false);setMeasurePoints([]);setDrag(null);setPanDrag(null);}} aria-label="تحريك مساحة العمل" title="وضع التحريك يمنع تعديل العناصر بالخطأ"><Hand size={17}/></button>
+      <button className="icon-button" onClick={()=>setZoom(1)} aria-label="إعادة الضبط"><RotateCcw size={18}/></button><button className="icon-button" onClick={()=>{setZoom(1);const viewport=viewportRef.current;if(viewport){viewport.scrollLeft=0;viewport.scrollTop=0;}}} aria-label="ملاءمة المخطط للشاشة" title="ملاءمة المخطط"><Maximize2 size={17}/></button>
+      <button className={`icon-button ${effectivePan&&!calibrationMode?"active-tool":""}`} disabled={calibrationMode} onClick={()=>{setPanMode(value=>!value);setMeasureMode(false);setMeasurePoints([]);setDrag(null);setPanDrag(null);}} aria-label="تحريك مساحة العمل" title="وضع التحريك يمنع تعديل العناصر بالخطأ"><Hand size={17}/></button>
       <button className={`icon-button ${snapEnabled?"active-tool":""}`} disabled={!plan.metersPerPixel||calibrationMode||measureMode||panMode} onClick={()=>setSnapEnabled(value=>!value)} aria-label="محاذاة تلقائية كل 5 سم" title="محاذاة 5 سم · اضغط Shift للتجاوز"><Magnet size={17}/></button>
       <button className={`icon-button ${measureMode?"active-tool":""}`} disabled={calibrationMode} onClick={()=>{setMeasureMode(value=>!value);setPanMode(false);setMeasurePoints([]);setDrag(null);setPanDrag(null);}} aria-label="قياس مسافة"><Ruler size={17}/></button>
     </div>
@@ -322,7 +368,7 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
       <div className="plan-zoom-stage" style={zoomStageStyle}>
       <svg ref={svgRef} className="plan-svg" viewBox={viewBox} onPointerDown={handleCanvasPointer}>
         <rect width={plan.widthPx} height={plan.heightPx} fill="#fff"/>
-        {backgroundUrl&&<image href={backgroundUrl} x={0} y={0} width={plan.widthPx} height={plan.heightPx} preserveAspectRatio="none" opacity={backgroundOpacity} pointerEvents="none"/>}
+        {layerState.source&&backgroundUrl&&<image href={backgroundUrl} x={0} y={0} width={plan.widthPx} height={plan.heightPx} preserveAspectRatio="none" opacity={backgroundOpacity} pointerEvents="none"/>}
         {comparisonPlan&&previewProgress>=1&&comparisonPlan.rooms.map(oldRoom=>{
           const current=plan.rooms.find(room=>room.id===oldRoom.id);
           const oldPoints=oldRoom.polygon.map(p=>`${p.x},${p.y}`).join(" ");
@@ -337,12 +383,12 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
           if(!changed)return null;
           return <line key={`old-wall-${oldWall.id}`} x1={oldWall.a.x} y1={oldWall.a.y} x2={oldWall.b.x} y2={oldWall.b.y} stroke="#e11d48" strokeWidth={Math.max(3,oldWall.thicknessPx)} strokeDasharray="12 8" opacity={.8} pointerEvents="none"/>;
         })}
-        {renderPlan.rooms.map(room=>{
+        {layerState.rooms&&renderPlan.rooms.map(room=>{
           const metrics=roomVisualMetrics(room,renderPlan.metersPerPixel);
           const showMetrics=Boolean(renderPlan.metersPerPixel)&&metrics.widthPx>=70&&metrics.heightPx>=55;
           const selected=selectedRoomId===room.id;
           const validationSeverity=validationByRoom.get(room.id);
-          const uncertain=!room.reviewed&&room.confidence<.78;
+          const uncertain=layerState.uncertainty&&!room.reviewed&&room.confidence<.78;
           return <g key={room.id}>
             <polygon
               points={room.polygon.map(p=>`${p.x},${p.y}`).join(" ")}
@@ -351,9 +397,9 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
               strokeWidth={selected?3:uncertain?2:1}
               strokeDasharray={!selected&&uncertain?"8 6":undefined}
               className={readonly||calibrationMode||measureMode?undefined:"editable-room"}
-              onPointerDown={event=>{if(readonly||calibrationMode||measureMode||panMode)return;event.stopPropagation();onSelectRoom?.(room.id);}}
+              onPointerDown={event=>{if(readonly||calibrationMode||measureMode||effectivePan)return;event.stopPropagation();onSelectRoom?.(room.id);}}
             />
-            {validationSeverity&&<polygon
+            {layerState.validation&&validationSeverity&&<polygon
               points={room.polygon.map(p=>`${p.x},${p.y}`).join(" ")}
               fill="none"
               stroke={validationSeverity==="critical"?"#e11d48":validationSeverity==="warning"?"#d97706":"#2563eb"}
@@ -370,9 +416,9 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
             </text>}
           </g>;
         })}
-        {renderPlan.walls.map(wall=>{
+        {layerState.walls&&renderPlan.walls.map(wall=>{
           const severity=validationByWall.get(wall.id);
-          const uncertain=!wall.reviewed&&wall.confidence<.72;
+          const uncertain=layerState.uncertainty&&!wall.reviewed&&wall.confidence<.72;
           const stroke=selectedWallId===wall.id?"#2563eb":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":severity==="info"?"#2563eb":uncertain?"#d97706":"#0f172a";
           return <line key={wall.id}
             x1={wall.a.x} y1={wall.a.y} x2={wall.b.x} y2={wall.b.y}
@@ -380,26 +426,33 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
             strokeWidth={Math.max(wall.thicknessPx,selectedWallId===wall.id?5:severity==="critical"?5:3)}
             strokeLinecap="round" className={readonly||calibrationMode||measureMode?undefined:wall.locked?"editable-wall locked-wall":"editable-wall"}
             strokeDasharray={severity&&!selectedWallId?severity==="critical"?"14 6":"10 6":uncertain&&!selectedWallId?"7 5":wall.locked&&!selectedWallId?"5 5":undefined}
-            onPointerDown={e=>{if(readonly||calibrationMode||measureMode||panMode)return;onSelectOpening?.(null);onSelectWall?.(wall.id);if(wall.locked)return;e.currentTarget.setPointerCapture(e.pointerId);setDrag({wallId:wall.id,startClient:{x:e.clientX,y:e.clientY},original:wall,basePlan:plan,changed:false});}}
+            onPointerDown={e=>{if(readonly||calibrationMode||measureMode||effectivePan)return;onSelectOpening?.(null);onSelectWall?.(wall.id);if(wall.locked)return;e.currentTarget.setPointerCapture(e.pointerId);setDrag({wallId:wall.id,startClient:{x:e.clientX,y:e.clientY},original:wall,basePlan:plan,changed:false});}}
           />;
         })}
-        {renderPlan.doors.map(o=>{
+        {layerState.openings&&renderPlan.doors.map(o=>{
           const severity=validationByOpening.get(o.id);
-          const uncertain=!o.reviewed&&o.confidence<.84;
+          const uncertain=layerState.uncertainty&&!o.reviewed&&o.confidence<.84;
           const stroke=selectedOpeningId===o.id?"#1d4ed8":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":uncertain?"#d97706":"#0ea5e9";
-          return <g key={o.id} className={readonly||calibrationMode||measureMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode||measureMode||panMode)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
+          return <g key={o.id} className={readonly||calibrationMode||measureMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode||measureMode||effectivePan)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
             {!readonly&&!calibrationMode&&<line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="transparent" strokeWidth={18}/>}
             <line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke={stroke} strokeWidth={selectedOpeningId===o.id?7:severity==="critical"?6:4} strokeLinecap="round" strokeDasharray={severity&&!selectedOpeningId?"9 5":uncertain&&!selectedOpeningId?"7 5":undefined}/>
           </g>;
         })}
-        {renderPlan.windows.map(o=>{
+        {layerState.openings&&renderPlan.windows.map(o=>{
           const severity=validationByOpening.get(o.id);
-          const uncertain=!o.reviewed&&o.confidence<.84;
+          const uncertain=layerState.uncertainty&&!o.reviewed&&o.confidence<.84;
           const stroke=selectedOpeningId===o.id?"#1d4ed8":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":uncertain?"#d97706":"#38bdf8";
-          return <g key={o.id} className={readonly||calibrationMode||measureMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode||measureMode||panMode)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
+          return <g key={o.id} className={readonly||calibrationMode||measureMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode||measureMode||effectivePan)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
             {!readonly&&!calibrationMode&&<line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="transparent" strokeWidth={18}/>}
             <line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke={stroke} strokeWidth={selectedOpeningId===o.id?6:severity==="critical"?5:3} strokeLinecap="round" strokeDasharray={severity&&!selectedOpeningId?"9 5":uncertain&&!selectedOpeningId?"7 5":undefined}/>
           </g>;
+        })}
+        {layerState.labels&&renderPlan.labels.map(label=>{
+          const low=layerState.uncertainty&&!label.reviewed&&label.confidence<.78;
+          const className=`plan-ocr-label ${label.kind} ${low?"uncertain":""}`;
+          return <text key={label.id} x={label.center.x} y={label.center.y} textAnchor="middle" dominantBaseline="middle" className={className} pointerEvents="none">
+            {label.text}
+          </text>;
         })}
         {measurement!==null&&measurePoints.length===2&&<g pointerEvents="none">
           <line x1={measurePoints[0].x} y1={measurePoints[0].y} x2={measurePoints[1].x} y2={measurePoints[1].y} stroke="#7c3aed" strokeWidth={3} strokeDasharray="9 6"/>
