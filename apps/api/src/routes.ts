@@ -144,7 +144,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(!secured.source_key) return json({error:"لا يوجد ملف مصدر لإعادة التحليل"},409);
     if(["queued","analyzing"].includes(secured.status)) return json({error:"التحليل جارٍ بالفعل"},409);
 
-    const body=await request.json<{sourcePage?:number|null}>().catch(()=>({}));
+    const body: {sourcePage?:number|null}=await request.json<{sourcePage?:number|null}>().catch(()=>({}));
     const requestedPage=body.sourcePage==null?null:Number(body.sourcePage);
     if(requestedPage!==null&&(!Number.isInteger(requestedPage)||requestedPage<1||requestedPage>10000)){
       return json({error:"رقم صفحة PDF غير صالح"},400);
