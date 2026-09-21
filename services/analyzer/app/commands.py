@@ -118,3 +118,39 @@ def find_target_room(command:str,rooms:list)->object|None:
     if len(scored)>1 and abs(scored[0][0]-scored[1][0])<0.05:
         return None
     return scored[0][1]
+
+
+def parse_merge_rooms(command:str,rooms:list)->tuple[object,object]|None:
+    text=normalize_arabic(command)
+    merge_signal=any(word in text for word in ("ادمج","ضم","احذف","ازل","شيل","الغي","الغ"))
+    if not merge_signal:
+        return None
+
+    mentions=[]
+    for room in rooms:
+        name=normalize_arabic(room.name)
+        if not name:
+            continue
+        index=text.find(name)
+        if index>=0:
+            mentions.append((index,room))
+    if len(mentions)<2:
+        return None
+
+    mentions.sort(key=lambda item:item[0])
+    unique=[]
+    for index,room in mentions:
+        if all(existing.id!=room.id for _,existing in unique):
+            unique.append((index,room))
+    if len(unique)<2:
+        return None
+
+    first_index,first=unique[0]
+    second_index,second=unique[1]
+    between=text[first_index:second_index]
+
+    if " الى " in f" {between} " or any(word in text[:second_index] for word in ("احذف","ازل","شيل","الغي","الغ")):
+        return first,second
+    if " مع " in f" {between} " or "ادمج" in text:
+        return first,second
+    return None
