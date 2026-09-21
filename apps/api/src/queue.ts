@@ -14,6 +14,9 @@ export async function consumeAnalysis(batch:MessageBatch<AnalyzeMessage>,env:Env
       }
       await setProgress(env,job.projectId,"analyzing","preprocess",14,"بدأ محرك التحليل السحابي");
       const apiBase=env.API_PUBLIC_URL.replace(/\/$/,"");
+      const analysisQuery=new URLSearchParams({sourceKey:job.sourceKey});
+      if(job.expectedRevision!==undefined)analysisQuery.set("revision",String(job.expectedRevision));
+      const callbackQuery=analysisQuery.toString();
       const response=await fetch(`${env.ANALYZER_URL.replace(/\/$/,"")}/v1/analyze`,{
         method:"POST",
         headers:{"content-type":"application/json","x-manzil-internal":env.INTERNAL_TOKEN},
@@ -22,8 +25,8 @@ export async function consumeAnalysis(batch:MessageBatch<AnalyzeMessage>,env:Env
           source_url:`${apiBase}/internal/source/${encodeURIComponent(job.projectId)}?key=${encodeURIComponent(job.sourceKey)}`,
           filename:job.fileName,
           mime_type:job.mimeType,
-          callback_url:`${apiBase}/internal/progress`,
-          preview_url:`${apiBase}/internal/preview/${encodeURIComponent(job.projectId)}`,
+          callback_url:`${apiBase}/internal/progress?${callbackQuery}`,
+          preview_url:`${apiBase}/internal/preview/${encodeURIComponent(job.projectId)}?${callbackQuery}`,
           source_page:job.sourcePage??null
         })
       });
@@ -41,7 +44,9 @@ export async function consumeAnalysis(batch:MessageBatch<AnalyzeMessage>,env:Env
       message.ack();
     }catch(error){
       const detail=error instanceof Error?error.message:"UNKNOWN_ANALYSIS_ERROR";
-      if(detail==="STALE_REVISION"){
+      const current=await getProjectRow(env,job.projectId);
+      const stale=!current||current.source_key!==job.sourceKey||(job.expectedRevision!==undefined&&current.revision!==job.expectedRevision);
+      if(stale||detail==="STALE_REVISION"){
         message.ack();
         continue;
       }
