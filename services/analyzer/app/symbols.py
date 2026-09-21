@@ -164,10 +164,21 @@ def normalize_symbol_response(payload:object,width:int,height:int,min_confidence
 
     accepted=[]
     for candidate in sorted(candidates,key=lambda item:item["confidence"],reverse=True):
-        if any(
+        duplicate_same_class=any(
             existing["kind"]==candidate["kind"] and _iou(existing,candidate)>=.55
             for existing in accepted
-        ):
+        )
+        if duplicate_same_class:
+            continue
+
+        # Detectors can emit the identical fixture box under two competing
+        # classes. Since candidates are confidence-sorted, keep the stronger
+        # class only when the geometry is nearly identical.
+        conflicting_class=any(
+            existing["kind"]!=candidate["kind"] and _iou(existing,candidate)>=.78
+            for existing in accepted
+        )
+        if conflicting_class:
             continue
         accepted.append(candidate)
 
