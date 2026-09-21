@@ -1,0 +1,76 @@
+name: AEC Real Drawing Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Number of released AEC sheets to evaluate (1-15)"
+        required: true
+        default: "15"
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Manzil H
+        uses: actions/checkout@v4
+
+      - name: Checkout AEC-Geometric-Bench
+        uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+
+      - name: Install OCR and Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely
+
+      - name: Run Manzil H on released construction drawings
+        working-directory: services/analyzer
+        run: |
+          set -o pipefail
+          LIMIT="${{ inputs.limit }}"
+          case "$LIMIT" in
+            ''|*[!0-9]*) echo "limit must be an integer from 1 to 15"; exit 2 ;;
+          esac
+          if [ "$LIMIT" -lt 1 ] || [ "$LIMIT" -gt 15 ]; then
+            echo "limit must be from 1 to 15"
+            exit 2
+          fi
+          mkdir -p ../../benchmark-output/aec15
+          PYTHONPATH=. python -m app.aec_benchmark \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --output ../../benchmark-output/aec15 \
+            --limit "$LIMIT" \
+            --scorer ../../external/aec-geometric-bench/scoring/score.py \
+            | tee ../../benchmark-output/aec15-score.txt
+
+      - name: Publish score in workflow summary
+        if: always()
+        run: |
+          if [ -f benchmark-output/aec15-score.txt ]; then
+            echo "## Manzil H — AEC-Geometric-Bench" >> "$GITHUB_STEP_SUMMARY"
+            echo >> "$GITHUB_STEP_SUMMARY"
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            cat benchmark-output/aec15-score.txt >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manzil-aec15-benchmark
+          path: |
+            benchmark-output/aec15
+            benchmark-output/aec15-score.txt
+          if-no-files-found: warn
