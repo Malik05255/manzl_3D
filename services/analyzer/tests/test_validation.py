@@ -210,7 +210,10 @@ def test_source_dimension_mismatch_is_warning():
         unit="m",
         orientation="horizontal",
         referenceWallId="top",
+        spanA=Point(x=100,y=80),
+        spanB=Point(x=500,y=80),
         confidence=.95,
+        reviewed=True,
         provenance="pdf-text",
     )]
     report=validate_plan(plan)
@@ -230,6 +233,27 @@ def test_matching_source_dimension_does_not_warn():
         text=f"{expected:.2f} m",
         center=Point(x=300,y=80),
         valueM=expected,
+        unit="m",
+        orientation="horizontal",
+        referenceWallId="top",
+        spanA=Point(x=100,y=80),
+        spanB=Point(x=500,y=80),
+        confidence=.95,
+        reviewed=True,
+        provenance="pdf-text",
+    )]
+    report=validate_plan(plan)
+    assert not any(item.code=="source_dimension_mismatch" for item in report.findings)
+
+
+def test_unconfirmed_dimension_without_span_does_not_assume_full_wall_length():
+    from app.models import Dimension
+    plan=base_plan()
+    plan.dimensions=[Dimension(
+        id="dimension-no-span",
+        text="5.00 m",
+        center=Point(x=300,y=80),
+        valueM=5.0,
         unit="m",
         orientation="horizontal",
         referenceWallId="top",
