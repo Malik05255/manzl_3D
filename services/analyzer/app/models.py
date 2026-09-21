@@ -147,6 +147,7 @@ class ValidationFinding(BaseModel):
     roomIds: list[str] = []
     wallIds: list[str] = []
     openingIds: list[str] = []
+    dimensionIds: list[str] = []
 
 class ValidationReport(BaseModel):
     score: float = Field(ge=0, le=1)
