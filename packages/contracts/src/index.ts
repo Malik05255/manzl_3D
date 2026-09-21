@@ -101,7 +101,7 @@ export interface EditProposalResponse {
 }
 export interface ApplyProposalRequest { command: string; proposal: EditProposal; expectedRevision: number; targetRoomId?: string | null; targetWallId?: string | null; targetOpeningId?: string | null; }
 export interface SaveRevisionRequest { summary: string; plan: FloorPlanModel; expectedRevision: number; }
-export interface RevisionView { revision: number; summary: string; createdAt: string; sourcePage?: number | null; floorId?: string | null; }
+export interface RevisionView { revision: number; summary: string; createdAt: string; sourcePage?: number | null; floorId?: string | null; floorName?: string | null; floorElevationM?: number | null; floorHeightM?: number | null; }
 
 export interface ValidationFinding {
   code: string;
