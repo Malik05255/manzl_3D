@@ -36,6 +36,10 @@ jobs:
 
       - name: Run Manzil H on released construction drawings
         working-directory: services/analyzer
+        env:
+          SYMBOL_DETECTOR_URL: ${{ secrets.SYMBOL_DETECTOR_URL }}
+          SYMBOL_DETECTOR_TOKEN: ${{ secrets.SYMBOL_DETECTOR_TOKEN }}
+          SYMBOL_MIN_CONFIDENCE: "0.78"
         run: |
           set -o pipefail
           LIMIT="${{ inputs.limit }}"
