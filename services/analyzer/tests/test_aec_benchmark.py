@@ -1,4 +1,7 @@
-from app.aec_benchmark import parse_official_score_output,plan_to_aec_prediction
+import json
+import xml.etree.ElementTree as ET
+
+from app.aec_benchmark import _write_gt_subset,parse_official_score_output,plan_to_aec_prediction,run_official_scorer
 
 
 def test_floorplan_converts_to_aec_prediction_frame():
@@ -83,6 +86,7 @@ def test_parses_official_aec_score_summary():
     output="""
 Manzil H on AEC-Geometric-Bench-15
 
+Single Swing Door      600      20     29   0.968   0.954   0.961
 OBJECT MICRO           1500     96    132   0.940   0.919   0.929
 
 wall pixel                                  0.954   0.908   0.931
@@ -98,6 +102,8 @@ area instance                               0.961   0.921   0.940
     assert report["areaPixel"]["f1"]==.987
     assert report["areaInstance"]["f1"]==.94
     assert report["macroF1"]==.9467
+    assert report["classes"]["Single Swing Door"]["tp"]==600
+    assert report["classes"]["Single Swing Door"]["f1"]==.961
 
 
 def test_double_swing_door_maps_to_official_aec_class():
@@ -179,3 +185,60 @@ def test_stairs_symbol_maps_to_aec_area_not_object():
         [440.0,560.0],
         [200.0,560.0],
     ]]
+
+
+
+def test_subset_gt_keeps_only_selected_sheet(tmp_path):
+    dataset=tmp_path/"dataset"
+    dataset.mkdir()
+    (dataset/"annotations_15_scoring_ready.xml").write_text(
+        '<annotations>'
+        '<image id="1" name="sheet_01.png" width="100" height="100"></image>'
+        '<image id="2" name="sheet_02.png" width="100" height="100"></image>'
+        '</annotations>',
+        encoding="utf-8",
+    )
+    target=tmp_path/"subset"
+    _write_gt_subset(dataset,target,["sheet_02"])
+    root=ET.parse(target/"annotations_15_scoring_ready.xml").getroot()
+    assert [image.get("name") for image in root.findall("image")]==["sheet_02.png"]
+
+
+def test_official_scorer_uses_selected_subset_and_reports_each_sheet(tmp_path):
+    dataset=tmp_path/"dataset"
+    dataset.mkdir()
+    (dataset/"annotations_15_scoring_ready.xml").write_text(
+        '<annotations>'
+        '<image id="1" name="sheet_01.png" width="100" height="100"></image>'
+        '<image id="2" name="sheet_02.png" width="100" height="100"></image>'
+        '</annotations>',
+        encoding="utf-8",
+    )
+    predictions=tmp_path/"pred"
+    predictions.mkdir()
+    (predictions/"sheet_01.json").write_text(
+        json.dumps({"sheet":"sheet_01","objects":[],"areas":[],"walls":[]}),
+        encoding="utf-8",
+    )
+    scorer=tmp_path/"score.py"
+    scorer.write_text(
+        'import argparse,xml.etree.ElementTree as ET\n'
+        'p=argparse.ArgumentParser(); p.add_argument("--pred"); p.add_argument("--gt"); p.add_argument("--name"); a=p.parse_args()\n'
+        'count=len(ET.parse(a.gt+"/annotations_15_scoring_ready.xml").getroot().findall("image"))\n'
+        'print(f"Single Swing Door {count} 0 0 1.000 1.000 1.000")\n'
+        'print(f"OBJECT MICRO {count} 0 0 1.000 1.000 1.000")\n'
+        'print("wall pixel                     1.000 1.000 1.000")\n'
+        'print("area pixel                     1.000 1.000 1.000")\n'
+        'print("area instance                  1.000 1.000 1.000")\n',
+        encoding="utf-8",
+    )
+    code,_,report=run_official_scorer(
+        scorer,predictions,dataset,
+        sheet_names=["sheet_01"],
+        include_per_sheet=True,
+    )
+    assert code==0
+    assert report is not None
+    assert report["objectMicro"]["tp"]==1
+    assert report["selectedSheets"]==["sheet_01"]
+    assert report["sheets"]["sheet_01"]["objectMicro"]["tp"]==1
