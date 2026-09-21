@@ -214,6 +214,8 @@ def _add_opening(plan:FloorPlan,wall_id:str,kind:str)->Opening|None:
         a=_point_at(wall,center-width_px/2),
         b=_point_at(wall,center+width_px/2),
         confidence=1.0,
+        reviewed=True,
+        provenance="ai",
     )
     _replace_opening(plan,opening)
     return opening
@@ -377,7 +379,7 @@ def build_selected_element_proposals(req:EditRequest)->ProposalResponse|None:
         opening=_find_opening(req.plan,req.target_opening_id)
         if opening is None:
             return ProposalResponse(command=req.command,proposals=[],needsClarification="الفتحة المحددة لم تعد موجودة في المخطط.")
-        if opening.confidence<OPENING_EDIT_CONFIDENCE_MIN:
+        if not opening.reviewed and opening.confidence<OPENING_EDIT_CONFIDENCE_MIN:
             return ProposalResponse(
                 command=req.command,
                 proposals=[],
@@ -459,7 +461,7 @@ def build_selected_element_proposals(req:EditRequest)->ProposalResponse|None:
         wall=next((item for item in req.plan.walls if item.id==req.target_wall_id),None)
         if wall is None:
             return ProposalResponse(command=req.command,proposals=[],needsClarification="الجدار المحدد لم يعد موجودًا في المخطط.")
-        if wall.confidence<WALL_EDIT_CONFIDENCE_MIN:
+        if not wall.reviewed and wall.confidence<WALL_EDIT_CONFIDENCE_MIN:
             return ProposalResponse(
                 command=req.command,
                 proposals=[],
