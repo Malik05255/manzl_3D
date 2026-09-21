@@ -1,5 +1,5 @@
 from app.models import FloorPlan,Point,Quality,Room,Source,Wall
-from app.topology import classify_wall_roles,link_room_boundaries,relink_plan_boundaries
+from app.topology import canonicalize_plan,classify_wall_roles,link_room_boundaries,relink_plan_boundaries
 
 
 def test_links_rectangular_room_to_four_nearby_walls():
@@ -72,3 +72,43 @@ def test_classifies_shared_wall_as_interior_and_envelope_as_exterior():
     assert by_id["outer-left"]["locked"] is True
     assert by_id["outer-right"]["role"]=="exterior"
     assert by_id["outer-right"]["locked"] is True
+
+
+def test_canonicalize_refreshes_area_and_boundaries_without_overwriting_user_metadata():
+    plan=FloorPlan(
+        id="p",
+        widthPx=1000,
+        heightPx=700,
+        metersPerPixel=.01,
+        calibrationConfidence=1,
+        walls=[
+            Wall(id="top",a=Point(x=100,y=100),b=Point(x=500,y=100),thicknessPx=10,confidence=.9,role="structural",locked=True,reviewed=True,provenance="mixed"),
+            Wall(id="right",a=Point(x=500,y=100),b=Point(x=500,y=500),thicknessPx=10,confidence=.9),
+            Wall(id="bottom",a=Point(x=100,y=500),b=Point(x=500,y=500),thicknessPx=10,confidence=.9),
+            Wall(id="left",a=Point(x=100,y=100),b=Point(x=100,y=500),thicknessPx=10,confidence=.9),
+        ],
+        rooms=[
+            Room(
+                id="r",name="غرفة",
+                polygon=[Point(x=110,y=110),Point(x=490,y=110),Point(x=490,y=490),Point(x=110,y=490)],
+                confidence=.9,areaM2=999,boundaryWallIds=["deleted"],reviewed=True,provenance="mixed",
+            )
+        ],
+        doors=[],windows=[],labels=[],
+        quality=Quality(overall=.9,walls=.9,rooms=.9,text=.9,dimensions=.9,needsCalibration=False,warnings=[]),
+        source=Source(fileName="x.png",mimeType="image/png",page=1),
+    )
+
+    canonical=canonicalize_plan(plan)
+
+    assert canonical.rooms[0].areaM2==14.44
+    assert set(canonical.rooms[0].boundaryWallIds)=={"top","right","bottom","left"}
+    assert canonical.rooms[0].reviewed is True
+    assert canonical.rooms[0].provenance=="mixed"
+    top=next(wall for wall in canonical.walls if wall.id=="top")
+    assert top.role=="structural"
+    assert top.locked is True
+    assert top.reviewed is True
+    assert top.provenance=="mixed"
+    assert plan.rooms[0].areaM2==999
+    assert plan.rooms[0].boundaryWallIds==["deleted"]
