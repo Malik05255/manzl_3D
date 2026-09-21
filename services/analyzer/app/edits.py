@@ -88,6 +88,7 @@ def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:fl
     x1,y1,x2,y2=bbox(target)
     current_w=(x2-x1)*mpp
     current_h=(y2-y1)*mpp
+    preferred_neighbors,excluded_neighbors=resize_neighbor_constraints(command,plan.rooms,target)
     recommended_min=minimum_clear_span_m(target)
     target_size_warning=None
     if min(target_w,target_h)<recommended_min:

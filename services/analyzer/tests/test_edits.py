@@ -306,3 +306,10 @@ def test_explicit_do_not_change_neighbor_is_respected():
     assert response.proposals
     assert all("الصالة" not in " ".join(impact.text for impact in proposal.impacts) for proposal in response.proposals)
     assert any("مخزن" in " ".join(impact.text for impact in proposal.impacts) for proposal in response.proposals)
+
+
+def test_action_context_selects_target_when_neighbor_is_also_named():
+    plan=preference_plan()
+    target=find_target_room("عدل غرفة النوم إلى 5×4 على حساب الصالة",plan.rooms)
+    assert target is not None
+    assert target.id=="bed"

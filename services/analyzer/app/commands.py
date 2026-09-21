@@ -110,6 +110,35 @@ def room_match(command:str,room_name:str)->float:
     return fuzzy if fuzzy>=0.68 else 0.0
 
 def find_target_room(command:str,rooms:list)->object|None:
+    text=normalize_arabic(command)
+    exact_mentions=[]
+    for room in rooms:
+        name=normalize_arabic(room.name)
+        if not name:
+            continue
+        index=text.find(name)
+        if index>=0:
+            exact_mentions.append((index,room))
+
+    if len(exact_mentions)==1:
+        return exact_mentions[0][1]
+    if len(exact_mentions)>1:
+        action_positions=[
+            match.end()
+            for match in re.finditer(r"(?:^|\s)(?:عدل|كبر|وسع|صغر|زد|زود|نقص|اجعل|خلي)(?=\s)",text)
+        ]
+        targeted=[]
+        for index,room in exact_mentions:
+            preceding=[position for position in action_positions if position<=index]
+            if not preceding:
+                continue
+            distance=index-max(preceding)
+            if distance<=60:
+                targeted.append((distance,index,room))
+        targeted.sort(key=lambda item:(item[0],item[1]))
+        if targeted and (len(targeted)==1 or targeted[0][0]<targeted[1][0]):
+            return targeted[0][2]
+
     scored=[(room_match(command,room.name),room) for room in rooms]
     scored=[item for item in scored if item[0]>0]
     if not scored:
