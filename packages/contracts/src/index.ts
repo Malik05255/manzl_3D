@@ -36,6 +36,8 @@ export interface Dimension {
   unit: "m" | "cm" | "mm" | "unknown";
   orientation: "horizontal" | "vertical" | "unknown";
   referenceWallId?: string | null;
+  spanA?: Point | null;
+  spanB?: Point | null;
   confidence: number;
   reviewed?: boolean;
   provenance?: ElementProvenance;
@@ -209,6 +211,9 @@ function fpDimension(value:unknown):value is Dimension{
     &&["m","cm","mm","unknown"].includes(String(value.unit))
     &&["horizontal","vertical","unknown"].includes(String(value.orientation))
     &&(value.referenceWallId===undefined||value.referenceWallId===null||typeof value.referenceWallId==="string")
+    &&(value.spanA===undefined||value.spanA===null||fpPoint(value.spanA))
+    &&(value.spanB===undefined||value.spanB===null||fpPoint(value.spanB))
+    &&((value.spanA===undefined||value.spanA===null)===(value.spanB===undefined||value.spanB===null))
     &&fpConfidence(value.confidence)
     &&fpElementMetadata(value);
 }
