@@ -1,4 +1,4 @@
-from app.scale import estimate_scale
+from app.scale import estimate_scale,estimate_scale_with_diagnostics
 
 
 def wall(wall_id,x1,y1,x2,y2):
@@ -80,3 +80,41 @@ def test_explicit_millimeters_calibrate_in_meters():
     )
     assert round(scale,4)==0.01
     assert confidence is not None and confidence>=0.55
+
+
+def test_conflicting_explicit_dimensions_require_manual_calibration():
+    scale,confidence,warnings=estimate_scale_with_diagnostics(
+        [
+            label("l1","4.00 m",250,90),
+            label("l2","8.00 m",250,290),
+        ],
+        [
+            wall("w1",50,100,450,100),
+            wall("w2",50,300,450,300),
+        ],
+        1000,
+        800,
+    )
+    assert scale is None
+    assert confidence is None
+    assert warnings and "متعارضة" in warnings[0]
+
+
+def test_explicit_metric_reading_beats_noisy_unitless_numbers():
+    scale,confidence,warnings=estimate_scale_with_diagnostics(
+        [
+            label("l1","4.00 m",250,90),
+            label("l2","8.00",250,290),
+            label("l3","2.00",250,490),
+        ],
+        [
+            wall("w1",50,100,450,100),
+            wall("w2",50,300,450,300),
+            wall("w3",50,500,450,500),
+        ],
+        1000,
+        800,
+    )
+    assert round(scale,4)==0.01
+    assert confidence is not None and confidence>=0.55
+    assert warnings==[]
