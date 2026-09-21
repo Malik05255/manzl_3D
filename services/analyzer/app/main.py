@@ -1,6 +1,8 @@
 from __future__ import annotations
 import asyncio
+import hashlib
 import os
+from datetime import datetime,timezone
 import cv2
 import httpx
 from fastapi import FastAPI,Header,HTTPException
@@ -21,6 +23,7 @@ from .walls import detect_walls,enrich_walls_with_vector,rasterize_wall_mask
 from .validation import validate_plan
 
 app=FastAPI(title="Manzil H Analyzer",version="0.1.0")
+PIPELINE_VERSION=os.getenv("ANALYZER_PIPELINE_VERSION",app.version)
 
 class AnalyzeRequest(BaseModel):
     project_id:str
@@ -99,11 +102,14 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
         asyncio.to_thread(extract_ocr_labels,image),
         _safe_cloud_ocr(),
     )
+    used_cloud_ocr=bool(cloud_labels)
     if cloud_labels:
         distance=max(12.0,min(image.shape[:2])*0.012)
         labels=_merge_labels(local_labels,cloud_labels,distance)
     else:
         labels=local_labels
+    used_pdf_text=False
+    used_pdf_vector=False
     if req.mime_type=="application/pdf":
         try:
             native_lines=extract_pdf_text_lines(data,source_page)
@@ -120,6 +126,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
                 for index,item in enumerate(native_lines,start=1)
             ]
             if native_labels:
+                used_pdf_text=True
                 distance=max(12.0,min(image.shape[:2])*0.012)
                 labels=_merge_labels(labels,native_labels,distance)
         except Exception:
@@ -130,6 +137,8 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     if req.mime_type=="application/pdf":
         try:
             vector_lines=extract_pdf_vector_lines(data,source_page)
+            if vector_lines:
+                used_pdf_vector=True
             walls=enrich_walls_with_vector(walls,vector_lines)
         except Exception:
             pass
@@ -145,7 +154,21 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     classify_wall_roles(walls,rooms)
 
     await progress(req.callback_url,req.project_id,"validation",93,"التحقق من جودة النتيجة")
-    result=assemble_plan(image,req.project_id,req.filename,req.mime_type,labels,walls,rooms,scale,scale_confidence,source_page=source_page,source_page_count=source_page_count,doors=doors,windows=windows,scale_warnings=scale_warnings)
+    engines=["opencv","tesseract","canonical-wall-barrier"]
+    if used_cloud_ocr: engines.append("google-vision")
+    if used_pdf_text: engines.append("pdf-text")
+    if used_pdf_vector: engines.append("pdf-vector")
+    analysis={
+        "pipelineVersion":PIPELINE_VERSION,
+        "analyzedAt":datetime.now(timezone.utc).isoformat(),
+        "sourceSha256":hashlib.sha256(data).hexdigest(),
+        "engines":list(dict.fromkeys(engines)),
+    }
+    result=assemble_plan(
+        image,req.project_id,req.filename,req.mime_type,labels,walls,rooms,scale,scale_confidence,
+        source_page=source_page,source_page_count=source_page_count,doors=doors,windows=windows,
+        scale_warnings=scale_warnings,analysis=analysis,
+    )
     return FloorPlan.model_validate(result)
 
 @app.post("/v1/edit/proposals",response_model=ProposalResponse)
