@@ -7,7 +7,7 @@ import numpy as np
 import pytesseract
 from pytesseract import Output
 
-ROOM_WORDS=("غرفة","نوم","صالة","صاله","مجلس","مطبخ","حمام","دورة","ممر","مدخل","مستودع","غسيل","معيشة","living","bedroom","kitchen","bath","hall","majlis","corridor")
+ROOM_WORDS=("غرفة","نوم","صالة","صاله","مجلس","مطبخ","حمام","دورة","ممر","مدخل","مستودع","غسيل","معيشة","شرفة","شرفه","بلكونة","بلكونه","منور","مصعد","درج","سلم","living","bedroom","kitchen","bath","hall","majlis","corridor","balcony","shaft","duct","riser","elevator","lift","stairs","stair","staircase")
 
 def _arabic_letter_count(value:str)->int:
     return sum(1 for ch in value if "\u0600"<=ch<="\u06ff")
