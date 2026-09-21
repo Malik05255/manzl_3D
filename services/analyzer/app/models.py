@@ -53,6 +53,12 @@ class PlanLabel(BaseModel):
     reviewed: bool = False
     provenance: ElementProvenance | None = None
 
+class AnalysisMetadata(BaseModel):
+    pipelineVersion: str
+    analyzedAt: str
+    sourceSha256: str
+    engines: list[str] = []
+
 class Quality(BaseModel):
     overall: float
     walls: float
@@ -82,6 +88,7 @@ class FloorPlan(BaseModel):
     labels: list[PlanLabel]
     quality: Quality
     source: Source
+    analysis: AnalysisMetadata | None = None
 
 class EditRequest(BaseModel):
     project_id: str
