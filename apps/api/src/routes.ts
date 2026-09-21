@@ -5,11 +5,11 @@ import { clearDraft,getProjectRow,persistDraft,persistPlan,projectView } from ".
 import { cleanName,json } from "./http";
 import type { Env,ProjectRow } from "./types";
 
-async function analyzerProposals(env:Env,id:string,command:string,plan:FloorPlanModel):Promise<EditProposalResponse>{
+async function analyzerProposals(env:Env,id:string,command:string,plan:FloorPlanModel,targetRoomId?:string|null):Promise<EditProposalResponse>{
   const upstream=await fetch(`${env.ANALYZER_URL.replace(/\/$/,"")}/v1/edit/proposals`,{
     method:"POST",
     headers:{"content-type":"application/json","x-manzil-internal":env.INTERNAL_TOKEN},
-    body:JSON.stringify({project_id:id,command,plan})
+    body:JSON.stringify({project_id:id,command,plan,target_room_id:targetRoomId??null})
   });
   if(!upstream.ok){
     const detail=await upstream.text().catch(()=>"");
@@ -293,10 +293,12 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(secured instanceof Response) return secured;
     const plan=await currentPlan(env,secured);
     if(!plan) return json({error:"المخطط غير جاهز للتحرير"},409);
-    const body=await request.json<{command?:string}>();
+    const body=await request.json<{command?:string;targetRoomId?:string|null}>();
     const command=(body.command??"").trim();
+    const targetRoomId=(body.targetRoomId??"").trim()||null;
     if(!command) return json({error:"اكتب التعديل المطلوب"},400);
-    try{return json(await analyzerProposals(env,id,command,plan));}
+    if(targetRoomId&&!plan.rooms.some(room=>room.id===targetRoomId)) return json({error:"الغرفة المحددة لم تعد موجودة"},409);
+    try{return json(await analyzerProposals(env,id,command,plan,targetRoomId));}
     catch(error){return json({error:error instanceof Error?error.message:"تعذر تحليل الطلب"},502);}
   }
 
@@ -313,8 +315,11 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const plan=await currentPlan(env,secured);
     if(!plan) return json({error:"المخطط غير جاهز للتحرير"},409);
 
+    const targetRoomId=(body.targetRoomId??"").trim()||null;
+    if(targetRoomId&&!plan.rooms.some(room=>room.id===targetRoomId)) return json({error:"الغرفة المحددة لم تعد موجودة"},409);
+
     let fresh:EditProposalResponse;
-    try{fresh=await analyzerProposals(env,id,command,plan);}
+    try{fresh=await analyzerProposals(env,id,command,plan,targetRoomId);}
     catch(error){return json({error:error instanceof Error?error.message:"تعذر التحقق من التعديل"},502);}
 
     const selected=fresh.proposals.find(proposal=>proposal.id===selectedId);
