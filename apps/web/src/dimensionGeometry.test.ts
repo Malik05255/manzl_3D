@@ -1,6 +1,6 @@
 import { describe,expect,it } from "vitest";
 import type { FloorPlanModel } from "@manzil/contracts";
-import { calibratePlanFromDimension,correctDimensionValue } from "./dimensionGeometry";
+import { calibratePlanFromDimension,correctDimensionValue,dimensionWallCandidates,linkDimensionToWall } from "./dimensionGeometry";
 
 function plan():FloorPlanModel{
   return {
@@ -75,6 +75,24 @@ describe("dimension geometry",()=>{
     expect(next.dimensions?.[0].reviewed).toBe(true);
     expect(next.quality.needsCalibration).toBe(false);
     expect(JSON.stringify(next.walls[0])).toBe(beforeWall);
+  });
+
+  it("ranks nearby walls and lets the user relink evidence",()=>{
+    const source=plan();
+    source.walls.push({
+      id:"far",
+      a:{x:700,y:500},
+      b:{x:900,y:500},
+      thicknessPx:10,
+      confidence:.9,
+    });
+    const candidates=dimensionWallCandidates(source,"dimension-1");
+    expect(candidates[0].wallId).toBe("top");
+    const linked=linkDimensionToWall(source,"dimension-1","far")!;
+    expect(linked.dimensions?.[0].referenceWallId).toBe("far");
+    expect(linked.dimensions?.[0].orientation).toBe("horizontal");
+    expect(linked.dimensions?.[0].reviewed).toBe(true);
+    expect(linked.dimensions?.[0].provenance).toBe("mixed");
   });
 
   it("refuses calibration before human review",()=>{
