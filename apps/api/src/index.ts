@@ -1,4 +1,4 @@
-import { getProjectRow,setProgress } from "./db";
+import { getProjectRow,setAnalysisProgress } from "./db";
 import { json,withCors } from "./http";
 import { consumeAnalysis } from "./queue";
 import { route } from "./routes";
@@ -8,15 +8,12 @@ function internalAuthorized(request:Request,env:Env){
   return Boolean(env.INTERNAL_TOKEN)&&request.headers.get("x-manzil-internal")===env.INTERNAL_TOKEN;
 }
 
-function callbackMatchesAnalysis(url:URL,row:{source_key:string|null;revision:number}){
+function analysisIdentity(url:URL){
   const sourceKey=url.searchParams.get("sourceKey");
   const revisionRaw=url.searchParams.get("revision");
-  if(sourceKey&&sourceKey!==row.source_key)return false;
-  if(revisionRaw!==null){
-    const revision=Number(revisionRaw);
-    if(!Number.isInteger(revision)||revision!==row.revision)return false;
-  }
-  return true;
+  const revision=Number(revisionRaw);
+  if(!sourceKey||revisionRaw===null||!Number.isInteger(revision)||revision<0)return null;
+  return {sourceKey,revision};
 }
 
 async function app(request:Request,env:Env){
@@ -24,32 +21,38 @@ async function app(request:Request,env:Env){
 
   if(url.pathname==="/internal/progress"&&request.method==="POST"){
     if(!internalAuthorized(request,env)) return json({error:"unauthorized"},401);
+    const identity=analysisIdentity(url);
+    if(!identity) return json({error:"analysis identity required"},400);
     const body=await request.json<{project_id:string;status?:string;phase:string;progress:number;message?:string;error?:string}>();
-    const row=await getProjectRow(env,body.project_id);
-    if(!row) return json({error:"project not found"},404);
-    if(!callbackMatchesAnalysis(url,row)) return json({error:"stale analysis callback"},409);
-    await setProgress(env,body.project_id,body.status??"analyzing",body.phase,body.progress,body.message,body.error);
+    const updated=await setAnalysisProgress(
+      env,body.project_id,identity.sourceKey,identity.revision,
+      body.status??"analyzing",body.phase,body.progress,body.message,body.error
+    );
+    if(!updated) return json({error:"stale analysis callback"},409);
     return json({ok:true});
   }
 
   const preview=url.pathname.match(/^\/internal\/preview\/([^/]+)$/);
   if(preview&&request.method==="PUT"){
     if(!internalAuthorized(request,env)) return json({error:"unauthorized"},401);
+    const identity=analysisIdentity(url);
+    if(!identity) return json({error:"analysis identity required"},400);
     const projectId=decodeURIComponent(preview[1]);
-    const row=await getProjectRow(env,projectId);
-    if(!row) return json({error:"project not found"},404);
-    if(!callbackMatchesAnalysis(url,row)) return json({error:"stale analysis callback"},409);
     if(!request.body) return json({error:"preview body required"},400);
     const contentType=request.headers.get("content-type")?.split(";")[0]??"image/webp";
     if(!["image/webp","image/png","image/jpeg"].includes(contentType)) return json({error:"unsupported preview type"},415);
-    const key=`projects/${projectId}/preview.webp`;
+    const key=`projects/${projectId}/previews/r${identity.revision}-${crypto.randomUUID()}.webp`;
     const object=await env.ASSETS.put(key,request.body,{httpMetadata:{contentType}});
     if(object.size>30*1024*1024){
       await env.ASSETS.delete(key);
       return json({error:"preview too large"},413);
     }
-    await env.DB.prepare("UPDATE projects SET preview_key=?, updated_at=? WHERE id=?")
-      .bind(key,new Date().toISOString(),projectId).run();
+    const result=await env.DB.prepare("UPDATE projects SET preview_key=?, updated_at=? WHERE id=? AND source_key=? AND revision=?")
+      .bind(key,new Date().toISOString(),projectId,identity.sourceKey,identity.revision).run();
+    if((result.meta.changes??0)<1){
+      await env.ASSETS.delete(key).catch(()=>undefined);
+      return json({error:"stale analysis callback"},409);
+    }
     return json({ok:true,size:object.size});
   }
 
