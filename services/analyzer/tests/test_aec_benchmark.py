@@ -153,3 +153,29 @@ def test_sliding_door_is_not_mislabeled_as_swing_door_in_aec_taxonomy():
     }
     prediction=plan_to_aec_prediction(source,sheet="sheet",width=500,height=400)
     assert prediction["objects"]==[]
+
+
+
+def test_stairs_symbol_maps_to_aec_area_not_object():
+    source={
+        "widthPx":500,
+        "heightPx":400,
+        "walls":[],
+        "rooms":[],
+        "doors":[],
+        "windows":[],
+        "symbols":[{
+            "id":"stairs-1","kind":"stairs",
+            "a":{"x":100.0,"y":120.0},
+            "b":{"x":220.0,"y":280.0},
+            "confidence":.95,
+        }],
+    }
+    prediction=plan_to_aec_prediction(source,sheet="sheet",width=1000,height=800)
+    assert prediction["objects"]==[]
+    assert prediction["areas"]==[[
+        [200.0,240.0],
+        [440.0,240.0],
+        [440.0,560.0],
+        [200.0,560.0],
+    ]]
