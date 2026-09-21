@@ -247,3 +247,36 @@ def test_arc_only_swing_is_detected_from_hinge_center():
     assert doors[0]["doorSubtype"]=="single_swing"
     assert doors[0]["doorSwingSide"]=="negative"
     assert doors[0]["doorSwingDepthPx"]>55
+
+
+
+def test_nearby_parallel_annotation_lines_are_not_window():
+    image=np.full((300,380,3),255,dtype=np.uint8)
+    cv2.line(image,(25,150),(120,150),(0,0,0),5)
+    cv2.line(image,(220,150),(355,150),(0,0,0),5)
+    # Two parallel annotation lines sit near the opening but too far from the
+    # wall centreline to represent glazing.
+    cv2.line(image,(125,105),(215,105),(0,0,0),2)
+    cv2.line(image,(125,115),(215,115),(0,0,0),2)
+
+    windows=detect_windows(
+        image,
+        [wall("left",25,150,120,150),wall("right",220,150,355,150)],
+        meters_per_pixel=.02,
+    )
+    assert windows==[]
+
+
+def test_short_parallel_marks_inside_gap_are_not_window():
+    image=np.full((300,380,3),255,dtype=np.uint8)
+    cv2.line(image,(25,150),(120,150),(0,0,0),5)
+    cv2.line(image,(220,150),(355,150),(0,0,0),5)
+    cv2.line(image,(150,143),(185,143),(0,0,0),2)
+    cv2.line(image,(150,157),(185,157),(0,0,0),2)
+
+    windows=detect_windows(
+        image,
+        [wall("left",25,150,120,150),wall("right",220,150,355,150)],
+        meters_per_pixel=.02,
+    )
+    assert windows==[]
