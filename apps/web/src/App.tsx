@@ -1,6 +1,6 @@
 import { useEffect,useMemo,useRef,useState } from "react";
 import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Clock3,Cloud,DoorOpen,Download,FileImage,FileText,Hammer,Layers3,LoaderCircle,Redo2,RotateCcw,Ruler,Save,ShieldCheck,Sparkles,Square,Trash2,Undo2,UploadCloud,WandSparkles,X } from "lucide-react";
-import type { EditProposal,ElementProvenance,FloorPlanModel,Opening,Point,ProjectView,RevisionView,ValidationReport } from "@manzil/contracts";
+import type { EditProposal,ElementProvenance,FloorPlanModel,Opening,Point,ProjectView,RevisionView,ValidationReport,WallRole } from "@manzil/contracts";
 import { ApiError,applyProposal,askEngineer,clearProjectDraft,createProject,forgetKnownProject,forgetLastProject,getKnownProjects,getLastProjectId,getProject,getProjectPreview,importProjectBackup,inferSourceMime,listRevisions,resizeRoomPrecisely,restoreRevision,retryAnalysis,saveDraft,saveRevision,uploadSource,validateProject } from "./api";
 import type { KnownProject } from "./api";
 import { PlanCanvas,moveWallAndTopology } from "./PlanCanvas";
@@ -219,6 +219,8 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   };
   const updateWallThickness=()=>{
     if(!selectedWall||!plan.metersPerPixel)return;
+    const selected=plan.walls.find(item=>item.id===selectedWall);
+    if(selected?.locked){setNotice("الجدار محمي. فك الحماية قبل تعديل سماكته.");return;}
     const cm=Number(wallThicknessCm.replace(",","."));
     if(!Number.isFinite(cm)||cm<2||cm>100){setNotice("أدخل سماكة جدار بين 2 و100 سم.");return;}
     const px=(cm/100)/plan.metersPerPixel;
@@ -230,6 +232,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     if(!selectedWall||!plan.metersPerPixel)return;
     const wall=plan.walls.find(item=>item.id===selectedWall);
     if(!wall)return;
+    if(wall.locked){setNotice("الجدار محمي. فك الحماية قبل تحريكه.");return;}
     const cm=Number(wallMoveCm.replace(",","."));
     if(!Number.isFinite(cm)||cm<=0||cm>1000){setNotice("أدخل مسافة تحريك بين 0 و1000 سم.");return;}
     const delta=(cm/100)/plan.metersPerPixel*direction;
@@ -245,6 +248,24 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     applyLocalPlan(next);
     const actualCm=actualPx*plan.metersPerPixel*100;
     setNotice(actualCm+0.5<cm?`تم تحريك الجدار ${actualCm.toFixed(1)} سم فقط للحفاظ على الحد الأدنى للفراغات.`:`تم تحريك الجدار ${actualCm.toFixed(1)} سم.`);
+  };
+  const updateSelectedWallRole=(role:WallRole)=>{
+    if(!selectedWall)return;
+    applyLocalPlan({...plan,walls:plan.walls.map(wall=>wall.id===selectedWall?{
+      ...wall,role,locked:role==="structural"||role==="exterior"?true:wall.locked,
+      reviewed:true,provenance:manualProvenance(wall.provenance)
+    }:wall)});
+    setNotice(role==="structural"?"تم تصنيف الجدار كإنشائي وحمايته تلقائيًا.":role==="exterior"?"تم تصنيف الجدار كخارجي وحمايته تلقائيًا.":"تم تحديث تصنيف الجدار.");
+  };
+  const toggleSelectedWallLock=()=>{
+    if(!selectedWall)return;
+    const wall=plan.walls.find(item=>item.id===selectedWall);
+    if(!wall)return;
+    if(wall.role==="structural"&&wall.locked){setNotice("غيّر تصنيف الجدار الإنشائي أولًا قبل فك الحماية.");return;}
+    applyLocalPlan({...plan,walls:plan.walls.map(item=>item.id===wall.id?{
+      ...item,locked:!wall.locked,reviewed:true,provenance:manualProvenance(item.provenance)
+    }:item)});
+    setNotice(wall.locked?"تم فك حماية الجدار. راجع أثر أي تعديل بعناية.":"تمت حماية الجدار من التعديل والحركة.");
   };
   const selectRoom=(roomId:string|null)=>{
     setSelectedRoom(roomId);setSelectedWall(null);setSelectedOpening(null);setPreview(null);setProposals([]);
@@ -264,6 +285,8 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   };
   const addOpening=(kind:Opening["kind"])=>{
     if(!selectedWall)return;
+    const wall=plan.walls.find(item=>item.id===selectedWall);
+    if(wall?.locked){setNotice("الجدار محمي. فك الحماية قبل إضافة باب أو نافذة.");return;}
     const next=addOpeningToWall(plan,selectedWall,kind);
     if(!next){setNotice("لا توجد مساحة كافية على الجدار المحدد لإضافة فتحة جديدة.");return;}
     const beforeIds=new Set([...plan.doors,...plan.windows].map(item=>item.id));
