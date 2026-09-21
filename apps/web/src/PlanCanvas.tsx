@@ -1,6 +1,6 @@
 import { useMemo,useRef,useState } from "react";
 import type { FloorPlanModel,Point,ValidationFinding,Wall } from "@manzil/contracts";
-import { Minus,Plus,RotateCcw } from "lucide-react";
+import { Minus,Plus,RotateCcw,Ruler } from "lucide-react";
 
 interface Props{
   plan:FloorPlanModel;
@@ -143,6 +143,8 @@ export function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall)
 export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSelectRoom,selectedOpeningId,onSelectOpening,onPlanChange,onPlanCommit,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint,backgroundUrl=null,backgroundOpacity=.38,comparisonPlan=null,validationFindings=[]}:Props){
   const[zoom,setZoom]=useState(1);
   const[drag,setDrag]=useState<DragState>(null);
+  const[measureMode,setMeasureMode]=useState(false);
+  const[measurePoints,setMeasurePoints]=useState<Point[]>([]);
   const svgRef=useRef<SVGSVGElement|null>(null);
   const viewBox=useMemo(()=>`0 0 ${Math.max(plan.widthPx,1)} ${Math.max(plan.heightPx,1)}`,[plan.widthPx,plan.heightPx]);
   const zoomStageStyle=useMemo(()=>({
@@ -195,7 +197,7 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
     return{x:dx*(plan.widthPx/rect.width),y:dy*(plan.heightPx/rect.height)};
   };
   const move=(event:React.PointerEvent)=>{
-    if(!drag||!onPlanChange||readonly||calibrationMode)return;
+    if(!drag||!onPlanChange||readonly||calibrationMode||measureMode)return;
     const d=toPlanDelta(event.clientX-drag.startClient.x,event.clientY-drag.startClient.y);
     const horizontal=Math.abs(drag.original.a.y-drag.original.b.y)<Math.abs(drag.original.a.x-drag.original.b.x);
     const candidate:Wall=horizontal
@@ -210,10 +212,24 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
     setDrag(null);
   };
 
-  const addCalibrationPoint=(event:React.PointerEvent<SVGSVGElement>)=>{
-    if(!calibrationMode||!onCalibrationPoint||calibrationPoints.length>=2)return;
-    onCalibrationPoint(screenToPlan(event.clientX,event.clientY));
+  const handleCanvasPointer=(event:React.PointerEvent<SVGSVGElement>)=>{
+    if(calibrationMode){
+      if(!onCalibrationPoint||calibrationPoints.length>=2)return;
+      onCalibrationPoint(screenToPlan(event.clientX,event.clientY));
+      return;
+    }
+    if(!measureMode)return;
+    const point=screenToPlan(event.clientX,event.clientY);
+    setMeasurePoints(points=>points.length>=2?[point]:[...points,point]);
   };
+  const measurement=measurePoints.length===2
+    ?Math.hypot(measurePoints[1].x-measurePoints[0].x,measurePoints[1].y-measurePoints[0].y)
+    :null;
+  const measurementLabel=measurement===null
+    ?""
+    :plan.metersPerPixel
+      ?`${(measurement*plan.metersPerPixel).toFixed(2)} م`
+      :"ثبّت المقياس";
   const wheelZoom=(event:React.WheelEvent<HTMLDivElement>)=>{
     if(!event.ctrlKey&&!event.metaKey)return;
     event.preventDefault();
@@ -221,16 +237,17 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
     setZoom(value=>Math.max(.45,Math.min(3,value+step)));
   };
 
-  return <div className={`canvas-shell ${calibrationMode?"calibration-active":""}`}>
+  return <div className={`canvas-shell ${calibrationMode?"calibration-active":""} ${measureMode?"measure-active":""}`}>
     <div className="canvas-toolbar">
       <button className="icon-button" onClick={()=>setZoom(z=>Math.min(z+.15,2.5))} aria-label="تكبير"><Plus size={18}/></button>
       <span>{Math.round(zoom*100)}%</span>
       <button className="icon-button" onClick={()=>setZoom(z=>Math.max(z-.15,.45))} aria-label="تصغير"><Minus size={18}/></button>
       <button className="icon-button" onClick={()=>setZoom(1)} aria-label="إعادة الضبط"><RotateCcw size={18}/></button>
+      <button className={`icon-button ${measureMode?"active-tool":""}`} disabled={calibrationMode} onClick={()=>{setMeasureMode(value=>!value);setMeasurePoints([]);setDrag(null);}} aria-label="قياس مسافة"><Ruler size={17}/></button>
     </div>
     <div className="canvas-viewport" onWheel={wheelZoom} onPointerMove={move} onPointerUp={finishDrag} onPointerCancel={finishDrag}>
       <div className="plan-zoom-stage" style={zoomStageStyle}>
-      <svg ref={svgRef} className="plan-svg" viewBox={viewBox} onPointerDown={addCalibrationPoint}>
+      <svg ref={svgRef} className="plan-svg" viewBox={viewBox} onPointerDown={handleCanvasPointer}>
         <rect width={plan.widthPx} height={plan.heightPx} fill="#fff"/>
         {backgroundUrl&&<image href={backgroundUrl} x={0} y={0} width={plan.widthPx} height={plan.heightPx} preserveAspectRatio="none" opacity={backgroundOpacity} pointerEvents="none"/>}
         {comparisonPlan&&comparisonPlan.rooms.map(oldRoom=>{
@@ -258,8 +275,8 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
               fill={selected?"rgba(37,99,235,.14)":"rgba(37,99,235,.055)"}
               stroke={selected?"#2563eb":"rgba(37,99,235,.16)"}
               strokeWidth={selected?3:1}
-              className={readonly||calibrationMode?undefined:"editable-room"}
-              onPointerDown={event=>{if(readonly||calibrationMode)return;event.stopPropagation();onSelectRoom?.(room.id);}}
+              className={readonly||calibrationMode||measureMode?undefined:"editable-room"}
+              onPointerDown={event=>{if(readonly||calibrationMode||measureMode)return;event.stopPropagation();onSelectRoom?.(room.id);}}
             />
             {validationSeverity&&<polygon
               points={room.polygon.map(p=>`${p.x},${p.y}`).join(" ")}
@@ -285,15 +302,15 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
             x1={wall.a.x} y1={wall.a.y} x2={wall.b.x} y2={wall.b.y}
             stroke={stroke}
             strokeWidth={Math.max(wall.thicknessPx,selectedWallId===wall.id?5:severity==="critical"?5:3)}
-            strokeLinecap="round" className={readonly||calibrationMode?undefined:"editable-wall"}
+            strokeLinecap="round" className={readonly||calibrationMode||measureMode?undefined:"editable-wall"}
             strokeDasharray={severity&&!selectedWallId?severity==="critical"?"14 6":"10 6":undefined}
-            onPointerDown={e=>{if(readonly||calibrationMode)return;e.currentTarget.setPointerCapture(e.pointerId);onSelectOpening?.(null);onSelectWall?.(wall.id);setDrag({wallId:wall.id,startClient:{x:e.clientX,y:e.clientY},original:wall,basePlan:plan,changed:false});}}
+            onPointerDown={e=>{if(readonly||calibrationMode||measureMode)return;e.currentTarget.setPointerCapture(e.pointerId);onSelectOpening?.(null);onSelectWall?.(wall.id);setDrag({wallId:wall.id,startClient:{x:e.clientX,y:e.clientY},original:wall,basePlan:plan,changed:false});}}
           />;
         })}
         {plan.doors.map(o=>{
           const severity=validationByOpening.get(o.id);
           const stroke=selectedOpeningId===o.id?"#1d4ed8":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":"#0ea5e9";
-          return <g key={o.id} className={readonly||calibrationMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
+          return <g key={o.id} className={readonly||calibrationMode||measureMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode||measureMode)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
             {!readonly&&!calibrationMode&&<line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="transparent" strokeWidth={18}/>}
             <line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke={stroke} strokeWidth={selectedOpeningId===o.id?7:severity==="critical"?6:4} strokeLinecap="round" strokeDasharray={severity&&!selectedOpeningId?"9 5":undefined}/>
           </g>;
@@ -301,11 +318,21 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
         {plan.windows.map(o=>{
           const severity=validationByOpening.get(o.id);
           const stroke=selectedOpeningId===o.id?"#1d4ed8":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":"#38bdf8";
-          return <g key={o.id} className={readonly||calibrationMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
+          return <g key={o.id} className={readonly||calibrationMode||measureMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode||measureMode)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
             {!readonly&&!calibrationMode&&<line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="transparent" strokeWidth={18}/>}
             <line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke={stroke} strokeWidth={selectedOpeningId===o.id?6:severity==="critical"?5:3} strokeLinecap="round" strokeDasharray={severity&&!selectedOpeningId?"9 5":undefined}/>
           </g>;
         })}
+        {measurement!==null&&measurePoints.length===2&&<g pointerEvents="none">
+          <line x1={measurePoints[0].x} y1={measurePoints[0].y} x2={measurePoints[1].x} y2={measurePoints[1].y} stroke="#7c3aed" strokeWidth={3} strokeDasharray="9 6"/>
+          <circle cx={measurePoints[0].x} cy={measurePoints[0].y} r={7} fill="#7c3aed"/>
+          <circle cx={measurePoints[1].x} cy={measurePoints[1].y} r={7} fill="#7c3aed"/>
+          <g transform={`translate(${(measurePoints[0].x+measurePoints[1].x)/2} ${(measurePoints[0].y+measurePoints[1].y)/2})`}>
+            <rect x={-48} y={-18} width={96} height={28} rx={8} fill="#ffffff" stroke="#c4b5fd"/>
+            <text x={0} y={-1} textAnchor="middle" dominantBaseline="middle" className="measure-label">{measurementLabel}</text>
+          </g>
+        </g>}
+        {measureMode&&measurePoints.length===1&&<circle cx={measurePoints[0].x} cy={measurePoints[0].y} r={8} fill="#7c3aed" pointerEvents="none"/>}
         {calibrationPoints.length===2&&<line x1={calibrationPoints[0].x} y1={calibrationPoints[0].y} x2={calibrationPoints[1].x} y2={calibrationPoints[1].y} stroke="#e11d48" strokeWidth={3} strokeDasharray="10 7"/>}
         {calibrationPoints.map((point,index)=><g key={index}><circle cx={point.x} cy={point.y} r={9} fill="#e11d48"/><text x={point.x+14} y={point.y-12} className="calibration-label">{index+1}</text></g>)}
       </svg>
