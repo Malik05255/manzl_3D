@@ -6,7 +6,7 @@ from .ocr import extract_ocr_labels
 from .openings import detect_doors,detect_windows,normalize_opening_hosts
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
-from .topology import classify_wall_roles,link_room_boundaries,room_boundary_coverage
+from .topology import classify_wall_roles,link_room_boundaries,recalibrate_extracted_room_confidence,room_boundary_coverage
 from .walls import detect_walls,rasterize_wall_mask
 
 def assemble_plan(image:np.ndarray,project_id:str,filename:str,mime_type:str,labels:list[dict],walls:list[dict],rooms:list[dict],scale:float|None,scale_confidence:float|None,source_page:int=1,source_page_count:int|None=None,doors:list[dict]|None=None,windows:list[dict]|None=None,dimensions:list[dict]|None=None,symbols:list[dict]|None=None,scale_warnings:list[str]|None=None,analysis:dict|None=None)->dict:
@@ -86,5 +86,6 @@ def analyze_image(image:np.ndarray,project_id:str,filename:str,mime_type:str)->d
     room_barrier_mask=rasterize_wall_mask(walls,h,w,wall_mask)
     rooms=detect_rooms(room_barrier_mask,labels,scale)
     link_room_boundaries(rooms,walls)
+    recalibrate_extracted_room_confidence(rooms,walls,w,h)
     classify_wall_roles(walls,rooms)
     return assemble_plan(image,project_id,filename,mime_type,labels,walls,rooms,scale,scale_confidence,doors=doors,windows=windows,dimensions=dimensions,symbols=[],scale_warnings=scale_warnings)
