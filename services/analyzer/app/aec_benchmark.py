@@ -48,6 +48,39 @@ def _opening_bbox(opening:dict,sx:float,sy:float,padding_px:float)->list[float]:
     ]
 
 
+def _door_bbox(door:dict,sx:float,sy:float,padding_px:float)->list[float]:
+    fallback=_opening_bbox(door,sx,sy,padding_px)
+    side=str(door.get("doorSwingSide") or "unknown")
+    try:
+        depth=float(door.get("doorSwingDepthPx") or 0.0)
+    except (TypeError,ValueError):
+        return fallback
+    if side not in {"positive","negative"} or depth<=1:
+        return fallback
+
+    ax=float(door["a"]["x"]); ay=float(door["a"]["y"])
+    bx=float(door["b"]["x"]); by=float(door["b"]["y"])
+    dx=bx-ax; dy=by-ay
+    length=math.hypot(dx,dy)
+    if length<=1e-9:
+        return fallback
+    nx=-dy/length; ny=dx/length
+    sign=1.0 if side=="positive" else -1.0
+    # Clamp noisy Hough depth to a plausible door-symbol envelope.
+    depth=max(length*.25,min(depth,length*1.25))
+    points=[
+        (ax,ay),(bx,by),
+        (ax+nx*depth*sign,ay+ny*depth*sign),
+        (bx+nx*depth*sign,by+ny*depth*sign),
+    ]
+    pad=max(2.0,padding_px*.45)
+    x1=min(point[0] for point in points)-pad
+    y1=min(point[1] for point in points)-pad
+    x2=max(point[0] for point in points)+pad
+    y2=max(point[1] for point in points)+pad
+    return [x1*sx,y1*sy,x2*sx,y2*sy]
+
+
 def plan_to_aec_prediction(plan:dict,*,sheet:str,width:int,height:int)->dict:
     """Convert FloorPlanModel output into AEC-Geometric-Bench prediction JSON."""
     source_w=max(1.0,float(plan["widthPx"]))
@@ -66,7 +99,7 @@ def plan_to_aec_prediction(plan:dict,*,sheet:str,width:int,height:int)->dict:
         object_class="Double Swing Door" if subtype=="double_swing" else "Single Swing Door"
         objects.append({
             "class":object_class,
-            "bbox":_opening_bbox(door,sx,sy,padding),
+            "bbox":_door_bbox(door,sx,sy,padding),
         })
     for window in plan.get("windows",[]):
         objects.append({
