@@ -126,3 +126,22 @@ def test_decodes_yolo_objectness_output_and_applies_confidence():
 def test_rejects_unknown_yolo_tensor_shape():
     rows=_prepare_yolo_rows(np.zeros((1,8,12),dtype=np.float32),2)
     assert rows.shape==(0,6)
+
+
+
+def test_cross_class_near_duplicate_keeps_stronger_prediction():
+    result=normalize_symbol_response([
+        {"label":"toilet","bbox":[20,20,80,90],"confidence":.94},
+        {"label":"sink","bbox":[22,22,79,89],"confidence":.86},
+    ],200,160)
+    assert len(result)==1
+    assert result[0]["kind"]=="toilet"
+    assert result[0]["confidence"]==.94
+
+
+def test_cross_class_partial_overlap_keeps_distinct_fixtures():
+    result=normalize_symbol_response([
+        {"label":"toilet","bbox":[20,20,80,90],"confidence":.94},
+        {"label":"sink","bbox":[65,30,125,80],"confidence":.90},
+    ],200,160)
+    assert {item["kind"] for item in result}=={"toilet","sink"}
