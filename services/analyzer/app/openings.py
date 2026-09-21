@@ -185,40 +185,101 @@ def _door_leaf_evidence(
     evidence,_,_,_=_door_leaf_evidence_details(image,a,b,gap_px,wall_angle_deg)
     return evidence
 
-def _door_arc_evidence(image:np.ndarray,a:dict,b:dict,gap_px:float)->int:
+def _door_arc_evidence_details(
+    image:np.ndarray,
+    a:dict,
+    b:dict,
+    gap_px:float,
+)->tuple[int,set[str],str,float]:
+    """Detect swing arcs by fitting their circle/ellipse centre near a hinge.
+
+    A real swing arc is *centred* on the hinge; its pixels are normally one door
+    radius away. Checking raw arc pixels for proximity to the hinge therefore
+    misses the cleanest door symbols.
+    """
     roi,offset_x,offset_y=_opening_roi(image,a,b,gap_px)
     if roi.size==0:
-        return 0
+        return 0,set(),"unknown",0.0
     gray=cv2.cvtColor(roi,cv2.COLOR_BGR2GRAY)
     edges=cv2.Canny(gray,55,150)
     contours,_=cv2.findContours(edges,cv2.RETR_LIST,cv2.CHAIN_APPROX_NONE)
-    evidence=0
     ax,ay=_point(a)
     bx,by=_point(b)
-    hinge_tolerance=max(9.0,gap_px*.24)
+    gap_length=max(1e-9,math.hypot(bx-ax,by-ay))
+    ux=(bx-ax)/gap_length
+    uy=(by-ay)/gap_length
+    nx=-uy
+    ny=ux
+    hinge_tolerance=max(10.0,gap_px*.30)
+
+    by_hinge:dict[str,tuple[float,float]]={}
     for contour in contours:
         perimeter=cv2.arcLength(contour,False)
-        if perimeter<gap_px*.35 or perimeter>gap_px*3.8:
+        if perimeter<gap_px*.30 or perimeter>gap_px*4.2:
             continue
         x,y,w,h=cv2.boundingRect(contour)
-        if min(w,h)<max(5,gap_px*.18):
+        if min(w,h)<max(5,gap_px*.14):
             continue
         aspect=max(w,h)/max(1.0,min(w,h))
-        if aspect>3.2 or len(contour)<8:
+        if aspect>3.0 or len(contour)<8:
             continue
 
-        points=contour.reshape(-1,2)
-        hinge_distance=min(
-            min(
-                math.hypot(offset_x+float(px)-ax,offset_y+float(py)-ay),
-                math.hypot(offset_x+float(px)-bx,offset_y+float(py)-by),
-            )
-            for px,py in points[::max(1,len(points)//80)]
-        )
-        if hinge_distance>hinge_tolerance:
+        try:
+            (cx,cy),(major,minor),_=cv2.fitEllipse(contour)
+        except cv2.error:
             continue
-        evidence+=1
-    return min(evidence,2)
+        radius=(float(major)+float(minor))/4.0
+        if radius<gap_px*.25 or radius>gap_px*1.65:
+            continue
+        ellipse_ratio=max(float(major),float(minor))/max(1.0,min(float(major),float(minor)))
+        if ellipse_ratio>2.2:
+            continue
+
+        center=(float(offset_x)+float(cx),float(offset_y)+float(cy))
+        distance_a=math.hypot(center[0]-ax,center[1]-ay)
+        distance_b=math.hypot(center[0]-bx,center[1]-by)
+        nearest=min(distance_a,distance_b)
+        if nearest>hinge_tolerance:
+            continue
+        hinge="a" if distance_a<=distance_b else "b"
+        hx,hy=(ax,ay) if hinge=="a" else (bx,by)
+
+        points=contour.reshape(-1,2)
+        signed_depths=[
+            (float(offset_x+px)-hx)*nx+(float(offset_y+py)-hy)*ny
+            for px,py in points[::max(1,len(points)//120)]
+        ]
+        if not signed_depths:
+            continue
+        depth_value=max(signed_depths,key=abs)
+        coverage=perimeter/max(1.0,2*math.pi*radius)
+        if coverage<.10 or coverage>.92:
+            continue
+
+        strength=min(1.0,coverage/.25)*(1.0-nearest/max(hinge_tolerance,1.0))
+        previous=by_hinge.get(hinge)
+        if previous is None or strength>previous[0]:
+            by_hinge[hinge]=(strength,float(depth_value))
+
+    if not by_hinge:
+        return 0,set(),"unknown",0.0
+
+    signed=[item[1] for item in by_hinge.values()]
+    positive=sum(abs(value) for value in signed if value>0)
+    negative=sum(abs(value) for value in signed if value<0)
+    total=positive+negative
+    if total<=1e-9 or abs(positive-negative)/total<.18:
+        side="unknown"
+    else:
+        side="positive" if positive>negative else "negative"
+    depth=max(abs(value) for value in signed)
+    hinges=set(by_hinge)
+    return len(hinges),hinges,side,float(depth)
+
+
+def _door_arc_evidence(image:np.ndarray,a:dict,b:dict,gap_px:float)->int:
+    evidence,_,_,_=_door_arc_evidence_details(image,a,b,gap_px)
+    return evidence
 
 
 def _parallel_window_evidence(
@@ -349,18 +410,19 @@ def detect_doors(
             a=_point_from_frame(fe,offset,ux,uy)
             b=_point_from_frame(ss,offset,ux,uy)
 
-            leaf_evidence,leaf_hinges,swing_side,swing_depth=_door_leaf_evidence_details(image,a,b,gap,wall_angle)
-            arc_evidence=_door_arc_evidence(image,a,b,gap)
-            if leaf_evidence<1 and arc_evidence<2:
+            leaf_evidence,leaf_hinges,leaf_side,leaf_depth=_door_leaf_evidence_details(image,a,b,gap,wall_angle)
+            arc_evidence,arc_hinges,arc_side,arc_depth=_door_arc_evidence_details(image,a,b,gap)
+            if leaf_evidence<1 and arc_evidence<1:
                 continue
 
             evidence=leaf_evidence+arc_evidence
-            if {"a","b"}.issubset(leaf_hinges):
+            hinges=leaf_hinges|arc_hinges
+            if {"a","b"}.issubset(hinges):
                 door_subtype="double_swing"
-            elif leaf_evidence>=1:
-                door_subtype="single_swing"
             else:
-                door_subtype="unknown"
+                door_subtype="single_swing"
+            swing_side=leaf_side if leaf_side!="unknown" else arc_side
+            swing_depth=max(leaf_depth,arc_depth)
             confidence=min(
                 0.95,
                 0.69+0.065*leaf_evidence+0.035*arc_evidence+(0.05 if meters_per_pixel else 0.0),
