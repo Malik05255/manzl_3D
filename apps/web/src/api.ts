@@ -1,4 +1,5 @@
 import type { ApplyProposalRequest, EditProposalResponse, FloorPlanModel, ProjectView, RevisionView, SaveRevisionRequest, ValidationReport } from "@manzil/contracts";
+import { clonePlanForProject } from "./planBackup";
 
 const API_BASE=(import.meta.env.VITE_API_BASE_URL as string|undefined)?.replace(/\/$/,"")??"http://localhost:8787";
 const tokenKey=(projectId:string)=>`manzil:project-token:${projectId}`;
@@ -171,7 +172,7 @@ export async function restoreRevision(id:string,revision:number){const project=a
 
 export async function importProjectBackup(name:string,plan:FloorPlanModel){
   const project=await createProject(name);
-  const imported:FloorPlanModel={...plan,id:project.id};
+  const imported=clonePlanForProject(plan,project.id);
   const ready=await saveRevision(project.id,imported,"استيراد نسخة مشروع",project.revision);
   rememberKnownProject(ready);
   rememberLastProjectId(project.id);
