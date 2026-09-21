@@ -54,6 +54,7 @@ export interface ProjectView {
   createdAt: string;
   updatedAt: string;
   plan?: FloorPlanModel | null;
+  accessToken?: string;
 }
 export interface ProposalImpact {
   kind: "room_resize" | "wall_move" | "door_move" | "warning" | "info";

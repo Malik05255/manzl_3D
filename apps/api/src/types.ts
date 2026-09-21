@@ -27,6 +27,7 @@ export interface ProjectRow {
   source_key: string | null;
   plan_key: string | null;
   revision: number;
+  access_hash: string | null;
   created_at: string;
   updated_at: string;
 }
