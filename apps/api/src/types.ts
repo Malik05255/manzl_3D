@@ -31,7 +31,23 @@ export interface ProjectRow {
   plan_key: string | null;
   draft_key: string | null;
   revision: number;
+  active_floor_id: string | null;
   access_hash: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+
+export interface FloorRow {
+  id: string;
+  project_id: string;
+  source_page: number;
+  name: string;
+  plan_key: string;
+  preview_key: string | null;
+  latest_revision: number;
+  elevation_m: number | null;
+  height_m: number | null;
   created_at: string;
   updated_at: string;
 }
