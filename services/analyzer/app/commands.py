@@ -1,5 +1,6 @@
 from __future__ import annotations
 import re
+from difflib import SequenceMatcher
 from .ocr import normalize_digits
 
 GENERIC_ROOM_WORDS={"غرفه","الغرفه","room","منطقه","مساحه"}
@@ -97,9 +98,13 @@ def room_match(command:str,room_name:str)->float:
         token for token in re.split(r"\s+",cmd)
         if len(token)>2 and not token.isdigit() and token not in GENERIC_ROOM_WORDS
     }
-    if not name_tokens:
+    if not name_tokens or not cmd_tokens:
         return 0.0
-    return len(name_tokens & cmd_tokens)/len(name_tokens)
+    exact=len(name_tokens & cmd_tokens)/len(name_tokens)
+    if exact>0:
+        return exact
+    fuzzy=sum(max(SequenceMatcher(None,a,b).ratio() for b in cmd_tokens) for a in name_tokens)/len(name_tokens)
+    return fuzzy if fuzzy>=0.68 else 0.0
 
 def find_target_room(command:str,rooms:list)->object|None:
     scored=[(room_match(command,room.name),room) for room in rooms]
