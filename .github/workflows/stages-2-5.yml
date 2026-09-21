@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: stages-2-5-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   benchmark-symbols:
     if: github.event_name == 'workflow_dispatch' || github.head_ref == 'feat/cloud-floorplan-editor'
