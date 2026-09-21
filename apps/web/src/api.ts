@@ -55,6 +55,15 @@ export function uploadSource(projectId:string,file:File,onProgress:(value:number
 }
 
 export const getProject=(id:string)=>request<ProjectView>(`/v1/projects/${id}`);
+export async function getProjectPreview(id:string):Promise<string|null>{
+  const token=projectToken(id);
+  const response=await fetch(`${API_BASE}/v1/projects/${id}/preview`,{
+    headers:token?{authorization:`Bearer ${token}`}:undefined
+  });
+  if(response.status===404)return null;
+  if(!response.ok)throw new Error("تعذر تحميل المخطط الأصلي");
+  return URL.createObjectURL(await response.blob());
+}
 export const askEngineer=(id:string,command:string)=>request<EditProposalResponse>(`/v1/projects/${id}/ai/proposals`,{method:"POST",body:JSON.stringify({command})});
 export const applyProposal=(id:string,payload:ApplyProposalRequest)=>request<ProjectView>(`/v1/projects/${id}/ai/apply`,{method:"POST",body:JSON.stringify(payload)});
 export function saveRevision(id:string,plan:FloorPlanModel,summary:string){
