@@ -3,7 +3,8 @@ export type AnalysisPhase = "created" | "upload" | "preprocess" | "ocr" | "geome
 
 export interface Point { x: number; y: number; }
 export type ElementProvenance = "opencv" | "pdf-vector" | "ocr" | "pdf-text" | "manual" | "ai" | "mixed";
-export interface Wall { id: string; a: Point; b: Point; thicknessPx: number; confidence: number; reviewed?: boolean; provenance?: ElementProvenance; }
+export type WallRole = "unknown" | "interior" | "exterior" | "structural";
+export interface Wall { id: string; a: Point; b: Point; thicknessPx: number; confidence: number; role?: WallRole; locked?: boolean; reviewed?: boolean; provenance?: ElementProvenance; }
 export interface Room { id: string; name: string; polygon: Point[]; confidence: number; areaM2?: number | null; boundaryWallIds?: string[]; reviewed?: boolean; provenance?: ElementProvenance; }
 export interface Opening {
   id: string;
@@ -124,6 +125,8 @@ function fpWall(value:unknown):value is Wall{
     &&fpPoint(value.a)&&fpPoint(value.b)
     &&fpFinite(value.thicknessPx)&&value.thicknessPx>0&&value.thicknessPx<=200
     &&fpConfidence(value.confidence)
+    &&(value.role===undefined||["unknown","interior","exterior","structural"].includes(String(value.role)))
+    &&(value.locked===undefined||typeof value.locked==="boolean")
     &&fpElementMetadata(value);
 }
 function fpRoom(value:unknown):value is Room{
