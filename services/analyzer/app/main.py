@@ -94,13 +94,18 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     _,ink=preprocess(image)
 
     await progress(req.callback_url,req.project_id,"ocr",35,"قراءة النصوص والأبعاد")
+    async def _safe_local_ocr():
+        try:
+            return await asyncio.to_thread(extract_ocr_labels,image)
+        except Exception:
+            return []
     async def _safe_cloud_ocr():
         try:
             return await extract_cloud_ocr_labels(image)
         except Exception:
             return []
     local_labels,cloud_labels=await asyncio.gather(
-        asyncio.to_thread(extract_ocr_labels,image),
+        _safe_local_ocr(),
         _safe_cloud_ocr(),
     )
     used_cloud_ocr=bool(cloud_labels)
@@ -158,7 +163,8 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     classify_wall_roles(walls,rooms)
 
     await progress(req.callback_url,req.project_id,"validation",93,"التحقق من جودة النتيجة")
-    engines=["opencv","tesseract","canonical-wall-barrier"]
+    engines=["opencv","canonical-wall-barrier"]
+    if local_labels: engines.append("tesseract")
     if used_cloud_ocr: engines.append("google-vision")
     if used_pdf_text: engines.append("pdf-text")
     if used_pdf_vector: engines.append("pdf-vector")
