@@ -185,6 +185,79 @@ def _polygon_area_px2(points)->float:
     return abs(total)/2.0
 
 
+def filter_nonarchitectural_enclosures(
+    rooms:list,
+    walls:list,
+    width:int,
+    height:int,
+)->list:
+    """Drop tiny unlabeled enclosures bounded only by furniture-thin strokes.
+
+    The rule is deliberately relative to the drawing's own wall thickness so it
+    remains scale-independent. Named spaces and reviewed rooms are never removed.
+    """
+    if not rooms or not walls:
+        return rooms
+    wall_by_id={
+        str(_wall_value(wall,"id")):wall
+        for wall in walls
+    }
+    architectural_thicknesses=sorted(
+        float(_wall_value(wall,"thicknessPx"))
+        for wall in walls
+        if float(_wall_value(wall,"confidence") or 0.0)>=.70
+        and float(_wall_value(wall,"thicknessPx"))>0
+    )
+    if not architectural_thicknesses:
+        return rooms
+    median=architectural_thicknesses[len(architectural_thicknesses)//2]
+    if median<5.0:
+        return rooms
+
+    page_area=max(1.0,float(width)*float(height))
+    kept=[]
+    for room in rooms:
+        name=str(_room_value(room,"name") or "").strip()
+        generated=(
+            name.startswith("غرفة ")
+            and name.removeprefix("غرفة ").strip().isdigit()
+        )
+        reviewed=bool(
+            room.get("reviewed",False)
+            if isinstance(room,dict)
+            else room.reviewed
+        )
+        ids=(
+            room.get("boundaryWallIds",[])
+            if isinstance(room,dict)
+            else room.boundaryWallIds
+        )
+        boundaries=[
+            wall_by_id[wall_id]
+            for wall_id in ids
+            if wall_id in wall_by_id
+        ]
+        if not generated or reviewed or len(boundaries)<3:
+            kept.append(room)
+            continue
+
+        area_ratio=_polygon_area_px2(_room_value(room,"polygon"))/page_area
+        boundary_thicknesses=sorted(
+            float(_wall_value(wall,"thicknessPx"))
+            for wall in boundaries
+        )
+        boundary_median=boundary_thicknesses[len(boundary_thicknesses)//2]
+        coverage=room_boundary_coverage(room,walls)
+        furniture_thin=(
+            boundary_median<=max(3.5,median*.28)
+            and max(boundary_thicknesses)<=max(5.0,median*.40)
+        )
+        if area_ratio<.018 and coverage>=.72 and furniture_thin:
+            continue
+        kept.append(room)
+    return kept
+
+
 def recalibrate_extracted_room_confidence(
     rooms:list,
     walls:list,
