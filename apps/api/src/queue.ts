@@ -1,12 +1,17 @@
 import { floorPlanValidationError } from "@manzil/contracts";
 import type { FloorPlanModel } from "@manzil/contracts";
-import { persistPlan,setProgress } from "./db";
+import { getProjectRow,persistPlan,setProgress } from "./db";
 import type { AnalyzeMessage,Env } from "./types";
 
 export async function consumeAnalysis(batch:MessageBatch<AnalyzeMessage>,env:Env){
   for(const message of batch.messages){
     const job=message.body;
     try{
+      const before=await getProjectRow(env,job.projectId);
+      if(!before||before.source_key!==job.sourceKey||(job.expectedRevision!==undefined&&before.revision!==job.expectedRevision)){
+        message.ack();
+        continue;
+      }
       await setProgress(env,job.projectId,"analyzing","preprocess",14,"بدأ محرك التحليل السحابي");
       const apiBase=env.API_PUBLIC_URL.replace(/\/$/,"");
       const response=await fetch(`${env.ANALYZER_URL.replace(/\/$/,"")}/v1/analyze`,{
@@ -14,7 +19,7 @@ export async function consumeAnalysis(batch:MessageBatch<AnalyzeMessage>,env:Env
         headers:{"content-type":"application/json","x-manzil-internal":env.INTERNAL_TOKEN},
         body:JSON.stringify({
           project_id:job.projectId,
-          source_url:`${apiBase}/internal/source/${encodeURIComponent(job.projectId)}`,
+          source_url:`${apiBase}/internal/source/${encodeURIComponent(job.projectId)}?key=${encodeURIComponent(job.sourceKey)}`,
           filename:job.fileName,
           mime_type:job.mimeType,
           callback_url:`${apiBase}/internal/progress`,
@@ -27,6 +32,11 @@ export async function consumeAnalysis(batch:MessageBatch<AnalyzeMessage>,env:Env
       const planError=floorPlanValidationError(rawPlan,job.projectId);
       if(planError) throw new Error(`ANALYZER_INVALID_PLAN:${planError}`);
       const plan=rawPlan as FloorPlanModel;
+      const latest=await getProjectRow(env,job.projectId);
+      if(!latest||latest.source_key!==job.sourceKey||(job.expectedRevision!==undefined&&latest.revision!==job.expectedRevision)){
+        message.ack();
+        continue;
+      }
       await persistPlan(env,job.projectId,plan,job.sourcePage?`تحليل الصفحة ${job.sourcePage}`:"التحليل السحابي الأولي",job.expectedRevision);
       message.ack();
     }catch(error){
