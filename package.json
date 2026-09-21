@@ -1,0 +1,16 @@
+{
+  "name": "manzil-h",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:web": "npm run dev -w @manzil/web",
+    "dev:api": "npm run dev -w @manzil/api",
+    "build:contracts": "npm run build -w @manzil/contracts",
+    "build:web": "npm run build:contracts && npm run build -w @manzil/web",
+    "typecheck": "npm run build:contracts && npm run typecheck -w @manzil/web && npm run typecheck -w @manzil/api",
+    "build": "npm run build:web && npm run typecheck",
+    "test": "npm run test -w @manzil/web"
+  },
+  "engines": {"node": ">=20"}
+}
