@@ -148,3 +148,44 @@ def test_dimension_line_does_not_split_room_topology():
         and abs(((wall["a"]["y"]+wall["b"]["y"])/2)-(160*PDF_RENDER_SCALE))<24
         for wall in boundary_walls
     ),boundary_walls
+
+
+
+def test_thin_furniture_rectangle_does_not_become_second_room():
+    document=fitz.open()
+    page=document.new_page(width=500,height=360)
+
+    shell=page.new_shape()
+    for a,b in [
+        ((50,45),(450,45)),
+        ((450,45),(450,315)),
+        ((450,315),(50,315)),
+        ((50,315),(50,45)),
+    ]:
+        shell.draw_line(a,b)
+    shell.finish(width=8,color=(0,0,0))
+    shell.commit()
+
+    furniture=page.new_shape()
+    for a,b in [
+        ((190,145),(310,145)),
+        ((310,145),(310,215)),
+        ((310,215),(190,215)),
+        ((190,215),(190,145)),
+    ]:
+        furniture.draw_line(a,b)
+    furniture.finish(width=1,color=(0,0,0))
+    furniture.commit()
+    page.insert_text((215,105),"LIVING",fontsize=12)
+
+    data=document.tobytes()
+    document.close()
+    prediction=analyze_document_bytes_local(
+        data,
+        "application/pdf",
+        project_id="furniture-filter",
+        filename="furniture.pdf",
+    )
+
+    assert len(prediction["rooms"])==1,prediction["rooms"]
+    assert "LIVING" in prediction["rooms"][0]["name"].upper()
