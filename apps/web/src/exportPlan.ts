@@ -58,6 +58,17 @@ export function planToSvg(plan:FloorPlanModel){
     parts.push(`<line x1="${window.a.x}" y1="${window.a.y}" x2="${window.b.x}" y2="${window.b.y}" stroke="#38bdf8" stroke-width="3"/>`);
   }
 
+  for(const dimension of plan.dimensions??[]){
+    if(!dimension.reviewed||!dimension.spanA||!dimension.spanB||!dimension.valueM)continue;
+    const mx=(dimension.spanA.x+dimension.spanB.x)/2;
+    const my=(dimension.spanA.y+dimension.spanB.y)/2;
+    const label=`${dimension.valueM.toFixed(2)} م`;
+    parts.push(`<line x1="${dimension.spanA.x}" y1="${dimension.spanA.y}" x2="${dimension.spanB.x}" y2="${dimension.spanB.y}" stroke="#6d28d9" stroke-width="2"/>`);
+    parts.push(`<circle cx="${dimension.spanA.x}" cy="${dimension.spanA.y}" r="3" fill="#ffffff" stroke="#6d28d9" stroke-width="2"/>`);
+    parts.push(`<circle cx="${dimension.spanB.x}" cy="${dimension.spanB.y}" r="3" fill="#ffffff" stroke="#6d28d9" stroke-width="2"/>`);
+    parts.push(`<text x="${mx}" y="${my-7}" text-anchor="middle" fill="#6d28d9" font-size="11" font-weight="700" style="font-family:Arial,Tahoma,sans-serif;unicode-bidi:plaintext">${label}</text>`);
+  }
+
   for(const room of plan.rooms){
     if(!room.polygon.length)continue;
     const metrics=roomMetrics(room,plan.metersPerPixel);
