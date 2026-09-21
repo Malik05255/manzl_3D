@@ -88,6 +88,57 @@ function roomVisualMetrics(room:FloorPlanModel["rooms"][number],metersPerPixel?:
 }
 
 export function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall):FloorPlanModel{
+  const originalDx=original.b.x-original.a.x,originalDy=original.b.y-original.a.y;
+  const major=Math.max(Math.abs(originalDx),Math.abs(originalDy));
+  const minor=Math.min(Math.abs(originalDx),Math.abs(originalDy));
+  const slanted=major>1e-6&&minor/major>.12;
+  if(slanted){
+    const requested={
+      x:((next.a.x+next.b.x)-(original.a.x+original.b.x))/2,
+      y:((next.a.y+next.b.y)-(original.a.y+original.b.y))/2,
+    };
+    let factor=1;
+    for(const point of [original.a,original.b]){
+      if(requested.x>0)factor=Math.min(factor,(plan.widthPx-point.x)/requested.x);
+      else if(requested.x<0)factor=Math.min(factor,(0-point.x)/requested.x);
+      if(requested.y>0)factor=Math.min(factor,(plan.heightPx-point.y)/requested.y);
+      else if(requested.y<0)factor=Math.min(factor,(0-point.y)/requested.y);
+    }
+    factor=Math.max(0,Math.min(1,factor));
+    const delta={x:requested.x*factor,y:requested.y*factor};
+    const tolerance=Math.max(6,original.thicknessPx*2);
+    const lengthSq=originalDx*originalDx+originalDy*originalDy;
+    const nearOriginalSegment=(point:Point)=>{
+      const t=((point.x-original.a.x)*originalDx+(point.y-original.a.y)*originalDy)/lengthSq;
+      if(t<-.04||t>1.04)return false;
+      const clamped=Math.max(0,Math.min(1,t));
+      const px=original.a.x+clamped*originalDx,py=original.a.y+clamped*originalDy;
+      return Math.hypot(point.x-px,point.y-py)<=tolerance;
+    };
+    const shift=(point:Point)=>({x:point.x+delta.x,y:point.y+delta.y});
+    const near=(a:Point,b:Point)=>Math.hypot(a.x-b.x,a.y-b.y)<=tolerance;
+    const walls=plan.walls.map(wall=>{
+      if(wall.id===original.id)return {...wall,a:shift(wall.a),b:shift(wall.b),reviewed:true,provenance:manualProvenance(wall.provenance)};
+      const a=near(wall.a,original.a)||near(wall.a,original.b)?shift(wall.a):wall.a;
+      const b=near(wall.b,original.a)||near(wall.b,original.b)?shift(wall.b):wall.b;
+      return a!==wall.a||b!==wall.b?{...wall,a,b,provenance:manualProvenance(wall.provenance)}:wall;
+    });
+    const rooms=plan.rooms.map(room=>{
+      let changed=false;
+      const polygon=room.polygon.map(point=>{
+        if(!nearOriginalSegment(point))return point;
+        changed=true;
+        return shift(point);
+      });
+      if(!changed)return room;
+      return {...room,polygon,areaM2:plan.metersPerPixel?Number((polygonArea(polygon)*plan.metersPerPixel*plan.metersPerPixel).toFixed(2)):room.areaM2,provenance:manualProvenance(room.provenance)};
+    });
+    const moveOpening=(opening:FloorPlanModel["doors"][number])=>opening.wallId===original.id?{
+      ...opening,a:shift(opening.a),b:shift(opening.b),provenance:manualProvenance(opening.provenance)
+    }:opening;
+    return {...plan,walls,rooms,doors:plan.doors.map(moveOpening),windows:plan.windows.map(moveOpening)};
+  }
+
   const vertical=Math.abs(original.a.x-original.b.x)<=Math.abs(original.a.y-original.b.y);
   const oldAxis=vertical?(original.a.x+original.b.x)/2:(original.a.y+original.b.y)/2;
   const desired=vertical?(next.a.x+next.b.x)/2:(next.a.y+next.b.y)/2;
@@ -319,12 +370,27 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
     }
     if(!drag||!onPlanChange||readonly||calibrationMode||measureMode||effectivePan)return;
     const d=toPlanDelta(event.clientX-drag.startClient.x,event.clientY-drag.startClient.y);
-    const horizontal=Math.abs(drag.original.a.y-drag.original.b.y)<Math.abs(drag.original.a.x-drag.original.b.x);
-    const rawAxis=horizontal?drag.original.a.y+d.y:drag.original.a.x+d.x;
-    const axis=snapEnabled&&!event.shiftKey?snapAxis(rawAxis,plan.metersPerPixel,.05):rawAxis;
-    const candidate:Wall=horizontal
-      ?{...drag.original,a:{...drag.original.a,y:axis},b:{...drag.original.b,y:axis}}
-      :{...drag.original,a:{...drag.original.a,x:axis},b:{...drag.original.b,x:axis}};
+    const wallDx=drag.original.b.x-drag.original.a.x,wallDy=drag.original.b.y-drag.original.a.y;
+    const major=Math.max(Math.abs(wallDx),Math.abs(wallDy)),minor=Math.min(Math.abs(wallDx),Math.abs(wallDy));
+    const slanted=major>1e-6&&minor/major>.12;
+    let candidate:Wall;
+    if(slanted){
+      const length=Math.hypot(wallDx,wallDy);
+      const normal={x:-wallDy/length,y:wallDx/length};
+      const rawDistance=d.x*normal.x+d.y*normal.y;
+      const distance=snapEnabled&&!event.shiftKey?snapAxis(rawDistance,plan.metersPerPixel,.05):rawDistance;
+      candidate={...drag.original,
+        a:{x:drag.original.a.x+normal.x*distance,y:drag.original.a.y+normal.y*distance},
+        b:{x:drag.original.b.x+normal.x*distance,y:drag.original.b.y+normal.y*distance},
+      };
+    }else{
+      const horizontal=Math.abs(wallDy)<Math.abs(wallDx);
+      const rawAxis=horizontal?drag.original.a.y+d.y:drag.original.a.x+d.x;
+      const axis=snapEnabled&&!event.shiftKey?snapAxis(rawAxis,plan.metersPerPixel,.05):rawAxis;
+      candidate=horizontal
+        ?{...drag.original,a:{...drag.original.a,y:axis},b:{...drag.original.b,y:axis}}
+        :{...drag.original,a:{...drag.original.a,x:axis},b:{...drag.original.b,x:axis}};
+    }
     const next=moveWallAndTopology(drag.basePlan,drag.original,candidate);
     onPlanChange(next,false);
     if(!drag.changed&&Math.hypot(d.x,d.y)>.5)setDrag(current=>current?{...current,changed:true}:current);
