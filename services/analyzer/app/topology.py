@@ -15,6 +15,13 @@ def _wall_value(wall,name):
     return wall[name] if isinstance(wall,dict) else getattr(wall,name)
 
 
+def _set_wall_value(wall,name,value):
+    if isinstance(wall,dict):
+        wall[name]=value
+    else:
+        setattr(wall,name,value)
+
+
 def _room_value(room,name):
     return room[name] if isinstance(room,dict) else getattr(room,name)
 
@@ -76,3 +83,53 @@ def link_room_boundaries(rooms:list,walls:list)->list:
 def relink_plan_boundaries(plan:FloorPlan)->FloorPlan:
     link_room_boundaries(plan.rooms,plan.walls)
     return plan
+
+
+def classify_wall_roles(walls:list,rooms:list)->list:
+    if not walls:
+        return walls
+
+    references={str(_wall_value(wall,"id")):0 for wall in walls}
+    all_points=[]
+    for room in rooms:
+        all_points.extend(_room_value(room,"polygon"))
+        for wall_id in (_room_value(room,"boundaryWallIds") if not isinstance(room,dict) else room.get("boundaryWallIds",[])):
+            if wall_id in references:
+                references[wall_id]+=1
+
+    if not all_points:
+        for wall in walls:
+            _set_wall_value(wall,"role","unknown")
+            _set_wall_value(wall,"locked",False)
+        return walls
+
+    xs=[_point(point)[0] for point in all_points]
+    ys=[_point(point)[1] for point in all_points]
+    min_x,max_x=min(xs),max(xs)
+    min_y,max_y=min(ys),max(ys)
+
+    for wall in walls:
+        wall_id=str(_wall_value(wall,"id"))
+        count=references.get(wall_id,0)
+        if count>=2:
+            _set_wall_value(wall,"role","interior")
+            _set_wall_value(wall,"locked",False)
+            continue
+
+        ax,ay=_point(_wall_value(wall,"a"))
+        bx,by=_point(_wall_value(wall,"b"))
+        vertical=abs(ax-bx)<=abs(ay-by)
+        axis=(ax+bx)/2 if vertical else (ay+by)/2
+        thickness=float(_wall_value(wall,"thicknessPx"))
+        tolerance=max(16.0,min(48.0,thickness*4.0))
+        on_envelope=(
+            (vertical and (abs(axis-min_x)<=tolerance or abs(axis-max_x)<=tolerance))
+            or ((not vertical) and (abs(axis-min_y)<=tolerance or abs(axis-max_y)<=tolerance))
+        )
+        if count==1 and on_envelope:
+            _set_wall_value(wall,"role","exterior")
+            _set_wall_value(wall,"locked",True)
+        else:
+            _set_wall_value(wall,"role","unknown")
+            _set_wall_value(wall,"locked",False)
+    return walls
