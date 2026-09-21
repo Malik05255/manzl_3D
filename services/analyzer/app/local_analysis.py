@@ -20,7 +20,7 @@ from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
 from .symbols import extract_symbol_detections
 from .topology import classify_wall_roles,link_room_boundaries,recalibrate_extracted_room_confidence
-from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,rasterize_wall_mask
+from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,quarantine_dimension_aligned_walls,rasterize_wall_mask
 
 
 def analyze_document_bytes_local(
@@ -93,17 +93,27 @@ def analyze_document_bytes_local(
         walls=enrich_walls_with_vector(walls,vector_lines)
         walls=add_vector_wall_candidates(walls,vector_lines,h,w,labels=labels)
 
+    quarantined_wall_ids=quarantine_dimension_aligned_walls(walls,labels,h,w)
+    topology_walls=[
+        wall for wall in walls
+        if str(wall.get("id","")) not in quarantined_wall_ids
+        and not (
+            str(wall.get("provenance",""))=="pdf-vector"
+            and float(wall.get("confidence",0.0))<.70
+        )
+    ]
+
     dimensions=extract_dimension_evidence(
         labels,walls,w,h,ink=ink,vector_lines=vector_lines,
     )
     scale,scale_confidence,scale_warnings=estimate_scale_with_diagnostics(dimensions,w,h)
-    doors=detect_doors(image,walls,scale)
-    windows=detect_windows(image,walls,scale)
+    doors=detect_doors(image,topology_walls,scale)
+    windows=detect_windows(image,topology_walls,scale)
     walls,doors,windows=normalize_opening_hosts(walls,doors,windows)
-    barrier=rasterize_wall_mask(walls,h,w,wall_mask,min_pdf_vector_confidence=.70)
+    barrier=rasterize_wall_mask(walls,h,w,min_pdf_vector_confidence=.70,excluded_wall_ids=quarantined_wall_ids)
     rooms=detect_rooms(barrier,labels,scale)
-    link_room_boundaries(rooms,walls)
-    recalibrate_extracted_room_confidence(rooms,walls,w,h)
+    link_room_boundaries(rooms,topology_walls)
+    recalibrate_extracted_room_confidence(rooms,topology_walls,w,h)
     classify_wall_roles(walls,rooms)
 
     analysis={
