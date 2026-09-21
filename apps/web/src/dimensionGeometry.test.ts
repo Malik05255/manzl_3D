@@ -77,7 +77,12 @@ describe("dimension geometry",()=>{
     expect(JSON.stringify(next.walls[0])).toBe(beforeWall);
   });
 
-  it("refuses calibration before human review",()=>{\n    const source=plan();\n    expect(calibratePlanFromDimension(source,"dimension-1")).toBeNull();\n  });\n\n  it("refuses calibration when the dimension is not linked to a wall",()=>{
+  it("refuses calibration before human review",()=>{
+    const source=plan();
+    expect(calibratePlanFromDimension(source,"dimension-1")).toBeNull();
+  });
+
+  it("refuses calibration when the dimension is not linked to a wall",()=>{
     const source=plan();
     source.dimensions![0].reviewed=true;
     source.dimensions![0].referenceWallId=null;
