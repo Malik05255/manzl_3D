@@ -19,7 +19,7 @@ from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
 from .symbols import extract_symbol_detections
-from .topology import classify_wall_roles,link_room_boundaries,recalibrate_extracted_room_confidence
+from .topology import classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,quarantine_dimension_aligned_walls,rasterize_wall_mask
 
 
@@ -122,6 +122,7 @@ def analyze_document_bytes_local(
     barrier=rasterize_wall_mask(walls,h,w,min_pdf_vector_confidence=.70,excluded_wall_ids=quarantined_wall_ids)
     rooms=detect_rooms(barrier,labels,scale)
     link_room_boundaries(rooms,topology_walls)
+    rooms=filter_nonarchitectural_enclosures(rooms,topology_walls,w,h)
     recalibrate_extracted_room_confidence(rooms,topology_walls,w,h)
     classify_wall_roles(walls,rooms)
 
