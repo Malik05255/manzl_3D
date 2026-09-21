@@ -56,3 +56,48 @@ def test_narrow_bedroom_is_warned():
     ]
     report=validate_plan(plan)
     assert any(item.code=="room_clear_span_low" for item in report.findings)
+
+
+def test_collapsed_wall_is_critical_and_targeted():
+    plan=base_plan()
+    from app.models import Wall
+    plan.walls=[Wall(id="bad-wall",a=Point(x=100,y=100),b=Point(x=100.5,y=100.5),thicknessPx=8,confidence=.9)]
+    report=validate_plan(plan)
+    finding=next(item for item in report.findings if item.code=="wall_collapsed")
+    assert finding.severity=="critical"
+    assert finding.wallIds==["bad-wall"]
+
+
+def test_detached_opening_points_to_wall_and_opening():
+    from app.models import Opening,Wall
+    plan=base_plan()
+    plan.walls=[Wall(id="wall-1",a=Point(x=100,y=100),b=Point(x=500,y=100),thicknessPx=8,confidence=.9)]
+    plan.doors=[Opening(
+        id="door-1",kind="door",wallId="wall-1",
+        a=Point(x=180,y=180),b=Point(x=270,y=180),confidence=.9,
+    )]
+    report=validate_plan(plan)
+    finding=next(item for item in report.findings if item.code=="opening_detached")
+    assert finding.wallIds==["wall-1"]
+    assert finding.openingIds==["door-1"]
+
+
+def test_overlapping_openings_are_warned():
+    from app.models import Opening,Wall
+    plan=base_plan()
+    plan.walls=[Wall(id="wall-1",a=Point(x=100,y=100),b=Point(x=600,y=100),thicknessPx=8,confidence=.9)]
+    plan.doors=[
+        Opening(id="door-1",kind="door",wallId="wall-1",a=Point(x=180,y=100),b=Point(x=300,y=100),confidence=.9),
+        Opening(id="door-2",kind="door",wallId="wall-1",a=Point(x=250,y=100),b=Point(x=360,y=100),confidence=.9),
+    ]
+    report=validate_plan(plan)
+    finding=next(item for item in report.findings if item.code=="openings_overlap")
+    assert set(finding.openingIds)=={"door-1","door-2"}
+
+
+def test_area_mismatch_is_warned_for_changed_room_geometry():
+    plan=base_plan()
+    plan.rooms[0].areaM2=40
+    report=validate_plan(plan)
+    finding=next(item for item in report.findings if item.code=="room_area_mismatch")
+    assert finding.roomIds==["a"]
