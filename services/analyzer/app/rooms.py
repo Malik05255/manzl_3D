@@ -85,11 +85,13 @@ def detect_rooms(wall_mask:np.ndarray,labels:list[dict],meters_per_pixel:float|N
 
         name=""
         label_conf=0.0
+        label_provenance=None
         for label in room_labels:
             cx,cy=label["center"]["x"],label["center"]["y"]
             if _contains(polygon,cx,cy) and label["confidence"]>label_conf:
                 name=label["text"]
                 label_conf=label["confidence"]
+                label_provenance=label.get("provenance")
 
         area_m2=contour_area*(meters_per_pixel**2) if meters_per_pixel else None
         complexity_penalty=max(0,len(polygon)-8)*0.01
@@ -104,7 +106,7 @@ def detect_rooms(wall_mask:np.ndarray,labels:list[dict],meters_per_pixel:float|N
             "confidence":max(0.45,confidence),
             "areaM2":round(area_m2,2) if area_m2 else None,
             "reviewed":False,
-            "provenance":"opencv",
+            "provenance":"mixed" if name and label_provenance else "opencv",
         })
 
     return rooms
