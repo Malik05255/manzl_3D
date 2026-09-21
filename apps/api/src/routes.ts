@@ -85,6 +85,10 @@ async function currentPlan(env:Env,row:ProjectRow):Promise<FloorPlanModel|null>{
   return object?object.json<FloorPlanModel>():null;
 }
 
+function analysisBusy(row:ProjectRow){
+  return row.status==="queued"||row.status==="analyzing";
+}
+
 export async function route(request:Request,env:Env):Promise<Response>{
   const url=new URL(request.url);
   const path=url.pathname;
@@ -221,6 +225,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(typeof expectedRevision!=="number"||!Number.isInteger(expectedRevision)||expectedRevision<0) return json({error:"رقم النسخة المرجعية للمسودة غير صالح"},400);
     try{await persistDraft(env,id,plan,expectedRevision);}
     catch(error){
+      if(error instanceof Error&&error.message==="ANALYSIS_IN_PROGRESS") return json({error:"تحليل المصدر جارٍ الآن. انتظر حتى يكتمل قبل حفظ المسودة."},409);
       if(error instanceof Error&&error.message==="STALE_DRAFT") return json({error:"المسودة متقادمة بعد حفظ نسخة أحدث"},409);
       throw error;
     }
@@ -259,6 +264,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const id=revision[1];
     const secured=await protectedRow(request,env,id);
     if(secured instanceof Response) return secured;
+    if(analysisBusy(secured)) return json({error:"تحليل المصدر جارٍ الآن. انتظر اكتماله قبل حفظ نسخة جديدة."},409);
     const body=await request.json<SaveRevisionRequest>();
     const planError=floorPlanValidationError(body.plan,id);
     if(planError) return json({error:"صيغة المخطط غير صالحة"},400);
@@ -290,6 +296,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const id=restoreRevision[1];
     const secured=await protectedRow(request,env,id);
     if(secured instanceof Response) return secured;
+    if(analysisBusy(secured)) return json({error:"تحليل المصدر جارٍ الآن. لا يمكن استعادة نسخة أثناء التحليل."},409);
     const revisionNumber=Number(restoreRevision[2]);
     if(!Number.isInteger(revisionNumber)||revisionNumber<1) return json({error:"رقم النسخة غير صالح"},400);
     const item=await env.DB.prepare("SELECT plan_key FROM revisions WHERE project_id=? AND revision=?")
@@ -326,6 +333,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const id=preciseResize[1];
     const secured=await protectedRow(request,env,id);
     if(secured instanceof Response) return secured;
+    if(analysisBusy(secured)) return json({error:"تحليل المصدر جارٍ الآن. انتظر حتى يصبح المخطط جاهزًا."},409);
     const plan=await currentPlan(env,secured);
     if(!plan) return json({error:"المخطط غير جاهز للتحرير"},409);
     const body=await request.json<{roomId?:string;widthM?:number;heightM?:number}>();
@@ -345,6 +353,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const id=proposals[1];
     const secured=await protectedRow(request,env,id);
     if(secured instanceof Response) return secured;
+    if(analysisBusy(secured)) return json({error:"تحليل المصدر جارٍ الآن. انتظر حتى يصبح المخطط جاهزًا قبل استخدام H Engineer."},409);
     const plan=await currentPlan(env,secured);
     if(!plan) return json({error:"المخطط غير جاهز للتحرير"},409);
     const body=await request.json<{command?:string;targetRoomId?:string|null;targetWallId?:string|null;targetOpeningId?:string|null}>();
@@ -365,6 +374,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const id=apply[1];
     const secured=await protectedRow(request,env,id);
     if(secured instanceof Response) return secured;
+    if(analysisBusy(secured)) return json({error:"تحليل المصدر جارٍ الآن. لا يمكن اعتماد تعديل H Engineer أثناء التحليل."},409);
     const body=await request.json<ApplyProposalRequest>();
     const command=(body.command??"").trim();
     const selectedId=body.proposal?.id;
