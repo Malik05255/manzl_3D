@@ -57,3 +57,46 @@ def test_core_e2e_analysis_preview_save_restore_cycle():
     restored=FloorPlan.model_validate_json(baseline_json)
     assert restored.id==plan.id
     assert restored.model_dump()==plan.model_dump()
+
+
+
+def synthetic_slanted_pdf_bytes():
+    document=fitz.open()
+    page=document.new_page(width=420,height=420)
+    shape=page.new_shape()
+    for a,b in [
+        ((210,45),(375,210)),
+        ((375,210),(210,375)),
+        ((210,375),(45,210)),
+        ((45,210),(210,45)),
+    ]:
+        shape.draw_line(a,b)
+    shape.finish(width=9,color=(0,0,0))
+    shape.commit()
+    page.insert_text((180,210),"LIVING",fontsize=12)
+    data=document.tobytes()
+    document.close()
+    return data
+
+
+def test_core_e2e_preserves_slanted_pdf_geometry_into_room_topology():
+    analyzed=analyze_document_bytes_local(
+        synthetic_slanted_pdf_bytes(),
+        "application/pdf",
+        project_id="slanted-e2e",
+        filename="slanted.pdf",
+    )
+    plan=FloorPlan.model_validate(analyzed)
+    slanted=[
+        wall for wall in plan.walls
+        if abs(wall.b.x-wall.a.x)>80 and abs(wall.b.y-wall.a.y)>80
+    ]
+    assert len(slanted)>=4
+    assert plan.rooms
+
+    room=max(plan.rooms,key=lambda item:item.areaM2 or 0)
+    xs={round(point.x) for point in room.polygon}
+    ys={round(point.y) for point in room.polygon}
+    assert len(xs)>=3
+    assert len(ys)>=3
+    assert len(room.boundaryWallIds)>=3
