@@ -226,3 +226,79 @@ def resize_neighbor_constraints(command:str,rooms:list,target)->tuple[set[str],s
                 break
 
     return preferred,excluded
+
+
+def parse_metric_amount(command:str,min_m:float=0.01,max_m:float=50.0)->float|None:
+    text=normalize_arabic(command)
+    match=re.search(r"(\d+(?:\.\d+)?)\s*(سنتيمتر|سم|متر|م)(?=\s|$|[،,.])",text)
+    if not match:
+        return None
+    value=float(match.group(1))
+    if match.group(2) in ("سم","سنتيمتر"):
+        value/=100.0
+    return value if min_m<=value<=max_m else None
+
+
+def parse_selected_opening_action(command:str)->tuple[str,dict]|None:
+    text=normalize_arabic(command)
+    remove_words=("احذف","ازل","شيل","الغي","الغ")
+    if any(word in text for word in remove_words):
+        return "remove",{}
+
+    convert_words=("حول","غير","بدل","خلي","اجعل")
+    if any(word in text for word in convert_words):
+        if "نافذه" in text:
+            return "kind",{"kind":"window"}
+        if "باب" in text:
+            return "kind",{"kind":"door"}
+
+    move_words=("حرك","انقل","زحزح")
+    directions=(
+        ("يمين","right"),("يسار","left"),("فوق","up"),("اعلى","up"),
+        ("تحت","down"),("اسفل","down"),
+    )
+    if any(word in text for word in move_words):
+        amount=parse_metric_amount(command,0.01,20.0)
+        direction=next((value for word,value in directions if word in text),None)
+        if amount is not None and direction:
+            return "move",{"amount_m":amount,"direction":direction}
+        if amount is not None:
+            return "move_missing_direction",{"amount_m":amount}
+
+    width_markers=("العرض","عرض","وسع الفتحه","وسع الباب","وسع النافذه","صغر الفتحه","صغر الباب","صغر النافذه")
+    if any(marker in text for marker in width_markers) or re.search(r"(?:خلي|اجعل|غير).{0,18}(?:\d)",text):
+        amount=parse_metric_amount(command,0.20,6.0)
+        if amount is not None:
+            return "width",{"width_m":amount}
+
+    return None
+
+
+def parse_selected_wall_action(command:str)->tuple[str,dict]|None:
+    text=normalize_arabic(command)
+    add_words=("اضف","حط","ركب","انشئ","سوي")
+    if any(word in text for word in add_words):
+        if "باب" in text:
+            return "add_opening",{"kind":"door"}
+        if "نافذه" in text:
+            return "add_opening",{"kind":"window"}
+
+    if "سماكه" in text or "سمك" in text:
+        amount=parse_metric_amount(command,0.02,1.0)
+        if amount is not None:
+            return "thickness",{"thickness_m":amount}
+
+    move_words=("حرك","انقل","زحزح")
+    directions=(
+        ("يمين","right"),("يسار","left"),("فوق","up"),("اعلى","up"),
+        ("تحت","down"),("اسفل","down"),
+    )
+    if any(word in text for word in move_words):
+        amount=parse_metric_amount(command,0.01,20.0)
+        direction=next((value for word,value in directions if word in text),None)
+        if amount is not None and direction:
+            return "move",{"amount_m":amount,"direction":direction}
+        if amount is not None:
+            return "move_missing_direction",{"amount_m":amount}
+
+    return None
