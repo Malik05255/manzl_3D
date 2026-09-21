@@ -363,6 +363,7 @@ def validate_plan(plan:FloorPlan)->ValidationReport:
                     severity="warning",
                     text=f"البعد الأصلي المقروء {dimension.valueM:.2f} م لا يطابق طول الجدار الحالي {actual_m:.2f} م؛ قد يكون التغيير مقصودًا أو تحتاج قراءة البعد للمراجعة.",
                     wallIds=[wall.id],
+                    dimensionIds=[dimension.id],
                 ))
 
     by_wall:dict[str,list]= {}
@@ -398,6 +399,7 @@ def _finding_identity(item:ValidationFinding)->tuple:
         tuple(sorted(item.roomIds)),
         tuple(sorted(item.wallIds)),
         tuple(sorted(item.openingIds)),
+        tuple(sorted(item.dimensionIds)),
     )
 
 
