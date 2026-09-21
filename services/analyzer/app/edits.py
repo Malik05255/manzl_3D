@@ -6,7 +6,7 @@ from .element_edits import build_selected_element_proposals
 from .models import EditRequest,FloorPlan,Impact,Proposal,ProposalResponse,Room
 from .provenance import mark_ai_changes
 from .topology import canonicalize_plan
-from .validation import validate_plan
+from .validation import introduced_critical_findings,validate_plan
 
 SERVICE_ROOM_WORDS=("حمام","دوره مياه","دورة مياه","مطبخ","درج","مصعد","غسيل")
 ROOM_EDIT_CONFIDENCE_MIN=0.78
@@ -19,7 +19,7 @@ def _service_rooms(names:list[str])->list[str]:
             result.append(name)
     return result
 
-def _absorb_service_alternative(plan:FloorPlan,target:Room,target_w:float,target_h:float,command:str)->Proposal|None:
+def _absorb_service_alternative(plan:FloorPlan,target:Room,target_w:float,target_h:float,command:str,baseline_validation=None)->Proposal|None:
     mpp=plan.metersPerPixel
     if not mpp:
         return None
@@ -55,7 +55,8 @@ def _absorb_service_alternative(plan:FloorPlan,target:Room,target_w:float,target
         mark_ai_changes(plan,candidate)
         candidate=canonicalize_plan(candidate)
         validation=validate_plan(candidate)
-        if any(item.severity=="critical" for item in validation.findings):
+        baseline=baseline_validation or validate_plan(plan)
+        if introduced_critical_findings(baseline,validation):
             continue
         warnings=[
             f"هذا خيار جذري: سيتم إلغاء {service.name} بالكامل وضم مساحته إلى {target.name}.",
@@ -77,6 +78,7 @@ def _absorb_service_alternative(plan:FloorPlan,target:Room,target_w:float,target
     return None
 
 def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:float,command:str)->ProposalResponse:
+    baseline_validation=validate_plan(plan)
     if not target.reviewed and target.confidence<ROOM_EDIT_CONFIDENCE_MIN:
         return ProposalResponse(
             command=command,
@@ -168,7 +170,7 @@ def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:fl
         mark_ai_changes(plan,candidate)
         candidate=canonicalize_plan(candidate)
         validation=validate_plan(candidate)
-        if any(finding.severity=="critical" for finding in validation.findings):
+        if introduced_critical_findings(baseline_validation,validation):
             continue
 
         warnings=[]
@@ -201,7 +203,7 @@ def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:fl
         )
         ranked.append((penalty,len(affected),proposal))
 
-    absorb=_absorb_service_alternative(plan,target,target_w,target_h,command)
+    absorb=_absorb_service_alternative(plan,target,target_w,target_h,command,baseline_validation)
     if absorb is not None:
         parts=absorb.id.split(":")
         absorbed_id=parts[2] if len(parts)>2 else ""
@@ -259,9 +261,10 @@ def build_merge_proposal(plan:FloorPlan,source:Room,target:Room,command:str)->Pr
 
     mark_ai_changes(plan,candidate)
     candidate=canonicalize_plan(candidate)
+    baseline_validation=validate_plan(plan)
     validation=validate_plan(candidate)
-    if any(item.severity=="critical" for item in validation.findings):
-        return ProposalResponse(command=command,proposals=[],needsClarification="نتيجة الدمج تسببت في تعارض هندسي، لذلك لم يتم اقتراحها.")
+    if introduced_critical_findings(baseline_validation,validation):
+        return ProposalResponse(command=command,proposals=[],needsClarification="نتيجة الدمج تسببت في تعارض هندسي جديد، لذلك لم يتم اقتراحها.")
 
     warnings=[
         f"سيتم حذف {source.name} كغرفة مستقلة وضم مساحتها بالكامل إلى {target.name}.",
