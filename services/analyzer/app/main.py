@@ -9,6 +9,7 @@ from .document import decode_document_with_page,preprocess
 from .edits import build_proposals
 from .models import EditRequest,FloorPlan,ProposalResponse
 from .ocr import extract_ocr_labels
+from .openings import detect_doors
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale
@@ -84,12 +85,13 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     await progress(req.callback_url,req.project_id,"geometry",58,"استخراج الجدران والهندسة")
     walls,wall_mask=detect_walls(ink)
     scale,scale_confidence=estimate_scale(labels,walls,w,h)
+    doors=detect_doors(image,walls,scale)
 
     await progress(req.callback_url,req.project_id,"rooms",78,"فهم الغرف والعلاقات")
     rooms=detect_rooms(wall_mask,labels,scale)
 
     await progress(req.callback_url,req.project_id,"validation",93,"التحقق من جودة النتيجة")
-    result=assemble_plan(image,req.project_id,req.filename,req.mime_type,labels,walls,rooms,scale,scale_confidence,source_page=source_page)
+    result=assemble_plan(image,req.project_id,req.filename,req.mime_type,labels,walls,rooms,scale,scale_confidence,source_page=source_page,doors=doors)
     return FloorPlan.model_validate(result)
 
 @app.post("/v1/edit/proposals",response_model=ProposalResponse)
