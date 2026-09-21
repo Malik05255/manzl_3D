@@ -166,3 +166,13 @@ def test_irregular_rooms_sharing_boundary_are_not_overlap():
     ]
     report=validate_plan(plan)
     assert not any(item.code=="rooms_overlap" for item in report.findings)
+
+
+def test_missing_room_boundary_wall_is_critical():
+    plan=base_plan()
+    plan.rooms[0].boundaryWallIds=["missing-wall"]
+    report=validate_plan(plan)
+    finding=next(item for item in report.findings if item.code=="room_boundary_wall_missing")
+    assert finding.severity=="critical"
+    assert finding.roomIds==["a"]
+    assert finding.wallIds==["missing-wall"]
