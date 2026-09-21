@@ -2,7 +2,7 @@ import fitz
 import numpy as np
 import cv2
 
-from app.document import PDF_RENDER_SCALE,_order_quad,_plan_likeness_score,_warp_quad,decode_document_with_page,extract_pdf_text_lines,normalize_resolution
+from app.document import PDF_RENDER_SCALE,_order_quad,_plan_likeness_score,_warp_quad,decode_document_with_page,extract_pdf_text_lines,extract_pdf_vector_lines,normalize_resolution
 
 
 def test_plan_likeness_prefers_orthogonal_geometry():
@@ -76,3 +76,22 @@ def test_pdf_native_text_is_extracted_in_render_coordinates():
     match=next(item for item in lines if "BEDROOM" in item["text"])
     assert match["center"]["x"]>100*PDF_RENDER_SCALE
     assert match["center"]["y"]>90*PDF_RENDER_SCALE
+
+
+def test_pdf_native_vector_lines_are_scaled_to_render_coordinates():
+    document=fitz.open()
+    page=document.new_page(width=400,height=300)
+    shape=page.new_shape()
+    shape.draw_line((50,80),(350,80))
+    shape.draw_line((200,40),(200,260))
+    shape.finish(width=5,color=(0,0,0))
+    shape.commit()
+    data=document.tobytes()
+    document.close()
+
+    lines=extract_pdf_vector_lines(data,1)
+    horizontal=next(item for item in lines if abs(item["a"]["y"]-item["b"]["y"])<1 and item["b"]["x"]-item["a"]["x"]>500)
+    vertical=next(item for item in lines if abs(item["a"]["x"]-item["b"]["x"])<1 and item["b"]["y"]-item["a"]["y"]>350)
+    assert horizontal["a"]["x"]==50*PDF_RENDER_SCALE
+    assert vertical["a"]["x"]==200*PDF_RENDER_SCALE
+    assert horizontal["widthPx"]>=5*PDF_RENDER_SCALE
