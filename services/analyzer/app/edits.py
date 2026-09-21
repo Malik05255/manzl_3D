@@ -7,6 +7,7 @@ from .models import EditRequest,FloorPlan,Impact,Proposal,ProposalResponse,Room
 from .validation import validate_plan
 
 SERVICE_ROOM_WORDS=("حمام","دوره مياه","دورة مياه","مطبخ","درج","مصعد","غسيل")
+ROOM_EDIT_CONFIDENCE_MIN=0.78
 
 def _service_rooms(names:list[str])->list[str]:
     result=[]
@@ -72,6 +73,12 @@ def _absorb_service_alternative(plan:FloorPlan,target:Room,target_w:float,target
     return None
 
 def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:float,command:str)->ProposalResponse:
+    if target.confidence<ROOM_EDIT_CONFIDENCE_MIN:
+        return ProposalResponse(
+            command=command,
+            proposals=[],
+            needsClarification=f"قراءة {target.name} منخفضة الثقة. أكد الغرفة من قسم مراجعة القراءة أو صحح حدودها أولًا قبل تعديلها بالذكاء.",
+        )
     mpp=plan.metersPerPixel
     if not mpp or mpp<=0:
         return ProposalResponse(command=command,proposals=[],needsClarification="يجب تثبيت مقياس المخطط أولًا قبل تنفيذ تعديل بالمتر.")
@@ -220,6 +227,13 @@ def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:fl
     return ProposalResponse(command=command,proposals=[item[2] for item in ranked[:4]])
 
 def build_merge_proposal(plan:FloorPlan,source:Room,target:Room,command:str)->ProposalResponse:
+    uncertain=[room.name for room in (source,target) if room.confidence<ROOM_EDIT_CONFIDENCE_MIN]
+    if uncertain:
+        return ProposalResponse(
+            command=command,
+            proposals=[],
+            needsClarification=f"قراءة {' و'.join(uncertain)} منخفضة الثقة. أكد الغرف من مراجعة القراءة قبل الدمج أو الحذف.",
+        )
     if not plan.metersPerPixel:
         return ProposalResponse(command=command,proposals=[],needsClarification="يجب تثبيت مقياس المخطط قبل دمج الغرف.")
 
