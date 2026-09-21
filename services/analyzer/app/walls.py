@@ -202,6 +202,86 @@ def _wall_duplicate(candidate:dict,existing:dict)->bool:
     return abs(co-eo)<=axis_tol and overlap_ratio>=0.55
 
 
+def _merge_near_collinear_candidates(candidates:list[dict])->list[dict]:
+    """Merge Hough fragments on the same wall while preserving real openings.
+
+    Only overlap or very small axial gaps are merged. Door/window-sized gaps
+    remain separate segments so the opening detector can still observe them.
+    """
+    pending=[dict(item) for item in candidates]
+    changed=True
+    while changed:
+        changed=False
+        result=[]
+        used=[False]*len(pending)
+        for index,left in enumerate(pending):
+            if used[index]:
+                continue
+            current=dict(left)
+            for j in range(index+1,len(pending)):
+                if used[j]:
+                    continue
+                right=pending[j]
+                if _angle_difference(current,right)>4.0:
+                    continue
+                cs,ce,co,clen,ux,uy=_frame(current)
+                rax,ray=_point(right["a"])
+                rbx,rby=_point(right["b"])
+                nx=-uy
+                ny=ux
+                rs=min(rax*ux+ray*uy,rbx*ux+rby*uy)
+                re=max(rax*ux+ray*uy,rbx*ux+rby*uy)
+                ro=((rax+rbx)/2)*nx+((ray+rby)/2)*ny
+                thickness=max(
+                    float(current.get("thicknessPx",4.0)),
+                    float(right.get("thicknessPx",4.0)),
+                )
+                axis_tol=max(5.0,thickness*.85)
+                if abs(co-ro)>axis_tol:
+                    continue
+                axial_gap=max(0.0,max(rs-cs,cs-re,rs-ce,cs-re))
+                # Equivalent, easier to reason about using sorted intervals.
+                if re<cs:
+                    axial_gap=cs-re
+                elif rs>ce:
+                    axial_gap=rs-ce
+                else:
+                    axial_gap=0.0
+                gap_tol=max(5.0,min(12.0,thickness*.80))
+                if axial_gap>gap_tol:
+                    continue
+
+                start=min(cs,rs)
+                end=max(ce,re)
+                left_len=max(1.0,clen)
+                right_len=max(1.0,re-rs)
+                total=left_len+right_len
+                offset=(co*left_len+ro*right_len)/total
+                confidence=max(
+                    float(current.get("confidence",0.0)),
+                    float(right.get("confidence",0.0)),
+                )
+                provenance=current.get("provenance") if current.get("provenance")==right.get("provenance") else "mixed"
+                current={
+                    **current,
+                    "a":_point_from_frame(start,offset,ux,uy),
+                    "b":_point_from_frame(end,offset,ux,uy),
+                    "thicknessPx":round((
+                        float(current.get("thicknessPx",4.0))*left_len
+                        +float(right.get("thicknessPx",4.0))*right_len
+                    )/total,2),
+                    "confidence":round(confidence,3),
+                    "reviewed":bool(current.get("reviewed",False)) and bool(right.get("reviewed",False)),
+                    "provenance":provenance or "opencv",
+                }
+                used[j]=True
+                changed=True
+            used[index]=True
+            result.append(current)
+        pending=result
+    return pending
+
+
 def _detect_slanted_wall_candidates(ink:np.ndarray)->list[dict]:
     h,w=ink.shape[:2]
     min_side=float(max(1,min(h,w)))
@@ -255,6 +335,7 @@ def _detect_slanted_wall_candidates(ink:np.ndarray)->list[dict]:
             candidate["provenance"]="opencv"
             candidates.append(candidate)
 
+    candidates=_merge_near_collinear_candidates(candidates)
     accepted=[]
     for candidate in sorted(
         candidates,
