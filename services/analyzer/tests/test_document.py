@@ -2,7 +2,7 @@ import fitz
 import numpy as np
 import cv2
 
-from app.document import _order_quad,_plan_likeness_score,_warp_quad,decode_document_with_page,normalize_resolution
+from app.document import PDF_RENDER_SCALE,_order_quad,_plan_likeness_score,_warp_quad,decode_document_with_page,extract_pdf_text_lines,normalize_resolution
 
 
 def test_plan_likeness_prefers_orthogonal_geometry():
@@ -63,3 +63,16 @@ def test_very_large_plan_is_capped():
     image=np.full((5400,1200,3),255,dtype=np.uint8)
     resized=normalize_resolution(image)
     assert max(resized.shape[:2])<=5200
+
+
+def test_pdf_native_text_is_extracted_in_render_coordinates():
+    document=fitz.open()
+    page=document.new_page(width=400,height=300)
+    page.insert_text((100,120),"BEDROOM 5.00 m",fontsize=16)
+    data=document.tobytes()
+    document.close()
+
+    lines=extract_pdf_text_lines(data,1)
+    match=next(item for item in lines if "BEDROOM" in item["text"])
+    assert match["center"]["x"]>100*PDF_RENDER_SCALE
+    assert match["center"]["y"]>90*PDF_RENDER_SCALE
