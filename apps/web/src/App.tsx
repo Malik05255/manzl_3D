@@ -1,7 +1,7 @@
 import { useEffect,useMemo,useRef,useState } from "react";
 import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Clock3,Cloud,Download,FileImage,FileText,Hammer,Layers3,LoaderCircle,Redo2,Ruler,Save,ShieldCheck,Sparkles,Undo2,UploadCloud,WandSparkles,X } from "lucide-react";
 import type { EditProposal,FloorPlanModel,Point,ProjectView,RevisionView,ValidationReport } from "@manzil/contracts";
-import { applyProposal,askEngineer,createProject,forgetKnownProject,forgetLastProject,getKnownProjects,getLastProjectId,getProject,getProjectPreview,importProjectBackup,inferSourceMime,listRevisions,resizeRoomPrecisely,restoreRevision,saveDraft,saveRevision,uploadSource,validateProject } from "./api";
+import { ApiError,applyProposal,askEngineer,createProject,forgetKnownProject,forgetLastProject,getKnownProjects,getLastProjectId,getProject,getProjectPreview,importProjectBackup,inferSourceMime,listRevisions,resizeRoomPrecisely,restoreRevision,saveDraft,saveRevision,uploadSource,validateProject } from "./api";
 import type { KnownProject } from "./api";
 import { PlanCanvas } from "./PlanCanvas";
 import { exportPlanJson,exportPlanPng,exportPlanSvg } from "./exportPlan";
@@ -18,13 +18,13 @@ const phaseLabels:Record<string,string>={
 function Brand({compact=false}:{compact?:boolean}){return <div className={`brand ${compact?"brand-compact":""}`}><img src="/icon.svg" alt=""/><div><strong>منزل H</strong>{!compact&&<span>محرر المخططات الذكي</span>}</div></div>;}
 function UpdateBanner({onInstall}:{onInstall:()=>void}){return <div className="update-banner"><span>يتوفر إصدار أحدث من منزل H.</span><button onClick={onInstall}>تثبيت التحديث</button></div>;}
 
-function Home({onStart,onResume,resumeAvailable,resumeBusy,projects,onOpenProject,openingProjectId}:{onStart:()=>void;onResume:()=>void;resumeAvailable:boolean;resumeBusy:boolean;projects:KnownProject[];onOpenProject:(id:string)=>void;openingProjectId:string|null}){return <main className="landing">
+function Home({onStart,onResume,resumeAvailable,resumeBusy,projects,onOpenProject,openingProjectId,openError}:{onStart:()=>void;onResume:()=>void;resumeAvailable:boolean;resumeBusy:boolean;projects:KnownProject[];onOpenProject:(id:string)=>void;openingProjectId:string|null;openError:string|null}){return <main className="landing">
   <header className="landing-header"><Brand/></header>
   <section className="hero">
     <div className="hero-copy"><span className="eyebrow"><Cloud size={16}/> معالجة سحابية</span><h1>عدّل مخططك كما تفكر فيه.</h1><p>ارفع المخطط، راجعه بصريًا، ثم عدّله يدويًا أو اطلب من H Engineer اقتراح التغيير مع أثره قبل التنفيذ.</p><div className="hero-actions"><button className="primary giant" onClick={onStart}>ابنِ مشروعك <ChevronLeft size={20}/></button>{resumeAvailable&&<button className="ghost giant resume-button" disabled={resumeBusy} onClick={onResume}>{resumeBusy?<LoaderCircle className="spin" size={19}/>:<Layers3 size={19}/>} استكمال آخر مشروع</button>}</div></div>
     <div className="hero-board" aria-hidden="true"><div className="mock-plan"><div className="mock-room room-a">غرفة نوم</div><div className="mock-room room-b">صالة</div><div className="mock-room room-c">مطبخ</div><div className="mock-ai"><WandSparkles size={18}/> كبّر غرفة النوم إلى 5×5</div></div></div>
   </section>
-  {projects.length>0&&<section className="recent-projects"><div className="recent-head"><div><strong>مشاريعك على هذا الجهاز</strong><span>تُحفظ صلاحية كل مشروع محليًا، بينما المخطط نفسه محفوظ سحابيًا.</span></div></div><div className="recent-grid">{projects.slice(0,6).map(item=><button className="recent-card" key={item.id} disabled={openingProjectId===item.id} onClick={()=>onOpenProject(item.id)}><div className="recent-icon">{openingProjectId===item.id?<LoaderCircle className="spin" size={20}/>:<Layers3 size={20}/>}</div><div><strong>{item.name}</strong><span>{new Date(item.updatedAt).toLocaleString("ar-SA")}</span></div><ChevronLeft size={18}/></button>)}</div></section>}
+  {(projects.length>0||openError)&&<section className="recent-projects">{openError&&<div className="error-box recent-error">{openError}</div>}<div className="recent-head"><div><strong>مشاريعك على هذا الجهاز</strong><span>تُحفظ صلاحية كل مشروع محليًا، بينما المخطط نفسه محفوظ سحابيًا.</span></div></div><div className="recent-grid">{projects.slice(0,6).map(item=><button className="recent-card" key={item.id} disabled={openingProjectId===item.id} onClick={()=>onOpenProject(item.id)}><div className="recent-icon">{openingProjectId===item.id?<LoaderCircle className="spin" size={20}/>:<Layers3 size={20}/>}</div><div><strong>{item.name}</strong><span>{new Date(item.updatedAt).toLocaleString("ar-SA")}</span></div><ChevronLeft size={18}/></button>)}</div></section>}
 </main>;}
 
 function Choice({onEdit,onBack}:{onEdit:()=>void;onBack:()=>void}){return <main className="center-page">
@@ -259,9 +259,9 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
 }
 
 export default function App(){
-  const[screen,setScreen]=useState<Screen>("home");const[project,setProject]=useState<ProjectView|null>(null);const[resumeAvailable,setResumeAvailable]=useState(()=>Boolean(getLastProjectId()));const[resumeBusy,setResumeBusy]=useState(false);const[knownProjects,setKnownProjects]=useState<KnownProject[]>(()=>getKnownProjects());const[openingProjectId,setOpeningProjectId]=useState<string|null>(null);const{updateReady,installUpdate}=useAppUpdate();
+  const[screen,setScreen]=useState<Screen>("home");const[project,setProject]=useState<ProjectView|null>(null);const[resumeAvailable,setResumeAvailable]=useState(()=>Boolean(getLastProjectId()));const[resumeBusy,setResumeBusy]=useState(false);const[knownProjects,setKnownProjects]=useState<KnownProject[]>(()=>getKnownProjects());const[openingProjectId,setOpeningProjectId]=useState<string|null>(null);const[projectOpenError,setProjectOpenError]=useState<string|null>(null);const{updateReady,installUpdate}=useAppUpdate();
   const openProject=async(id:string)=>{
-    setOpeningProjectId(id);
+    setOpeningProjectId(id);setProjectOpenError(null);
     try{
       const next=await getProject(id);
       setProject(next);
@@ -269,11 +269,16 @@ export default function App(){
       setResumeAvailable(true);
       if(next.status==="ready"&&next.plan)setScreen("editor");
       else setScreen("processing");
-    }catch{
-      forgetKnownProject(id);
-      if(getLastProjectId()===id)forgetLastProject();
-      setKnownProjects(getKnownProjects());
-      setResumeAvailable(Boolean(getLastProjectId()));
+    }catch(error){
+      if(error instanceof ApiError&&(error.status===401||error.status===404)){
+        forgetKnownProject(id);
+        if(getLastProjectId()===id)forgetLastProject();
+        setKnownProjects(getKnownProjects());
+        setResumeAvailable(Boolean(getLastProjectId()));
+        setProjectOpenError(error.status===401?"تعذر فتح المشروع لأن صلاحية هذا الجهاز لم تعد صالحة. استخدم نسخة JSON إن كانت لديك.":"المشروع لم يعد موجودًا في التخزين السحابي.");
+      }else{
+        setProjectOpenError(error instanceof Error?error.message:"تعذر الاتصال بالمشروع الآن. لم نحذف صلاحية الوصول؛ حاول مرة أخرى.");
+      }
     }finally{
       setOpeningProjectId(null);
     }
@@ -284,9 +289,9 @@ export default function App(){
     setResumeBusy(true);
     try{await openProject(id);}finally{setResumeBusy(false);}
   };
-  const home=()=>{setScreen("home");setResumeAvailable(Boolean(getLastProjectId()));setKnownProjects(getKnownProjects());};
+  const home=()=>{setScreen("home");setProjectOpenError(null);setResumeAvailable(Boolean(getLastProjectId()));setKnownProjects(getKnownProjects());};
   return <>{updateReady&&<UpdateBanner onInstall={installUpdate}/>}
-    {screen==="home"&&<Home onStart={()=>setScreen("choice")} onResume={resume} resumeAvailable={resumeAvailable} resumeBusy={resumeBusy} projects={knownProjects} onOpenProject={id=>void openProject(id)} openingProjectId={openingProjectId}/>}
+    {screen==="home"&&<Home onStart={()=>{setProjectOpenError(null);setScreen("choice");}} onResume={resume} resumeAvailable={resumeAvailable} resumeBusy={resumeBusy} projects={knownProjects} onOpenProject={id=>void openProject(id)} openingProjectId={openingProjectId} openError={projectOpenError}/>}
     {screen==="choice"&&<Choice onEdit={()=>setScreen("upload")} onBack={home}/>}
     {screen==="upload"&&<Upload onBack={()=>setScreen("choice")} onStarted={p=>{setProject(p);setResumeAvailable(true);setKnownProjects(getKnownProjects());setScreen(p.status==="ready"&&p.plan?"editor":"processing");}}/>}
     {screen==="processing"&&project&&<Processing projectId={project.id} onReady={p=>{setProject(p);setScreen("editor");}} onHome={home}/>}

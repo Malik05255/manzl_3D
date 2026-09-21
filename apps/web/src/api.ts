@@ -2,6 +2,10 @@ import type { ApplyProposalRequest, EditProposalResponse, FloorPlanModel, Projec
 
 const API_BASE=(import.meta.env.VITE_API_BASE_URL as string|undefined)?.replace(/\/$/,"")??"http://localhost:8787";
 const tokenKey=(projectId:string)=>`manzil:project-token:${projectId}`;
+export class ApiError extends Error{
+  constructor(message:string,public readonly status:number){super(message);this.name="ApiError";}
+}
+
 const lastProjectKey="manzil:last-project";
 const knownProjectsKey="manzil:known-projects";
 
@@ -65,7 +69,7 @@ async function request<T>(path:string,init?:RequestInit):Promise<T>{
   if(!response.ok){
     let message=`HTTP ${response.status}`;
     try{const body=await response.json() as {error?:string};if(body.error)message=body.error;}catch{}
-    throw new Error(message);
+    throw new ApiError(message,response.status);
   }
   return response.json() as Promise<T>;
 }
