@@ -5,7 +5,7 @@ import { ApiError,activateFloor,applyProposal,askEngineer,clearProjectDraft,crea
 import type { KnownProject } from "./api";
 import { DEFAULT_PLAN_LAYERS,PlanCanvas,moveWallAndTopology } from "./PlanCanvas";
 import type { PlanLayerVisibility } from "./PlanCanvas";
-import { calibratePlanFromDimension,correctDimensionValue,dimensionWallCandidates,linkDimensionToWall } from "./dimensionGeometry";
+import { calibratePlanFromSpan,correctDimensionValue,dimensionWallCandidates,linkDimensionToWall } from "./dimensionGeometry";
 import { exportPlanJson,exportPlanPng,exportPlanSvg } from "./exportPlan";
 import { parsePlanBackup } from "./planBackup";
 import { addOpeningToWall,changeOpeningKind,findOpening,openingMetrics,positionOpening,removeOpening,resizeOpening } from "./openingGeometry";
@@ -436,13 +436,11 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     if(!selectedDimension)return;
     const dimension=(plan.dimensions??[]).find(item=>item.id===selectedDimension);
     if(!dimension?.reviewed){setNotice("أكد قراءة هذا البعد أولًا قبل استخدامه لمعايرة المقياس.");return;}
-    if(!dimension.valueM||!dimension.referenceWallId){setNotice("هذا البعد غير مرتبط بجدار واضح. استخدم المعايرة اليدوية أو اختر بعدًا مرتبطًا بجدار.");return;}
-    const wall=plan.walls.find(item=>item.id===dimension.referenceWallId);
-    if(!wall){setNotice("الجدار المرتبط بالبعد لم يعد موجودًا.");return;}
-    const next=calibratePlanFromDimension(plan,selectedDimension);
-    if(!next){setNotice("تعذر اشتقاق مقياس صالح من هذا البعد والجدار المرتبط.");return;}
-    applyLocalPlan(next);
-    setNotice(`تم تثبيت المقياس من البعد المؤكد ${dimension.valueM.toFixed(2)} م. راجع القياسات ثم احفظ المشروع.`);
+    if(!dimension.valueM){setNotice("صحح قيمة البعد بالمتر أولًا.");return;}
+    setKnownDistance(dimension.valueM.toFixed(3).replace(/0+$/,"").replace(/\.$/,""));
+    setCalibrationPoints([]);
+    setCalibrating(true);
+    setNotice("حدد طرفي خط البعد نفسه على المخطط. لن نفترض أن القيمة تخص طول الجدار كاملًا.");
   };
   const renameSelectedRoom=()=>{
     const room=plan.rooms.find(item=>item.id===selectedRoom);
@@ -600,16 +598,10 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     if(calibrationPoints.length!==2)return;
     const meters=Number(knownDistance.replace(",","."));
     const [a,b]=calibrationPoints;
-    const pixels=Math.hypot(b.x-a.x,b.y-a.y);
-    if(!Number.isFinite(meters)||meters<=0||pixels<5){setNotice("أدخل المسافة الحقيقية بين النقطتين بالمتر.");return;}
-    const mpp=meters/pixels;
-    const rooms=plan.rooms.map(room=>{
-      let area=0;
-      for(let i=0;i<room.polygon.length;i++){const p=room.polygon[i],q=room.polygon[(i+1)%room.polygon.length];area+=p.x*q.y-q.x*p.y;}
-      return {...room,areaM2:Number((Math.abs(area)/2*mpp*mpp).toFixed(2))};
-    });
-    applyLocalPlan({...plan,metersPerPixel:mpp,calibrationConfidence:1,rooms,quality:{...plan.quality,needsCalibration:false,dimensions:Math.max(plan.quality.dimensions,.95),warnings:plan.quality.warnings.filter(w=>!w.includes("مقياس الرسم"))}});
-    setCalibrating(false);setCalibrationPoints([]);setKnownDistance("");setNotice("تم تثبيت المقياس. احفظ المشروع لتثبيت المعايرة.");
+    const next=calibratePlanFromSpan(plan,meters,a,b);
+    if(!next){setNotice("تعذر تثبيت المقياس. تحقق من المسافة الحقيقية ومن النقطتين المحددتين.");return;}
+    applyLocalPlan(next);
+    setCalibrating(false);setCalibrationPoints([]);setKnownDistance("");setNotice("تم تثبيت المقياس من المسافة المحددة. احفظ المشروع لتثبيت المعايرة.");
   };
   const discardRecoveredDraft=async()=>{
     setSaving(true);++draftGeneration.current;setNotice(null);
@@ -658,7 +650,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
           const wall=dimension.referenceWallId?plan.walls.find(item=>item.id===dimension.referenceWallId):null;
           const currentWallM=wall&&plan.metersPerPixel?Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y)*plan.metersPerPixel:null;
           const wallCandidates=dimensionWallCandidates(plan,dimension.id,12);
-          return <div className="dimension-evidence-editor"><div className="precise-title"><div><strong>مراجعة البعد المقروء</strong><span>{dimension.text} · {provenanceLabel(dimension.provenance)} · ثقة {Math.round(dimension.confidence*100)}%</span></div><Ruler size={18}/></div><label><span>القيمة الصحيحة بالمتر</span><div><input inputMode="decimal" value={dimensionValue} onChange={e=>setDimensionValue(e.target.value)} placeholder="مثال 4.20"/><button className="ghost" disabled={!dimensionValue||Boolean(preview)} onClick={updateSelectedDimensionValue}>تصحيح</button></div></label><label><span>الجدار المرجعي</span><select value={dimension.referenceWallId??""} onChange={e=>linkSelectedDimension(e.target.value)}><option value="">بدون ربط</option>{wallCandidates.map(candidate=><option key={candidate.wallId} value={candidate.wallId}>{candidate.wallId}{plan.metersPerPixel?` · ${(candidate.lengthPx*plan.metersPerPixel).toFixed(2)} م`:""}</option>)}</select></label><div className="dimension-link-status"><span>{wall?`مرتبط بالجدار ${wall.id}`:"غير مرتبط بجدار واضح"}</span>{currentWallM!==null&&<small>طول الجدار الحالي {currentWallM.toFixed(2)} م</small>}</div><button className="primary small" disabled={!dimension.reviewed||!dimension.valueM||!wall||Boolean(preview)} onClick={calibrateFromSelectedDimension}><Check size={15}/> استخدم هذا البعد لمعايرة المقياس</button><small className="review-note">المعايرة من هذا البعد تغيّر المقياس العام فقط بعد تأكيدك، وتعيد حساب مساحات الغرف دون تحريك الجدران.</small></div>;
+          return <div className="dimension-evidence-editor"><div className="precise-title"><div><strong>مراجعة البعد المقروء</strong><span>{dimension.text} · {provenanceLabel(dimension.provenance)} · ثقة {Math.round(dimension.confidence*100)}%</span></div><Ruler size={18}/></div><label><span>القيمة الصحيحة بالمتر</span><div><input inputMode="decimal" value={dimensionValue} onChange={e=>setDimensionValue(e.target.value)} placeholder="مثال 4.20"/><button className="ghost" disabled={!dimensionValue||Boolean(preview)} onClick={updateSelectedDimensionValue}>تصحيح</button></div></label><label><span>الجدار المرجعي</span><select value={dimension.referenceWallId??""} onChange={e=>linkSelectedDimension(e.target.value)}><option value="">بدون ربط</option>{wallCandidates.map(candidate=><option key={candidate.wallId} value={candidate.wallId}>{candidate.wallId}{plan.metersPerPixel?` · ${(candidate.lengthPx*plan.metersPerPixel).toFixed(2)} م`:""}</option>)}</select></label><div className="dimension-link-status"><span>{wall?`مرتبط بالجدار ${wall.id}`:"غير مرتبط بجدار واضح"}</span>{currentWallM!==null&&<small>طول الجدار الحالي {currentWallM.toFixed(2)} م</small>}</div><button className="primary small" disabled={!dimension.reviewed||!dimension.valueM||Boolean(preview)} onClick={calibrateFromSelectedDimension}><Check size={15}/> عاير من هذا البعد</button><small className="review-note">بعد التأكيد ستحدد طرفي خط البعد على المخطط. لا يفترض منزل H أن الرقم يساوي طول الجدار كاملًا، حتى لا يثبت مقياسًا خاطئًا.</small></div>;
         })()}
         <div className="precise-editor"><div className="precise-title"><div><strong>تعديل دقيق</strong><span>اختر الغرفة ثم أدخل المقاس بالمتر</span></div><Ruler size={19}/></div>
           <select value={selectedRoom??""} onChange={e=>selectRoom(e.target.value||null)}><option value="">اختر غرفة</option>{plan.rooms.map(room=><option key={room.id} value={room.id}>{room.name}</option>)}</select>
