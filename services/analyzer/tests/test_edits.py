@@ -525,3 +525,20 @@ def test_merge_relinks_boundary_wall_ids_after_shared_wall_removal():
     bed=next(room for room in preview.rooms if room.id=="bed")
     assert "shared" not in bed.boundaryWallIds
     assert set(bed.boundaryWallIds)=={"left","top-bed","top-bath","right","bottom-bed","bottom-bath"}
+
+
+def test_resize_can_proceed_when_unrelated_critical_issue_already_exists():
+    plan=sample_plan()
+    plan.walls.append(Wall(
+        id="broken-existing",
+        a=Point(x=950,y=650),
+        b=Point(x=950,y=650),
+        thicknessPx=10,
+        confidence=.9,
+    ))
+    response=build_proposals(EditRequest(
+        project_id="project-1",
+        command="عدل غرفة النوم إلى 5×4",
+        plan=plan,
+    ))
+    assert response.proposals
