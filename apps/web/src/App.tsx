@@ -115,7 +115,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   const[project,setProject]=useState(initialProject);const[plan,setPlan]=useState<FloorPlanModel>(initialProject.plan!);const[savedPlan,setSavedPlan]=useState<FloorPlanModel>(initialProject.plan!);const[undoStack,setUndoStack]=useState<FloorPlanModel[]>([]);const[redoStack,setRedoStack]=useState<FloorPlanModel[]>([]);
   const[selectedWall,setSelectedWall]=useState<string|null>(null);const[wallThicknessCm,setWallThicknessCm]=useState("");const[wallMoveCm,setWallMoveCm]=useState("10");const[selectedRoom,setSelectedRoom]=useState<string|null>(null);const[selectedOpening,setSelectedOpening]=useState<string|null>(null);const[openingWidth,setOpeningWidth]=useState("");const[openingPosition,setOpeningPosition]=useState(50);const[exactName,setExactName]=useState("");const[exactWidth,setExactWidth]=useState("");const[exactHeight,setExactHeight]=useState("");const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
   const[calibrating,setCalibrating]=useState(false);const[calibrationPoints,setCalibrationPoints]=useState<Point[]>([]);const[knownDistance,setKnownDistance]=useState("");
-  const[sourcePreview,setSourcePreview]=useState<string|null>(null);const[sourceOpacity,setSourceOpacity]=useState(.42);
+  const[sourcePreview,setSourcePreview]=useState<string|null>(null);const[sourceOpacity,setSourceOpacity]=useState(.42);const[sourcePreviewNonce,setSourcePreviewNonce]=useState(0);const[sourcePageInput,setSourcePageInput]=useState(String(initialProject.plan?.source.page??1));const[pageSwitchBusy,setPageSwitchBusy]=useState(false);
   const[historyOpen,setHistoryOpen]=useState(false);const[historyBusy,setHistoryBusy]=useState(false);const[revisions,setRevisions]=useState<RevisionView[]>([]);const[exportOpen,setExportOpen]=useState(false);const[exportBusy,setExportBusy]=useState(false);
   const[validationReport,setValidationReport]=useState<ValidationReport|null>(null);const[validationBusy,setValidationBusy]=useState(false);const[draftState,setDraftState]=useState<"idle"|"saving"|"saved"|"error">(initialProject.hasDraft?"saved":"idle");const[recoveredDraft,setRecoveredDraft]=useState(initialProject.hasDraft);
   const draftGeneration=useRef(0);const draftChain=useRef<Promise<void>>(Promise.resolve());const openingPositionBase=useRef<FloorPlanModel|null>(null);
@@ -308,7 +308,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     let active=true;let objectUrl:string|null=null;
     getProjectPreview(project.id).then(url=>{objectUrl=url;if(active)setSourcePreview(url);else if(url)URL.revokeObjectURL(url);}).catch(()=>undefined);
     return()=>{active=false;if(objectUrl)URL.revokeObjectURL(objectUrl);};
-  },[project.id]);
+  },[project.id,sourcePreviewNonce]);
   useEffect(()=>{
     if(!localDirty||preview)return;
     const generation=++draftGeneration.current;
@@ -352,6 +352,34 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   const save=async()=>{setSaving(true);const generation=++draftGeneration.current;try{await draftChain.current.catch(()=>undefined);if(generation!==draftGeneration.current)return;const u=await saveRevision(project.id,plan,"تعديل يدوي",project.revision);setProject(u);setSavedPlan(plan);setRecoveredDraft(false);setDraftState("idle");setValidationReport(null);setNotice("تم حفظ التعديل في السحابة.");}catch(e){const report=validationFromApiError(e);if(report)setValidationReport(report);setNotice(e instanceof Error?e.message:"تعذر الحفظ");}finally{setSaving(false);}};
   const openHistory=async()=>{setHistoryOpen(true);setHistoryBusy(true);try{const r=await listRevisions(project.id);setRevisions(r.items);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحميل سجل النسخ");setHistoryOpen(false);}finally{setHistoryBusy(false);}};
   const runValidation=async()=>{setValidationBusy(true);setNotice(null);try{setValidationReport(await validateProject(project.id,plan));}catch(e){setNotice(e instanceof Error?e.message:"تعذر فحص المخطط");}finally{setValidationBusy(false);}};
+  const reanalyzeSourcePage=async()=>{
+    const page=Number(sourcePageInput);
+    const pageCount=plan.source.pageCount??1;
+    if(!Number.isInteger(page)||page<1||page>pageCount){setNotice(`اختر صفحة بين 1 و${pageCount}.`);return;}
+    if(page===plan.source.page){setNotice("هذه هي الصفحة الحالية بالفعل.");return;}
+    if(dirty){setNotice("احفظ التعديلات الحالية قبل الانتقال إلى صفحة PDF أخرى.");return;}
+    setPageSwitchBusy(true);setNotice(`جارٍ إعادة تحليل الصفحة ${page} من ${pageCount}...`);
+    try{
+      const baselineRevision=project.revision;
+      await retryAnalysis(project.id,page);
+      let fresh:ProjectView|null=null;
+      for(let attempt=0;attempt<140;attempt++){
+        await new Promise(resolve=>window.setTimeout(resolve,1200));
+        const candidate=await getProject(project.id);
+        if(candidate.status==="error")throw new Error(candidate.error??"تعذر تحليل الصفحة المحددة.");
+        if(candidate.status==="ready"&&candidate.plan&&candidate.revision>baselineRevision&&candidate.plan.source.page===page){
+          fresh=candidate;break;
+        }
+      }
+      if(!fresh?.plan)throw new Error("استغرق تحليل الصفحة وقتًا أطول من المتوقع. يمكنك إعادة المحاولة دون رفع الملف.");
+      setProject(fresh);setPlan(fresh.plan);setSavedPlan(fresh.plan);setUndoStack([]);setRedoStack([]);
+      setSelectedWall(null);setWallThicknessCm("");setSelectedRoom(null);setSelectedOpening(null);
+      setPreview(null);setProposals([]);setValidationReport(null);setRecoveredDraft(false);setDraftState("idle");
+      setSourcePageInput(String(fresh.plan.source.page));setSourcePreviewNonce(value=>value+1);
+      setNotice(`تم تحليل الصفحة ${page} وأصبحت هي المخطط الحالي. الصفحة السابقة محفوظة في سجل النسخ.`);
+    }catch(e){setNotice(e instanceof Error?e.message:"تعذر تحليل الصفحة المحددة.");}
+    finally{setPageSwitchBusy(false);}
+  };
   const focusValidationFinding=(item:ValidationReport["findings"][number])=>{
     if(item.roomIds[0]){selectRoom(item.roomIds[0]);return;}
     if(item.wallIds?.[0]){selectWall(item.wallIds[0]);return;}
@@ -392,7 +420,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     {historyOpen&&<div className="history-backdrop" onClick={()=>setHistoryOpen(false)}><section className="history-modal" onClick={e=>e.stopPropagation()}><div className="history-head"><div><strong>سجل النسخ</strong><span>الاستعادة لا تحذف أي نسخة؛ تُنشئ نسخة جديدة من الحالة المختارة.</span></div><button className="icon-button" onClick={()=>setHistoryOpen(false)} aria-label="إغلاق"><X size={17}/></button></div>{localDirty&&<div className="inline-warning">لديك تغييرات محلية غير محفوظة. احفظها أو تراجع عنها قبل الاستعادة.</div>}{recoveredDraft&&!localDirty&&<div className="notice-box">أنت تعرض مسودة تلقائية مستعادة. يمكنك استعادة أي نسخة محفوظة دون أن تضيع من سجل النسخ.</div>}<div className="history-list">{historyBusy?<div className="history-loading"><LoaderCircle className="spin" size={24}/> تحميل النسخ...</div>:revisions.length?revisions.map((item,index)=><div className="history-item" key={item.revision}><div><strong>نسخة {item.revision}{index===0?" · الأحدث":""}</strong><span>{item.summary}</span><small>{new Date(item.createdAt).toLocaleString("ar-SA")}</small></div><button className="ghost" disabled={localDirty||saving||(!recoveredDraft&&index===0)} onClick={()=>restore(item.revision)}>{index===0?(recoveredDraft?"استعادة آخر حفظ":localDirty?"آخر حفظ":"الحالية"):"استعادة"}</button></div>):<div className="history-empty">لا توجد نسخ محفوظة بعد.</div>}</div></section></div>}
     <header className="editor-header"><Brand compact/><div className="project-name"><FileText size={17}/><strong>{project.name}</strong></div><div className="editor-actions"><button className="ghost" onClick={openHistory}><Clock3 size={17}/> النسخ</button><button className="ghost" onClick={onHome}><ArrowLeft size={17}/> الرئيسية</button><button className="ghost" disabled={!undoStack.length} onClick={undoLocal}><Undo2 size={17}/> تراجع</button><button className="ghost" disabled={!redoStack.length} onClick={redoLocal}><Redo2 size={17}/> إعادة</button><button className="primary small" disabled={!dirty||saving} onClick={save}><Save size={17}/> حفظ</button></div></header>
     <div className="editor-workspace">
-      <section className="plan-panel"><div className="panel-title"><div><strong>منطقة التعديل</strong><span>اسحب جدارًا لتحريكه أو استخدم H Engineer</span></div><div className="panel-status"><span className={`draft-pill ${draftState}`}>{draftState==="saving"?"حفظ...":draftState==="saved"?"مسودة سحابية":draftState==="error"?"تعذر الحفظ":"سحابي"}</span><button className="validate-chip export-chip" onClick={()=>setExportOpen(true)}><Download size={14}/> تصدير</button>{sourcePreview&&<label className="overlay-control"><span>الأصل</span><input type="range" min="0" max=".85" step=".05" value={sourceOpacity} onChange={e=>setSourceOpacity(Number(e.target.value))}/></label>}<button className="validate-chip" disabled={validationBusy} onClick={runValidation}>{validationBusy?<LoaderCircle className="spin" size={14}/>:<ShieldCheck size={14}/>} فحص</button><div className="quality-pill">جودة التحليل {Math.round(plan.quality.overall*100)}%</div></div></div>
+      <section className="plan-panel"><div className="panel-title"><div><strong>منطقة التعديل</strong><span>اسحب جدارًا لتحريكه أو استخدم H Engineer</span></div><div className="panel-status"><span className={`draft-pill ${draftState}`}>{draftState==="saving"?"حفظ...":draftState==="saved"?"مسودة سحابية":draftState==="error"?"تعذر الحفظ":"سحابي"}</span><button className="validate-chip export-chip" onClick={()=>setExportOpen(true)}><Download size={14}/> تصدير</button>{sourcePreview&&<label className="overlay-control"><span>الأصل</span><input type="range" min="0" max=".85" step=".05" value={sourceOpacity} onChange={e=>setSourceOpacity(Number(e.target.value))}/></label>}<button className="validate-chip" disabled={validationBusy} onClick={runValidation}>{validationBusy?<LoaderCircle className="spin" size={14}/>:<ShieldCheck size={14}/>} فحص</button>{(plan.source.pageCount??1)>1&&<div className="source-page-control"><span>PDF {plan.source.page}/{plan.source.pageCount}</span><input type="number" min="1" max={plan.source.pageCount??1} value={sourcePageInput} disabled={pageSwitchBusy||dirty} onChange={e=>setSourcePageInput(e.target.value)}/><button className="ghost" disabled={pageSwitchBusy||dirty||Number(sourcePageInput)===plan.source.page} onClick={()=>void reanalyzeSourcePage()}>{pageSwitchBusy?<LoaderCircle className="spin" size={13}/>:null} تحليل الصفحة</button></div>}<div className="quality-pill">جودة التحليل {Math.round(plan.quality.overall*100)}%</div></div></div>
         {recoveredDraft&&<div className="recovered-draft"><div><strong>تمت استعادة مسودة تلقائية</strong><span>هذه التغييرات محفوظة سحابيًا لكنها ليست Revision رسمية بعد.</span></div><div><button className="ghost" disabled={saving} onClick={()=>void discardRecoveredDraft()}>تجاهل المسودة</button><button className="primary small" disabled={saving} onClick={save}><Save size={15}/> حفظ كنسخة</button></div></div>}
         <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)} selectedWallId={selectedWall} onSelectWall={selectWall} selectedRoomId={selectedRoom} onSelectRoom={selectRoom} selectedOpeningId={selectedOpening} onSelectOpening={selectOpening} onPlanChange={applyLocalPlan} onPlanCommit={commitTransientPlan}
           calibrationMode={calibrating} calibrationPoints={calibrationPoints}
