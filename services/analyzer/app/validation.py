@@ -347,6 +347,24 @@ def validate_plan(plan:FloorPlan)->ValidationReport:
                     wallIds=[opening.wallId] if opening.wallId else [],
                 ))
 
+    if mpp and mpp>0 and plan.dimensions:
+        for dimension in plan.dimensions:
+            if dimension.valueM is None or not dimension.referenceWallId:
+                continue
+            wall=walls_by_id.get(dimension.referenceWallId)
+            if wall is None:
+                continue
+            actual_m=math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y)*mpp
+            difference=abs(actual_m-dimension.valueM)
+            relative=difference/max(actual_m,dimension.valueM,0.01)
+            if difference>0.15 and relative>0.12:
+                findings.append(ValidationFinding(
+                    code="source_dimension_mismatch",
+                    severity="warning",
+                    text=f"البعد الأصلي المقروء {dimension.valueM:.2f} م لا يطابق طول الجدار الحالي {actual_m:.2f} م؛ قد يكون التغيير مقصودًا أو تحتاج قراءة البعد للمراجعة.",
+                    wallIds=[wall.id],
+                ))
+
     by_wall:dict[str,list]= {}
     for opening in openings:
         if opening.wallId and opening.wallId in walls_by_id:
