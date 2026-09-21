@@ -29,7 +29,7 @@ def parse_target_size(command:str)->tuple[float,float]|None:
 def _named_value(text:str,words:tuple[str,...])->float|None:
     alternatives="|".join(re.escape(word) for word in words)
     match=re.search(
-        rf"(?:{alternatives})\s*(?:ها|ه)?\s*(?:الى|يكون|=|:)?\s*(\d+(?:\.\d+)?)\s*(?:م|متر)?",
+        rf"(?:{alternatives}).{0,45}?(\d+(?:\.\d+)?)\s*(?:متر|م)?(?=\s|$|[،,.])",
         text,
     )
     if not match:
@@ -41,21 +41,23 @@ def _relative_delta(text:str,dimension_words:tuple[str,...])->float|None:
     dimensions="|".join(re.escape(word) for word in dimension_words)
     increase=r"(?:زد|زود|كبر|وسع|زيد)"
     decrease=r"(?:قلل|نقص|صغر)"
-    unit=r"(متر|م|سم|سنتيمتر)"
-    amount=r"(\d+(?:\.\d+)?)?"
+    unit=r"(سنتيمتر|متر|سم|م)"
+    end=r"(?=\s|$|[،,.])"
 
     for sign,actions in ((1.0,increase),(-1.0,decrease)):
-        pattern=rf"{actions}.{{0,35}}?(?:{dimensions}).{{0,35}}?{amount}\s*{unit}"
-        match=re.search(pattern,text)
-        if not match:
-            continue
-        raw=match.group(1)
-        value=float(raw) if raw else 1.0
-        if match.group(2) in ("سم","سنتيمتر"):
-            value/=100
-        if value<=0 or value>20:
-            return None
-        return sign*value
+        context=rf"{actions}.{{0,35}}?(?:{dimensions}).{{0,35}}?"
+        explicit=re.search(context+rf"(\d+(?:\.\d+)?)\s*{unit}{end}",text)
+        if explicit:
+            value=float(explicit.group(1))
+            if explicit.group(2) in ("سم","سنتيمتر"):
+                value/=100
+            return sign*value if 0<value<=20 else None
+
+        default_one=re.search(context+rf"{unit}{end}",text)
+        if default_one:
+            value=0.01 if default_one.group(1) in ("سم","سنتيمتر") else 1.0
+            return sign*value
+
     return None
 
 def resolve_target_size(command:str,current_width:float,current_height:float)->tuple[float,float]|None:
