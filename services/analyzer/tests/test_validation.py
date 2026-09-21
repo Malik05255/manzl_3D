@@ -101,3 +101,68 @@ def test_area_mismatch_is_warned_for_changed_room_geometry():
     report=validate_plan(plan)
     finding=next(item for item in report.findings if item.code=="room_area_mismatch")
     assert finding.roomIds==["a"]
+
+
+def test_self_intersecting_room_is_critical():
+    plan=base_plan()
+    plan.rooms[0].polygon=[
+        Point(x=100,y=100),Point(x=500,y=500),Point(x=500,y=100),Point(x=100,y=500)
+    ]
+    report=validate_plan(plan)
+    finding=next(item for item in report.findings if item.code=="room_self_intersection")
+    assert finding.severity=="critical"
+    assert finding.roomIds==["a"]
+
+
+def test_irregular_room_overlap_is_critical():
+    plan=base_plan()
+    plan.rooms=[
+        Room(
+            id="l",
+            name="غرفة L",
+            polygon=[
+                Point(x=100,y=100),Point(x=500,y=100),Point(x=500,y=300),
+                Point(x=300,y=300),Point(x=300,y=500),Point(x=100,y=500),
+            ],
+            confidence=.9,
+            areaM2=12,
+        ),
+        Room(
+            id="b",
+            name="غرفة متداخلة",
+            polygon=[
+                Point(x=250,y=250),Point(x=650,y=250),Point(x=650,y=450),Point(x=250,y=450),
+            ],
+            confidence=.9,
+            areaM2=8,
+        ),
+    ]
+    report=validate_plan(plan)
+    assert any(item.code=="rooms_overlap" and item.severity=="critical" for item in report.findings)
+
+
+def test_irregular_rooms_sharing_boundary_are_not_overlap():
+    plan=base_plan()
+    plan.rooms=[
+        Room(
+            id="l",
+            name="غرفة L",
+            polygon=[
+                Point(x=100,y=100),Point(x=500,y=100),Point(x=500,y=300),
+                Point(x=300,y=300),Point(x=300,y=500),Point(x=100,y=500),
+            ],
+            confidence=.9,
+            areaM2=12,
+        ),
+        Room(
+            id="adj",
+            name="غرفة مجاورة",
+            polygon=[
+                Point(x=500,y=100),Point(x=800,y=100),Point(x=800,y=300),Point(x=500,y=300),
+            ],
+            confidence=.9,
+            areaM2=6,
+        ),
+    ]
+    report=validate_plan(plan)
+    assert not any(item.code=="rooms_overlap" for item in report.findings)
