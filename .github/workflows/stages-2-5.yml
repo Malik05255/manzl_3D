@@ -131,7 +131,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: stages-2-4-\${{ github.sha }}
+          name: stages-2-4-${{ github.sha }}
           path: |
             benchmark-output/symbol-model-info.json
             benchmark-output/aec15/score.txt
@@ -158,7 +158,7 @@ jobs:
       - run: python services/analyzer/tools/generate_e2e_fixture.py /tmp/manzil-e2e.pdf
       - name: Require deployed staging endpoint
         env:
-          MANZIL_API_URL: \${{ secrets.MANZIL_E2E_API_URL }}
+          MANZIL_API_URL: ${{ secrets.MANZIL_E2E_API_URL }}
         run: |
           test -n "$MANZIL_API_URL" || {
             echo "::error::MANZIL_E2E_API_URL repository secret is not configured"
@@ -168,7 +168,7 @@ jobs:
           curl -fsS "$MANZIL_API_URL/ready"
       - name: Run upload-to-restore against staging
         env:
-          MANZIL_API_URL: \${{ secrets.MANZIL_E2E_API_URL }}
+          MANZIL_API_URL: ${{ secrets.MANZIL_E2E_API_URL }}
           MANZIL_E2E_SOURCE: /tmp/manzil-e2e.pdf
           MANZIL_E2E_TIMEOUT_MS: "240000"
         run: node scripts/e2e_remote.mjs
