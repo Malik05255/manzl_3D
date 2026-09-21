@@ -549,6 +549,42 @@ def detect_windows(
     return result
 
 
+def _same_opening_gap(left:dict,right:dict)->bool:
+    if _angle_difference(left,right)>8.0:
+        return False
+    llen,*_=_segment_geometry(left)
+    rlen,*_=_segment_geometry(right)
+    if llen<=1e-9 or rlen<=1e-9:
+        return False
+    lcx=(float(left["a"]["x"])+float(left["b"]["x"]))/2
+    lcy=(float(left["a"]["y"])+float(left["b"]["y"]))/2
+    rcx=(float(right["a"]["x"])+float(right["b"]["x"]))/2
+    rcy=(float(right["a"]["y"])+float(right["b"]["y"]))/2
+    center_distance=math.hypot(lcx-rcx,lcy-rcy)
+    if center_distance>max(8.0,min(llen,rlen)*.28):
+        return False
+    ratio=min(llen,rlen)/max(llen,rlen)
+    return ratio>=.58
+
+
+def resolve_opening_conflicts(
+    doors:list[dict],
+    windows:list[dict],
+)->tuple[list[dict],list[dict]]:
+    """Prevent the same architectural gap from becoming both door and window.
+
+    A detected door already carries leaf/arc swing evidence, so it is stronger
+    semantic evidence than parallel glazing-like strokes from the same ROI.
+    """
+    if not doors or not windows:
+        return doors,windows
+    kept_windows=[
+        window for window in windows
+        if not any(_same_opening_gap(door,window) for door in doors)
+    ]
+    return doors,kept_windows
+
+
 def _endpoint_distance(wall:dict,point:dict)->float:
     return min(
         math.hypot(
@@ -594,6 +630,7 @@ def normalize_opening_hosts(
     doors:list[dict],
     windows:list[dict],
 )->tuple[list[dict],list[dict],list[dict]]:
+    doors,windows=resolve_opening_conflicts(doors,windows)
     openings=[*doors,*windows]
     if not walls or not openings:
         return walls,doors,windows
