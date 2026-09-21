@@ -43,10 +43,12 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const id=crypto.randomUUID();
     const now=new Date().toISOString();
     const name=cleanName(body.name??"مخطط جديد");
-    await env.DB.prepare("INSERT INTO projects(id,name,status,phase,progress,created_at,updated_at) VALUES(?,?,?,?,?,?,?)")
-      .bind(id,name,"created","created",0,now,now).run();
+    const access=await createProjectAccess();
+    await env.DB.prepare("INSERT INTO projects(id,name,status,phase,progress,access_hash,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)")
+      .bind(id,name,"created","created",0,access.hash,now,now).run();
     const row=await getProjectRow(env,id);
-    return json(await projectView(env,row!,false),201);
+    const view=await projectView(env,row!,false);
+    return json({...view,accessToken:access.token},201);
   }
 
   const source=path.match(/^\/v1\/projects\/([^/]+)\/source$/);
