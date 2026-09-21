@@ -72,7 +72,7 @@ function protectedEditViolation(before:FloorPlanModel,after:FloorPlanModel):stri
   const openingSignature=(items:typeof beforeOpenings,wallId:string)=>JSON.stringify(
     items.filter(item=>item.wallId===wallId)
       .map(item=>({
-        id:item.id,kind:item.kind,wallId:item.wallId??null,
+        id:item.id,kind:item.kind,doorSubtype:item.doorSubtype??null,wallId:item.wallId??null,
         a:[item.a.x,item.a.y],b:[item.b.x,item.b.y]
       }))
       .sort((left,right)=>left.id.localeCompare(right.id))
