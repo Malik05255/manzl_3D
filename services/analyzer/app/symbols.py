@@ -98,14 +98,8 @@ def _bbox(item:dict,width:int,height:int)->tuple[float,float,float,float]|None:
     y1=max(0.0,min(float(height),y1))
     x2=max(0.0,min(float(width),x2))
     y2=max(0.0,min(float(height),y2))
-    if x2<x1:
-        x1,x2=x2,x1
-    if y2<y1:
-        y1,y2=y2,x1  # placeholder fixed below
-    # Correct the y ordering independently from x.
-    if raw[3]<raw[1]:
-        y1=max(0.0,min(float(height),raw[3]*(height if (explicit_normalized or coordinate_space in {"normalized","relative","0-1"} or inferred_normalized) else 1.0)))
-        y2=max(0.0,min(float(height),raw[1]*(height if (explicit_normalized or coordinate_space in {"normalized","relative","0-1"} or inferred_normalized) else 1.0)))
+    x1,x2=min(x1,x2),max(x1,x2)
+    y1,y2=min(y1,y2),max(y1,y2)
 
     box_width=x2-x1
     box_height=y2-y1
