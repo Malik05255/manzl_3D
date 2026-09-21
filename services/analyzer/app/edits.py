@@ -5,6 +5,7 @@ from .edit_geometry import absorb_neighbor,adjacent,apply_side,bbox,is_orthogona
 from .element_edits import build_selected_element_proposals
 from .models import EditRequest,FloorPlan,Impact,Proposal,ProposalResponse,Room
 from .provenance import mark_ai_changes
+from .room_rebuild import build_room_rebuild_proposal
 from .topology import canonicalize_plan
 from .validation import introduced_critical_findings,validate_plan
 
@@ -284,6 +285,16 @@ def build_merge_proposal(plan:FloorPlan,source:Room,target:Room,command:str)->Pr
 
 
 def build_proposals(req:EditRequest)->ProposalResponse:
+    normalized=normalize_arabic(req.command)
+    if any(phrase in normalized for phrase in (
+        "اعاده بناء الغرف",
+        "اعاده بناء الفراغات",
+        "استخرج الغرف من الجدران",
+        "استخراج الغرف من الجدران",
+        "ابن الغرف من الجدران",
+    )):
+        return build_room_rebuild_proposal(req.plan,req.command)
+
     merge=parse_merge_rooms(req.command,req.plan.rooms)
     if merge is not None:
         source,target=merge
