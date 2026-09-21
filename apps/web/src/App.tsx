@@ -1,6 +1,6 @@
 import { useEffect,useMemo,useRef,useState } from "react";
 import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Clock3,Cloud,DoorOpen,Download,FileImage,FileText,Hammer,Layers3,LoaderCircle,Redo2,RotateCcw,Ruler,Save,Settings2,ShieldCheck,Sparkles,Square,Trash2,Undo2,UploadCloud,WandSparkles,X } from "lucide-react";
-import type { EditProposal,ElementProvenance,FloorPlanModel,Opening,Point,ProjectView,RevisionView,ValidationReport,WallRole } from "@manzil/contracts";
+import type { Dimension,EditProposal,ElementProvenance,FloorPlanModel,Opening,Point,ProjectView,RevisionView,ValidationReport,WallRole } from "@manzil/contracts";
 import { ApiError,activateFloor,applyProposal,askEngineer,clearProjectDraft,createProject,forgetKnownProject,forgetLastProject,getKnownProjects,getLastProjectId,getProject,getProjectPreview,importProjectBackup,inferSourceMime,listRevisions,resizeRoomPrecisely,restoreRevision,retryAnalysis,saveDraft,saveRevision,updateFloorMetadata,uploadSource,validateProject } from "./api";
 import type { KnownProject } from "./api";
 import { DEFAULT_PLAN_LAYERS,PlanCanvas,moveWallAndTopology } from "./PlanCanvas";
@@ -142,7 +142,7 @@ function Processing({projectId,onReady,onHome}:{projectId:string;onReady:(p:Proj
 
 function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>void}){
   const[project,setProject]=useState(initialProject);const[plan,setPlan]=useState<FloorPlanModel>(initialProject.plan!);const[savedPlan,setSavedPlan]=useState<FloorPlanModel>(initialProject.plan!);const[undoStack,setUndoStack]=useState<FloorPlanModel[]>([]);const[redoStack,setRedoStack]=useState<FloorPlanModel[]>([]);
-  const[selectedWall,setSelectedWall]=useState<string|null>(null);const[wallThicknessCm,setWallThicknessCm]=useState("");const[wallMoveCm,setWallMoveCm]=useState("10");const[selectedRoom,setSelectedRoom]=useState<string|null>(null);const[selectedOpening,setSelectedOpening]=useState<string|null>(null);const[openingWidth,setOpeningWidth]=useState("");const[openingPosition,setOpeningPosition]=useState(50);const[exactName,setExactName]=useState("");const[exactWidth,setExactWidth]=useState("");const[exactHeight,setExactHeight]=useState("");const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
+  const[selectedWall,setSelectedWall]=useState<string|null>(null);const[wallThicknessCm,setWallThicknessCm]=useState("");const[wallMoveCm,setWallMoveCm]=useState("10");const[selectedRoom,setSelectedRoom]=useState<string|null>(null);const[selectedOpening,setSelectedOpening]=useState<string|null>(null);const[selectedDimension,setSelectedDimension]=useState<string|null>(null);const[dimensionValue,setDimensionValue]=useState("");const[openingWidth,setOpeningWidth]=useState("");const[openingPosition,setOpeningPosition]=useState(50);const[exactName,setExactName]=useState("");const[exactWidth,setExactWidth]=useState("");const[exactHeight,setExactHeight]=useState("");const[command,setCommand]=useState("");const[thinking,setThinking]=useState(false);const[proposals,setProposals]=useState<EditProposal[]>([]);const[preview,setPreview]=useState<EditProposal|null>(null);const[saving,setSaving]=useState(false);const[notice,setNotice]=useState<string|null>(null);
   const[calibrating,setCalibrating]=useState(false);const[calibrationPoints,setCalibrationPoints]=useState<Point[]>([]);const[knownDistance,setKnownDistance]=useState("");
   const[sourcePreview,setSourcePreview]=useState<string|null>(null);const[sourceOpacity,setSourceOpacity]=useState(.42);const[sourcePreviewNonce,setSourcePreviewNonce]=useState(0);const[sourcePageInput,setSourcePageInput]=useState(String(initialProject.plan?.source.page??1));const[pageSwitchBusy,setPageSwitchBusy]=useState(false);
   const[layerOpen,setLayerOpen]=useState(false);const[layers,setLayers]=useState<PlanLayerVisibility>({...DEFAULT_PLAN_LAYERS});
@@ -166,21 +166,24 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
       const opening=[...plan.doors,...plan.windows].find(item=>item.id===selectedOpening);
       return opening?`${opening.kind==="door"?"الباب":"النافذة"} المحدد`:"الفتحة المحددة";
     }
+    if(selectedDimension)return "البعد المقروء المحدد";
     if(selectedWall)return "الجدار المحدد";
     return null;
-  },[selectedRoom,selectedOpening,selectedWall,plan.rooms,plan.doors,plan.windows]);
+  },[selectedRoom,selectedOpening,selectedDimension,selectedWall,plan.rooms,plan.doors,plan.windows]);
   const reviewItems=useMemo(()=>{
-    const items:Array<{key:string;kind:"room"|"wall"|"opening";id:string;label:string;confidence:number;provenance?:ElementProvenance}>=[];
+    const items:Array<{key:string;kind:"room"|"wall"|"opening"|"dimension";id:string;label:string;confidence:number;provenance?:ElementProvenance}>=[];
     for(const room of plan.rooms)if(!room.reviewed&&room.confidence<.78)items.push({key:`room:${room.id}`,kind:"room",id:room.id,label:room.name||"غرفة غير مسماة",confidence:room.confidence,provenance:room.provenance});
     for(const wall of plan.walls)if(!wall.reviewed&&wall.confidence<.72)items.push({key:`wall:${wall.id}`,kind:"wall",id:wall.id,label:"جدار يحتاج تأكيد",confidence:wall.confidence,provenance:wall.provenance});
     for(const opening of [...plan.doors,...plan.windows])if(!opening.reviewed&&opening.confidence<.84)items.push({key:`opening:${opening.id}`,kind:"opening",id:opening.id,label:opening.kind==="door"?"باب يحتاج تأكيد":"نافذة تحتاج تأكيد",confidence:opening.confidence,provenance:opening.provenance});
+    for(const dimension of plan.dimensions??[])if(!dimension.reviewed&&dimension.confidence<.90)items.push({key:`dimension:${dimension.id}`,kind:"dimension",id:dimension.id,label:dimension.valueM?`بعد مقروء · ${dimension.valueM.toFixed(2)} م`:`بعد يحتاج تأكيد · ${dimension.text}`,confidence:dimension.confidence,provenance:dimension.provenance});
     return items.sort((a,b)=>a.confidence-b.confidence);
-  },[plan.rooms,plan.walls,plan.doors,plan.windows]);
+  },[plan.rooms,plan.walls,plan.doors,plan.windows,plan.dimensions]);
   const selectedReviewItem=useMemo(()=>reviewItems.find(item=>
     (item.kind==="room"&&item.id===selectedRoom)||
     (item.kind==="wall"&&item.id===selectedWall)||
-    (item.kind==="opening"&&item.id===selectedOpening)
-  )??null,[reviewItems,selectedRoom,selectedWall,selectedOpening]);
+    (item.kind==="opening"&&item.id===selectedOpening)||
+    (item.kind==="dimension"&&item.id===selectedDimension)
+  )??null,[reviewItems,selectedRoom,selectedWall,selectedOpening,selectedDimension]);
   const enqueueDraft=(snapshot:FloorPlanModel,revision:number,generation:number)=>{
     const run=async()=>{
       if(generation!==draftGeneration.current)return;
