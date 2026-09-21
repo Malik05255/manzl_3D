@@ -33,6 +33,8 @@ interface Props{
   onSelectOpening?:(id:string|null)=>void;
   selectedDimensionId?:string|null;
   onSelectDimension?:(id:string|null)=>void;
+  selectedSymbolId?:string|null;
+  onSelectSymbol?:(id:string|null)=>void;
   onPlanChange?:(plan:FloorPlanModel,recordHistory?:boolean)=>void;
   onPlanCommit?:(basePlan:FloorPlanModel)=>void;
   onAddWall?:(a:Point,b:Point)=>void;
@@ -238,7 +240,7 @@ export function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall)
   };
 }
 
-export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSelectRoom,selectedOpeningId,onSelectOpening,selectedDimensionId,onSelectDimension,onPlanChange,onPlanCommit,onAddWall,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint,backgroundUrl=null,backgroundOpacity=.38,comparisonPlan=null,validationFindings=[],layers}:Props){
+export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSelectRoom,selectedOpeningId,onSelectOpening,selectedDimensionId,onSelectDimension,selectedSymbolId,onSelectSymbol,onPlanChange,onPlanCommit,onAddWall,readonly,calibrationMode=false,calibrationPoints=[],onCalibrationPoint,backgroundUrl=null,backgroundOpacity=.38,comparisonPlan=null,validationFindings=[],layers}:Props){
   const[zoom,setZoom]=useState(1);
   const layerState=useMemo(()=>({...DEFAULT_PLAN_LAYERS,...layers}),[layers]);
   const[drag,setDrag]=useState<DragState>(null);
@@ -567,16 +569,22 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
           </g>;
         })}
         {layerState.openings&&(renderPlan.symbols??[]).map(symbol=>{
+          const selected=selectedSymbolId===symbol.id;
           const uncertain=layerState.uncertainty&&!symbol.reviewed&&symbol.confidence<.86;
-          const stroke=uncertain?"#d97706":"#0f766e";
+          const stroke=selected?"#1d4ed8":uncertain?"#d97706":"#0f766e";
           const width=Math.max(1,symbol.b.x-symbol.a.x);
           const height=Math.max(1,symbol.b.y-symbol.a.y);
-          return <g key={symbol.id} pointerEvents="none">
+          return <g key={symbol.id} className={readonly||calibrationMode||measureMode?undefined:"editable-symbol"} onPointerDown={event=>{
+            if(readonly||calibrationMode||measureMode||drawWallMode||effectivePan)return;
+            event.stopPropagation();
+            onSelectRoom?.(null);onSelectWall?.(null);onSelectOpening?.(null);onSelectDimension?.(null);onSelectSymbol?.(symbol.id);
+          }}>
+            {!readonly&&!calibrationMode&&<rect x={symbol.a.x-5} y={symbol.a.y-5} width={width+10} height={height+10} rx={7} fill="transparent" stroke="transparent" strokeWidth={8}/>}
             <rect x={symbol.a.x} y={symbol.a.y} width={width} height={height} rx={4}
-              fill={uncertain?"rgba(217,119,6,.07)":"rgba(15,118,110,.07)"}
-              stroke={stroke} strokeWidth={2} strokeDasharray={uncertain?"7 5":undefined}/>
+              fill={selected?"rgba(29,78,216,.08)":uncertain?"rgba(217,119,6,.07)":"rgba(15,118,110,.07)"}
+              stroke={stroke} strokeWidth={selected?3:2} strokeDasharray={uncertain&&!selected?"7 5":undefined}/>
             <text x={(symbol.a.x+symbol.b.x)/2} y={Math.max(12,symbol.a.y-5)} textAnchor="middle"
-              fill={stroke} fontSize={11} fontWeight={700}>{symbolLabel(symbol.kind)}</text>
+              fill={stroke} fontSize={11} fontWeight={700} pointerEvents="none">{symbolLabel(symbol.kind)}</text>
           </g>;
         })}
         {layerState.labels&&renderPlan.labels.filter(label=>label.kind!=="dimension"||!(renderPlan.dimensions??[]).some(item=>item.sourceLabelId===label.id)).map(label=>{
