@@ -1,4 +1,4 @@
-from app.aec_benchmark import plan_to_aec_prediction
+from app.aec_benchmark import parse_official_score_output,plan_to_aec_prediction
 
 
 def test_floorplan_converts_to_aec_prediction_frame():
@@ -77,3 +77,24 @@ def test_slanted_wall_becomes_polygon_not_axis_line():
     assert len(polygon)==4
     assert len({round(point[0],3) for point in polygon})==4
     assert len({round(point[1],3) for point in polygon})==4
+
+
+def test_parses_official_aec_score_summary():
+    output="""
+Manzil H on AEC-Geometric-Bench-15
+
+OBJECT MICRO           1500     96    132   0.940   0.919   0.929
+
+wall pixel                                  0.954   0.908   0.931
+area pixel                                  0.990   0.985   0.987
+area instance                               0.961   0.921   0.940
+"""
+    report=parse_official_score_output(output)
+    assert report["objectMicro"]=={
+        "precision":.94,"recall":.919,"f1":.929,
+        "tp":1500,"fp":96,"fn":132,
+    }
+    assert report["wallPixel"]["f1"]==.931
+    assert report["areaPixel"]["f1"]==.987
+    assert report["areaInstance"]["f1"]==.94
+    assert report["macroF1"]==.9468
