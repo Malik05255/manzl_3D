@@ -1,159 +1,97 @@
 from app.scale import estimate_scale,estimate_scale_with_diagnostics
 
 
-def wall(wall_id,x1,y1,x2,y2):
+def dimension(value_m,ax,ay,bx,by,unit="m",confidence=.9):
     return {
-        "id":wall_id,
-        "a":{"x":float(x1),"y":float(y1)},
-        "b":{"x":float(x2),"y":float(y2)},
-        "thicknessPx":8.0,
-        "confidence":0.9,
+        "id":"d",
+        "valueM":value_m,
+        "unit":unit,
+        "spanA":{"x":float(ax),"y":float(ay)},
+        "spanB":{"x":float(bx),"y":float(by)},
+        "confidence":confidence,
     }
 
 
-def label(label_id,text,x,y,kind="dimension"):
-    return {
-        "id":label_id,
-        "text":text,
-        "center":{"x":float(x),"y":float(y)},
-        "confidence":0.9,
-        "kind":kind,
-    }
-
-
-def test_single_unitless_number_does_not_calibrate_plan():
+def test_dimension_without_detected_span_does_not_calibrate():
     scale,confidence=estimate_scale(
-        [label("l1","4.00",250,90)],
-        [wall("w1",50,100,450,100)],
-        1000,
-        800,
+        [{"id":"d1","valueM":4.0,"unit":"m","confidence":.95}],
+        1000,800,
     )
     assert scale is None
     assert confidence is None
 
 
-def test_consistent_unitless_dimensions_can_calibrate_plan():
+def test_single_explicit_dimension_span_is_allowed():
+    scale,confidence=estimate_scale(
+        [dimension(4.0,100,70,500,70)],
+        1000,800,
+    )
+    assert round(scale,4)==0.01
+    assert confidence is not None and confidence>=0.55
+
+
+def test_centimeter_value_is_already_normalized_to_meters():
+    scale,confidence=estimate_scale(
+        [dimension(4.0,100,70,500,70,unit="cm")],
+        1000,800,
+    )
+    assert round(scale,4)==0.01
+    assert confidence is not None and confidence>=0.55
+
+
+def test_unitless_dimension_span_is_not_assumed_to_be_meters():
+    scale,confidence=estimate_scale(
+        [dimension(4.0,100,70,500,70,unit="unknown")],
+        1000,800,
+    )
+    assert scale is None
+    assert confidence is None
+
+
+def test_scale_uses_actual_dimension_span_not_nearby_wall_length():
+    scale,confidence=estimate_scale(
+        [dimension(4.0,100,70,300,70)],
+        1000,800,
+    )
+    assert round(scale,4)==0.02
+    assert confidence is not None
+
+
+def test_consistent_explicit_spans_calibrate_plan():
     scale,confidence=estimate_scale(
         [
-            label("l1","4.00",250,90),
-            label("l2","6.00",350,290),
+            dimension(4.0,100,70,500,70),
+            dimension(6.0,100,170,700,170),
         ],
-        [
-            wall("w1",50,100,450,100),
-            wall("w2",50,300,650,300),
-        ],
-        1000,
-        800,
+        1000,800,
     )
     assert round(scale,4)==0.01
-    assert confidence is not None and confidence>=0.6
+    assert confidence is not None and confidence>=0.7
 
 
-def test_single_explicit_metric_dimension_is_allowed():
-    scale,confidence=estimate_scale(
-        [label("l1","4.00 m",250,90)],
-        [wall("w1",50,100,450,100)],
-        1000,
-        800,
-    )
-    assert round(scale,4)==0.01
-    assert confidence is not None and confidence>=0.55
-
-
-def test_explicit_centimeters_calibrate_in_meters():
-    scale,confidence=estimate_scale(
-        [label("l1","400 cm",250,90)],
-        [wall("w1",50,100,450,100)],
-        1000,
-        800,
-    )
-    assert round(scale,4)==0.01
-    assert confidence is not None and confidence>=0.55
-
-
-def test_explicit_millimeters_calibrate_in_meters():
-    scale,confidence=estimate_scale(
-        [label("l1","4000 mm",250,90)],
-        [wall("w1",50,100,450,100)],
-        1000,
-        800,
-    )
-    assert round(scale,4)==0.01
-    assert confidence is not None and confidence>=0.55
-
-
-def test_conflicting_explicit_dimensions_require_manual_calibration():
+def test_conflicting_explicit_spans_require_manual_calibration():
     scale,confidence,warnings=estimate_scale_with_diagnostics(
         [
-            label("l1","4.00 m",250,90),
-            label("l2","8.00 m",250,290),
+            dimension(4.0,100,70,500,70),
+            dimension(8.0,100,170,500,170),
         ],
-        [
-            wall("w1",50,100,450,100),
-            wall("w2",50,300,450,300),
-        ],
-        1000,
-        800,
+        1000,800,
     )
     assert scale is None
     assert confidence is None
     assert warnings and "متعارضة" in warnings[0]
 
 
-def test_explicit_metric_reading_beats_noisy_unitless_numbers():
+def test_noisy_outlier_is_rejected_when_majority_agrees():
     scale,confidence,warnings=estimate_scale_with_diagnostics(
         [
-            label("l1","4.00 m",250,90),
-            label("l2","8.00",250,290),
-            label("l3","2.00",250,490),
+            dimension(4.0,100,70,500,70),
+            dimension(6.0,100,170,700,170),
+            dimension(9.0,100,270,700,270),
+            dimension(5.0,100,370,600,370),
         ],
-        [
-            wall("w1",50,100,450,100),
-            wall("w2",50,300,450,300),
-            wall("w3",50,500,450,500),
-        ],
-        1000,
-        800,
+        1000,800,
     )
     assert round(scale,4)==0.01
-    assert confidence is not None and confidence>=0.55
-    assert warnings==[]
-
-
-def test_room_size_pair_does_not_pollute_scale_candidates():
-    scale,confidence=estimate_scale(
-        [
-            label("l1","5 × 4",250,90),
-            label("l2","4.00",250,290),
-        ],
-        [
-            wall("w1",50,100,450,100),
-            wall("w2",50,300,450,300),
-        ],
-        1000,
-        800,
-    )
-    assert scale is None
-    assert confidence is None
-
-
-def test_dimension_near_wall_end_uses_segment_distance():
-    scale,confidence=estimate_scale(
-        [label("l1","4.00 m",75,90)],
-        [wall("w1",50,100,450,100)],
-        1000,
-        800,
-    )
-    assert round(scale,4)==0.01
-    assert confidence is not None and confidence>=0.55
-
-
-def test_dimension_beyond_wall_end_is_not_forced_to_distant_wall():
-    scale,confidence=estimate_scale(
-        [label("l1","4.00 m",900,90)],
-        [wall("w1",50,100,450,100)],
-        1000,
-        800,
-    )
-    assert scale is None
-    assert confidence is None
+    assert confidence is not None
+    assert warnings and "تجاهل" in warnings[0]
