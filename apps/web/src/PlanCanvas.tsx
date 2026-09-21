@@ -117,9 +117,8 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,onPlanChange,readon
     onPlanChange(moveWallAndTopology(plan,drag.original,candidate));
   };
 
-  const addCalibrationPoint=(event:React.PointerEvent<SVGRectElement>)=>{
+  const addCalibrationPoint=(event:React.PointerEvent<SVGSVGElement>)=>{
     if(!calibrationMode||!onCalibrationPoint||calibrationPoints.length>=2)return;
-    event.stopPropagation();
     onCalibrationPoint(screenToPlan(event.clientX,event.clientY));
   };
 
@@ -131,8 +130,8 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,onPlanChange,readon
       <button className="icon-button" onClick={()=>setZoom(1)} aria-label="إعادة الضبط"><RotateCcw size={18}/></button>
     </div>
     <div className="canvas-viewport" onPointerMove={move} onPointerUp={()=>setDrag(null)} onPointerCancel={()=>setDrag(null)}>
-      <svg ref={svgRef} className="plan-svg" viewBox={viewBox} style={{transform:`scale(${zoom})`}}>
-        <rect width={plan.widthPx} height={plan.heightPx} fill="#fff" onPointerDown={addCalibrationPoint}/>
+      <svg ref={svgRef} className="plan-svg" viewBox={viewBox} style={{transform:`scale(${zoom})`}} onPointerDown={addCalibrationPoint}>
+        <rect width={plan.widthPx} height={plan.heightPx} fill="#fff"/>
         {plan.rooms.map(room=><g key={room.id}>
           <polygon points={room.polygon.map(p=>`${p.x},${p.y}`).join(" ")} fill="rgba(37,99,235,.055)" stroke="rgba(37,99,235,.16)" strokeWidth={1}/>
           {room.polygon.length>0&&<text
