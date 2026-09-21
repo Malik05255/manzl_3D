@@ -2,7 +2,7 @@ export type ProjectStatus = "created" | "uploaded" | "queued" | "analyzing" | "r
 export type AnalysisPhase = "created" | "upload" | "preprocess" | "ocr" | "geometry" | "rooms" | "validation" | "ready" | "error";
 
 export interface Point { x: number; y: number; }
-export type ElementProvenance = "opencv" | "pdf-vector" | "ocr" | "pdf-text" | "manual" | "ai" | "mixed";
+export type ElementProvenance = "opencv" | "pdf-vector" | "ocr" | "cloud-ocr" | "pdf-text" | "manual" | "ai" | "mixed";
 export type WallRole = "unknown" | "interior" | "exterior" | "structural";
 export interface Wall { id: string; a: Point; b: Point; thicknessPx: number; confidence: number; heightM?: number | null; role?: WallRole; locked?: boolean; reviewed?: boolean; provenance?: ElementProvenance; }
 export interface Room { id: string; name: string; polygon: Point[]; confidence: number; areaM2?: number | null; ceilingHeightM?: number | null; boundaryWallIds?: string[]; reviewed?: boolean; provenance?: ElementProvenance; }
@@ -129,7 +129,7 @@ function fpConfidence(value:unknown){
 function fpElementMetadata(value:Record<string,unknown>){
   const provenance=value.provenance;
   return (value.reviewed===undefined||typeof value.reviewed==="boolean")
-    &&(provenance===undefined||["opencv","pdf-vector","ocr","pdf-text","manual","ai","mixed"].includes(String(provenance)));
+    &&(provenance===undefined||["opencv","pdf-vector","ocr","cloud-ocr","pdf-text","manual","ai","mixed"].includes(String(provenance)));
 }
 function fpPoint(value:unknown):value is Point{
   return fpObject(value)&&fpFinite(value.x)&&fpFinite(value.y);
