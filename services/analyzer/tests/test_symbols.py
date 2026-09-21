@@ -124,5 +124,5 @@ def test_decodes_yolo_objectness_output_and_applies_confidence():
 
 
 def test_rejects_unknown_yolo_tensor_shape():
-    rows=_prepare_yolo_rows(np.zeros((1,7,12),dtype=np.float32),2)
+    rows=_prepare_yolo_rows(np.zeros((1,8,12),dtype=np.float32),2)
     assert rows.shape==(0,6)
