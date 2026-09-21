@@ -75,9 +75,23 @@ function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall):FloorP
 
   const axis=Math.max(lower,Math.min(upper,desired));
   const delta=axis-oldAxis;
-  const movedWall:Wall=vertical
-    ?{...original,a:{...original.a,x:axis},b:{...original.b,x:axis}}
-    :{...original,a:{...original.a,y:axis},b:{...original.b,y:axis}};
+  const movedWallIds=new Set(plan.walls.filter(wall=>{
+    const wallVertical=Math.abs(wall.a.x-wall.b.x)<=Math.abs(wall.a.y-wall.b.y);
+    if(wallVertical!==vertical)return false;
+    const wallAxis=vertical?(wall.a.x+wall.b.x)/2:(wall.a.y+wall.b.y)/2;
+    if(Math.abs(wallAxis-oldAxis)>tolerance)return false;
+    const wallSpan1=vertical?Math.min(wall.a.y,wall.b.y):Math.min(wall.a.x,wall.b.x);
+    const wallSpan2=vertical?Math.max(wall.a.y,wall.b.y):Math.max(wall.a.x,wall.b.x);
+    return overlap(wallSpan1,wallSpan2,span1,span2)>0;
+  }).map(wall=>wall.id));
+  movedWallIds.add(original.id);
+
+  const walls=plan.walls.map(wall=>{
+    if(!movedWallIds.has(wall.id))return wall;
+    return vertical
+      ?{...wall,a:{...wall.a,x:wall.a.x+delta},b:{...wall.b,x:wall.b.x+delta}}
+      :{...wall,a:{...wall.a,y:wall.a.y+delta},b:{...wall.b,y:wall.b.y+delta}};
+  });
 
   const rooms=plan.rooms.map(room=>{
     const xs=room.polygon.map(p=>p.x); const ys=room.polygon.map(p=>p.y);
@@ -97,14 +111,14 @@ function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall):FloorP
   });
 
   const openings=[...plan.doors,...plan.windows];
-  const movedOpenings=new Map(openings.filter(o=>o.wallId===original.id).map(o=>[
+  const movedOpenings=new Map(openings.filter(o=>o.wallId&&movedWallIds.has(o.wallId)).map(o=>[
     o.id,
     vertical?{...o,a:{...o.a,x:o.a.x+delta},b:{...o.b,x:o.b.x+delta}}:{...o,a:{...o.a,y:o.a.y+delta},b:{...o.b,y:o.b.y+delta}}
   ]));
 
   return {
     ...plan,
-    walls:plan.walls.map(w=>w.id===original.id?movedWall:w),
+    walls,
     rooms,
     doors:plan.doors.map(o=>movedOpenings.get(o.id)??o),
     windows:plan.windows.map(o=>movedOpenings.get(o.id)??o),
