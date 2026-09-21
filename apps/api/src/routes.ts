@@ -51,6 +51,38 @@ function criticalFindingKey(item:ValidationReport["findings"][number]){
   return `${item.code}:rooms=${rooms}:walls=${walls}:openings=${openings}`;
 }
 
+function protectedEditViolation(before:FloorPlanModel,after:FloorPlanModel):string|null{
+  const afterWalls=new Map(after.walls.map(wall=>[wall.id,wall]));
+  const beforeOpenings=[...before.doors,...before.windows];
+  const afterOpenings=[...after.doors,...after.windows];
+
+  const openingSignature=(items:typeof beforeOpenings,wallId:string)=>JSON.stringify(
+    items.filter(item=>item.wallId===wallId)
+      .map(item=>({
+        id:item.id,kind:item.kind,wallId:item.wallId??null,
+        a:[item.a.x,item.a.y],b:[item.b.x,item.b.y]
+      }))
+      .sort((left,right)=>left.id.localeCompare(right.id))
+  );
+  const wallGeometryChanged=(left:FloorPlanModel["walls"][number],right:FloorPlanModel["walls"][number])=>
+    left.a.x!==right.a.x||left.a.y!==right.a.y||
+    left.b.x!==right.b.x||left.b.y!==right.b.y||
+    left.thicknessPx!==right.thicknessPx;
+
+  for(const wall of before.walls){
+    if(!wall.locked&&wall.role!=="structural")continue;
+    const next=afterWalls.get(wall.id);
+    if(!next)return "لا يمكن حذف جدار محمي قبل فك الحماية صراحة.";
+    const remainsProtected=Boolean(next.locked||next.role==="structural");
+    if(!remainsProtected)continue;
+    if(wallGeometryChanged(wall,next))return "لا يمكن تغيير هندسة جدار محمي قبل فك الحماية صراحة.";
+    if(openingSignature(beforeOpenings,wall.id)!==openingSignature(afterOpenings,wall.id)){
+      return "لا يمكن تغيير فتحات جدار محمي قبل فك الحماية صراحة.";
+    }
+  }
+  return null;
+}
+
 async function validateTransition(env:Env,id:string,before:FloorPlanModel|null,after:FloorPlanModel){
   const afterReport=await analyzerValidation(env,id,after);
   const afterCritical=afterReport.findings.filter(item=>item.severity==="critical");
@@ -271,6 +303,8 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(!Number.isInteger(body.expectedRevision)||body.expectedRevision<0) return json({error:"رقم النسخة المرجعية غير صالح"},400);
     try{
       const baseline=await committedPlan(env,secured);
+      const protectedError=baseline?protectedEditViolation(baseline,body.plan):null;
+      if(protectedError)return json({error:protectedError},422);
       const checked=await validateTransition(env,id,baseline,body.plan);
       if(checked.introduced.length){
         return json({
@@ -397,6 +431,8 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const selected=fresh.proposals.find(proposal=>proposal.id===selectedId);
     if(!selected) return json({error:"المخطط تغير أو أن خيار التعديل لم يعد صالحًا. أعد المعاينة."},409);
     if(floorPlanValidationError(selected.previewPlan,id)) return json({error:"نتيجة H Engineer غير صالحة"},502);
+    const protectedError=protectedEditViolation(plan,selected.previewPlan);
+    if(protectedError)return json({error:protectedError},422);
     try{
       const checked=await validateTransition(env,id,plan,selected.previewPlan);
       if(checked.introduced.length){
