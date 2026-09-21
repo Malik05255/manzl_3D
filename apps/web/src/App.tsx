@@ -1,7 +1,7 @@
 import { useEffect,useMemo,useRef,useState } from "react";
-import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Clock3,Cloud,DoorOpen,Download,FileImage,FileText,Hammer,Layers3,LoaderCircle,Redo2,RotateCcw,Ruler,Save,ShieldCheck,Sparkles,Square,Trash2,Undo2,UploadCloud,WandSparkles,X } from "lucide-react";
+import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Clock3,Cloud,DoorOpen,Download,FileImage,FileText,Hammer,Layers3,LoaderCircle,Redo2,RotateCcw,Ruler,Save,Settings2,ShieldCheck,Sparkles,Square,Trash2,Undo2,UploadCloud,WandSparkles,X } from "lucide-react";
 import type { EditProposal,ElementProvenance,FloorPlanModel,Opening,Point,ProjectView,RevisionView,ValidationReport,WallRole } from "@manzil/contracts";
-import { ApiError,activateFloor,applyProposal,askEngineer,clearProjectDraft,createProject,forgetKnownProject,forgetLastProject,getKnownProjects,getLastProjectId,getProject,getProjectPreview,importProjectBackup,inferSourceMime,listRevisions,resizeRoomPrecisely,restoreRevision,retryAnalysis,saveDraft,saveRevision,uploadSource,validateProject } from "./api";
+import { ApiError,activateFloor,applyProposal,askEngineer,clearProjectDraft,createProject,forgetKnownProject,forgetLastProject,getKnownProjects,getLastProjectId,getProject,getProjectPreview,importProjectBackup,inferSourceMime,listRevisions,resizeRoomPrecisely,restoreRevision,retryAnalysis,saveDraft,saveRevision,updateFloorMetadata,uploadSource,validateProject } from "./api";
 import type { KnownProject } from "./api";
 import { DEFAULT_PLAN_LAYERS,PlanCanvas,moveWallAndTopology } from "./PlanCanvas";
 import type { PlanLayerVisibility } from "./PlanCanvas";
@@ -144,11 +144,19 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   const[calibrating,setCalibrating]=useState(false);const[calibrationPoints,setCalibrationPoints]=useState<Point[]>([]);const[knownDistance,setKnownDistance]=useState("");
   const[sourcePreview,setSourcePreview]=useState<string|null>(null);const[sourceOpacity,setSourceOpacity]=useState(.42);const[sourcePreviewNonce,setSourcePreviewNonce]=useState(0);const[sourcePageInput,setSourcePageInput]=useState(String(initialProject.plan?.source.page??1));const[pageSwitchBusy,setPageSwitchBusy]=useState(false);
   const[layerOpen,setLayerOpen]=useState(false);const[layers,setLayers]=useState<PlanLayerVisibility>({...DEFAULT_PLAN_LAYERS});
+  const[floorSettingsOpen,setFloorSettingsOpen]=useState(false);const[floorName,setFloorName]=useState("");const[floorElevation,setFloorElevation]=useState("");const[floorHeight,setFloorHeight]=useState("");const[floorMetaBusy,setFloorMetaBusy]=useState(false);
   const[historyOpen,setHistoryOpen]=useState(false);const[historyBusy,setHistoryBusy]=useState(false);const[revisions,setRevisions]=useState<RevisionView[]>([]);const[exportOpen,setExportOpen]=useState(false);const[exportBusy,setExportBusy]=useState(false);
   const[validationReport,setValidationReport]=useState<ValidationReport|null>(null);const[validationBusy,setValidationBusy]=useState(false);const[draftState,setDraftState]=useState<"idle"|"saving"|"saved"|"error">(initialProject.hasDraft?"saved":"idle");const[recoveredDraft,setRecoveredDraft]=useState(initialProject.hasDraft);
   const draftGeneration=useRef(0);const draftChain=useRef<Promise<void>>(Promise.resolve());const openingPositionBase=useRef<FloorPlanModel|null>(null);
   const localDirty=useMemo(()=>JSON.stringify(plan)!==JSON.stringify(savedPlan),[plan,savedPlan]);
   const dirty=localDirty||recoveredDraft;
+  const activeFloor=useMemo(()=>project.floors?.find(item=>item.id===project.activeFloorId)??project.floors?.find(item=>item.sourcePage===plan.source.page)??null,[project.floors,project.activeFloorId,plan.source.page]);
+  useEffect(()=>{
+    if(!activeFloor){setFloorName("");setFloorElevation("");setFloorHeight("");return;}
+    setFloorName(activeFloor.name);
+    setFloorElevation(activeFloor.elevationM==null?"":String(activeFloor.elevationM));
+    setFloorHeight(activeFloor.heightM==null?"":String(activeFloor.heightM));
+  },[activeFloor?.id,activeFloor?.name,activeFloor?.elevationM,activeFloor?.heightM]);
   const toggleLayer=(key:keyof PlanLayerVisibility)=>setLayers(current=>({...current,[key]:!current[key]}));
   const selectedContextLabel=useMemo(()=>{
     if(selectedRoom)return `الغرفة · ${plan.rooms.find(room=>room.id===selectedRoom)?.name??"محددة"}`;
@@ -431,7 +439,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
       const tag=target?.tagName?.toLowerCase();
       const typing=tag==="input"||tag==="textarea"||tag==="select"||target?.isContentEditable;
       if(event.key==="Escape"){
-        setLayerOpen(false);setPreview(null);setProposals([]);setSelectedWall(null);setSelectedRoom(null);setSelectedOpening(null);
+        setLayerOpen(false);setFloorSettingsOpen(false);setPreview(null);setProposals([]);setSelectedWall(null);setSelectedRoom(null);setSelectedOpening(null);
         return;
       }
       if(typing)return;
@@ -450,6 +458,22 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   const save=async()=>{setSaving(true);const generation=++draftGeneration.current;try{await draftChain.current.catch(()=>undefined);if(generation!==draftGeneration.current)return;const u=await saveRevision(project.id,plan,"تعديل يدوي",project.revision);setProject(u);setSavedPlan(plan);setRecoveredDraft(false);setDraftState("idle");setValidationReport(null);setNotice("تم حفظ التعديل في السحابة.");}catch(e){const report=validationFromApiError(e);if(report)setValidationReport(report);setNotice(e instanceof Error?e.message:"تعذر الحفظ");}finally{setSaving(false);}};
   const openHistory=async()=>{setHistoryOpen(true);setHistoryBusy(true);try{const r=await listRevisions(project.id);setRevisions(r.items);}catch(e){setNotice(e instanceof Error?e.message:"تعذر تحميل سجل النسخ");setHistoryOpen(false);}finally{setHistoryBusy(false);}};
   const runValidation=async()=>{setValidationBusy(true);setNotice(null);try{setValidationReport(await validateProject(project.id,plan));}catch(e){setNotice(e instanceof Error?e.message:"تعذر فحص المخطط");}finally{setValidationBusy(false);}};
+  const saveFloorMetadata=async()=>{
+    if(!activeFloor)return;
+    if(dirty){setNotice("احفظ التعديلات الحالية أو تجاهل المسودة قبل تعديل بيانات الطابق.");return;}
+    const name=floorName.trim().replace(/\s+/g," ").slice(0,100);
+    const elevation=floorElevation.trim()===""?null:Number(floorElevation.replace(",","."));
+    const height=floorHeight.trim()===""?null:Number(floorHeight.replace(",","."));
+    if(!name){setNotice("اكتب اسمًا للطابق.");return;}
+    if(elevation!==null&&!Number.isFinite(elevation)){setNotice("منسوب الطابق غير صالح.");return;}
+    if(height!==null&&(!Number.isFinite(height)||height<0.5||height>20)){setNotice("ارتفاع الطابق يجب أن يكون بين 0.5 و20 متر.");return;}
+    setFloorMetaBusy(true);setNotice(null);
+    try{
+      const fresh=await updateFloorMetadata(project.id,activeFloor.id,{expectedRevision:project.revision,name,elevationM:elevation,heightM:height});
+      setProject(fresh);setFloorSettingsOpen(false);setNotice("تم حفظ بيانات الطابق في المشروع السحابي.");
+    }catch(e){setNotice(e instanceof Error?e.message:"تعذر حفظ بيانات الطابق.");}
+    finally{setFloorMetaBusy(false);}
+  };
   const loadFloorProject=(fresh:ProjectView,message:string)=>{
     if(!fresh.plan)throw new Error("المخطط المختار غير متوفر.");
     setProject(fresh);setPlan(fresh.plan);setSavedPlan(fresh.plan);setUndoStack([]);setRedoStack([]);
@@ -544,7 +568,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   ["labels","نصوص OCR والأبعاد"],
   ["validation","نتائج الفحص"],
   ["uncertainty","إبراز القراءة غير المؤكدة"],
-] as Array<[keyof PlanLayerVisibility,string]>).map(([key,label])=><label key={key}><input type="checkbox" checked={layers[key]} onChange={()=>toggleLayer(key)}/><span>{label}</span></label>)}<button className="ghost layer-reset" onClick={()=>setLayers({...DEFAULT_PLAN_LAYERS})}>إظهار الكل</button></div>}</div><button className="validate-chip export-chip" onClick={()=>setExportOpen(true)}><Download size={14}/> تصدير</button>{sourcePreview&&<label className="overlay-control"><span>الأصل</span><input type="range" min="0" max=".85" step=".05" value={sourceOpacity} onChange={e=>setSourceOpacity(Number(e.target.value))}/></label>}<button className="validate-chip" disabled={validationBusy} onClick={runValidation}>{validationBusy?<LoaderCircle className="spin" size={14}/>:<ShieldCheck size={14}/>} فحص</button>{(plan.source.pageCount??1)>1&&<div className="source-page-control"><span>PDF {plan.source.page}/{plan.source.pageCount}</span><input type="number" min="1" max={plan.source.pageCount??1} value={sourcePageInput} disabled={pageSwitchBusy||dirty} onChange={e=>setSourcePageInput(e.target.value)}/><button className="ghost" disabled={pageSwitchBusy||dirty||Number(sourcePageInput)===plan.source.page} onClick={()=>void reanalyzeSourcePage()}>{pageSwitchBusy?<LoaderCircle className="spin" size={13}/>:null} {project.floors?.some(item=>item.sourcePage===Number(sourcePageInput))?"فتح الصفحة":"تحليل الصفحة"}</button></div>}<div className="quality-pill">جودة التحليل {Math.round(plan.quality.overall*100)}%</div></div></div>
+] as Array<[keyof PlanLayerVisibility,string]>).map(([key,label])=><label key={key}><input type="checkbox" checked={layers[key]} onChange={()=>toggleLayer(key)}/><span>{label}</span></label>)}<button className="ghost layer-reset" onClick={()=>setLayers({...DEFAULT_PLAN_LAYERS})}>إظهار الكل</button></div>}</div>{activeFloor&&<div className="floor-control-wrap"><button className={`validate-chip ${floorSettingsOpen?"active":""}`} disabled={dirty} onClick={()=>setFloorSettingsOpen(value=>!value)}><Settings2 size={14}/> الطابق</button>{floorSettingsOpen&&<div className="floor-meta-popover"><div className="floor-meta-head"><strong>بيانات الطابق</strong><span>صفحة المصدر {activeFloor.sourcePage}</span></div><label><span>الاسم</span><input value={floorName} maxLength={100} onChange={e=>setFloorName(e.target.value)}/></label><div className="floor-meta-grid"><label><span>المنسوب م</span><input inputMode="decimal" value={floorElevation} onChange={e=>setFloorElevation(e.target.value)} placeholder="اختياري"/></label><label><span>الارتفاع م</span><input inputMode="decimal" value={floorHeight} onChange={e=>setFloorHeight(e.target.value)} placeholder="اختياري"/></label></div><button className="primary small" disabled={floorMetaBusy} onClick={()=>void saveFloorMetadata()}>{floorMetaBusy?<LoaderCircle className="spin" size={14}/>:<Check size={14}/>} حفظ بيانات الطابق</button><small>المنسوب والارتفاع محفوظان كأساس هندسي ولا يغيران الرسم ثنائي الأبعاد حاليًا.</small></div>}</div><button className="validate-chip export-chip" onClick={()=>setExportOpen(true)}><Download size={14}/> تصدير</button>{sourcePreview&&<label className="overlay-control"><span>الأصل</span><input type="range" min="0" max=".85" step=".05" value={sourceOpacity} onChange={e=>setSourceOpacity(Number(e.target.value))}/></label>}<button className="validate-chip" disabled={validationBusy} onClick={runValidation}>{validationBusy?<LoaderCircle className="spin" size={14}/>:<ShieldCheck size={14}/>} فحص</button>{(plan.source.pageCount??1)>1&&<div className="source-page-control"><span>PDF {plan.source.page}/{plan.source.pageCount}</span><input type="number" min="1" max={plan.source.pageCount??1} value={sourcePageInput} disabled={pageSwitchBusy||dirty} onChange={e=>setSourcePageInput(e.target.value)}/><button className="ghost" disabled={pageSwitchBusy||dirty||Number(sourcePageInput)===plan.source.page} onClick={()=>void reanalyzeSourcePage()}>{pageSwitchBusy?<LoaderCircle className="spin" size={13}/>:null} {project.floors?.some(item=>item.sourcePage===Number(sourcePageInput))?"فتح الصفحة":"تحليل الصفحة"}</button></div>}<div className="quality-pill">جودة التحليل {Math.round(plan.quality.overall*100)}%</div></div></div>
         {(project.floors?.length??0)>1&&<div className="floor-strip"><span>الطوابق المحللة</span><div>{project.floors!.map(item=><button key={item.id} className={item.id===project.activeFloorId?"active":""} disabled={pageSwitchBusy||dirty||item.id===project.activeFloorId} onClick={()=>void activateKnownFloor(item.id,item.sourcePage)}>{item.name}</button>)}</div></div>}
         {recoveredDraft&&<div className="recovered-draft"><div><strong>تمت استعادة مسودة تلقائية</strong><span>هذه التغييرات محفوظة سحابيًا لكنها ليست Revision رسمية بعد.</span></div><div><button className="ghost" disabled={saving} onClick={()=>void discardRecoveredDraft()}>تجاهل المسودة</button><button className="primary small" disabled={saving} onClick={save}><Save size={15}/> حفظ كنسخة</button></div></div>}
         <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)||pageSwitchBusy} selectedWallId={selectedWall} onSelectWall={selectWall} selectedRoomId={selectedRoom} onSelectRoom={selectRoom} selectedOpeningId={selectedOpening} onSelectOpening={selectOpening} onPlanChange={applyLocalPlan} onPlanCommit={commitTransientPlan}
