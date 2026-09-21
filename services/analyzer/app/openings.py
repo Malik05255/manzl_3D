@@ -106,18 +106,20 @@ def _hough_segments(roi:np.ndarray,gap_px:float)->list[tuple[int,int,int,int]]:
     return [] if raw is None else [tuple(map(int,item)) for item in raw[:,0]]
 
 
-def _door_leaf_evidence(
+def _door_leaf_evidence_details(
     image:np.ndarray,
     a:dict,
     b:dict,
     gap_px:float,
     wall_angle_deg:float,
-)->int:
+)->tuple[int,set[str]]:
     roi,offset_x,offset_y=_opening_roi(image,a,b,gap_px)
     evidence=0
+    hinges:set[str]=set()
     hinge_tolerance=max(8.0,gap_px*0.28)
     ax,ay=_point(a)
     bx,by=_point(b)
+    accepted=[]
     for x1,y1,x2,y2 in _hough_segments(roi,gap_px):
         dx=float(x2-x1)
         dy=float(y2-y1)
@@ -133,18 +135,33 @@ def _door_leaf_evidence(
             (offset_x+x1,offset_y+y1),
             (offset_x+x2,offset_y+y2),
         ]
-        hinge_distance=min(
-            math.hypot(px-ax,py-ay)
-            for px,py in endpoints
-        )
-        hinge_distance=min(
-            hinge_distance,
-            min(math.hypot(px-bx,py-by) for px,py in endpoints),
-        )
-        if hinge_distance<=hinge_tolerance:
-            evidence+=1
-    return evidence
+        distance_a=min(math.hypot(px-ax,py-ay) for px,py in endpoints)
+        distance_b=min(math.hypot(px-bx,py-by) for px,py in endpoints)
+        nearest=min(distance_a,distance_b)
+        if nearest>hinge_tolerance:
+            continue
+        hinge="a" if distance_a<=distance_b else "b"
 
+        # Hough can return both edges of the same leaf. Collapse near-identical
+        # angle/hinge evidence before classifying a double-swing door.
+        key=(hinge,round(angle/6.0))
+        if key in accepted:
+            continue
+        accepted.append(key)
+        evidence+=1
+        hinges.add(hinge)
+    return evidence,hinges
+
+
+def _door_leaf_evidence(
+    image:np.ndarray,
+    a:dict,
+    b:dict,
+    gap_px:float,
+    wall_angle_deg:float,
+)->int:
+    evidence,_=_door_leaf_evidence_details(image,a,b,gap_px,wall_angle_deg)
+    return evidence
 
 def _door_arc_evidence(image:np.ndarray,a:dict,b:dict,gap_px:float)->int:
     roi,offset_x,offset_y=_opening_roi(image,a,b,gap_px)
@@ -310,12 +327,18 @@ def detect_doors(
             a=_point_from_frame(fe,offset,ux,uy)
             b=_point_from_frame(ss,offset,ux,uy)
 
-            leaf_evidence=_door_leaf_evidence(image,a,b,gap,wall_angle)
+            leaf_evidence,leaf_hinges=_door_leaf_evidence_details(image,a,b,gap,wall_angle)
             arc_evidence=_door_arc_evidence(image,a,b,gap)
             if leaf_evidence<1 and arc_evidence<2:
                 continue
 
             evidence=leaf_evidence+arc_evidence
+            if {"a","b"}.issubset(leaf_hinges):
+                door_subtype="double_swing"
+            elif leaf_evidence>=1:
+                door_subtype="single_swing"
+            else:
+                door_subtype="unknown"
             confidence=min(
                 0.95,
                 0.69+0.065*leaf_evidence+0.035*arc_evidence+(0.05 if meters_per_pixel else 0.0),
@@ -329,6 +352,7 @@ def detect_doors(
             candidates.append({
                 "id":f"door-candidate-{len(candidates)+1}",
                 "kind":"door",
+                "doorSubtype":door_subtype,
                 "wallId":wall_id,
                 "a":a,
                 "b":b,
