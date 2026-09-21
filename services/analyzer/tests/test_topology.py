@@ -1,5 +1,5 @@
 from app.models import FloorPlan,Point,Quality,Room,Source,Wall
-from app.topology import canonicalize_plan,classify_wall_roles,link_room_boundaries,relink_plan_boundaries,room_boundary_coverage
+from app.topology import canonicalize_plan,classify_wall_roles,link_room_boundaries,recalibrate_extracted_room_confidence,relink_plan_boundaries,room_boundary_coverage
 
 
 def test_links_rectangular_room_to_four_nearby_walls():
@@ -212,3 +212,46 @@ def test_shared_slanted_wall_remains_interior():
     classify_wall_roles(walls,rooms)
     assert walls[0]["role"]=="interior"
     assert walls[0]["locked"] is False
+
+
+
+def test_small_unlabeled_vector_only_enclosure_is_downgraded():
+    room={
+        "id":"room-1",
+        "name":"غرفة 1",
+        "polygon":[
+            {"x":100.0,"y":100.0},{"x":180.0,"y":100.0},
+            {"x":180.0,"y":180.0},{"x":100.0,"y":180.0},
+        ],
+        "confidence":.91,
+        "boundaryWallIds":["top","right","bottom","left"],
+    }
+    walls=[
+        {"id":"top","a":{"x":100.0,"y":100.0},"b":{"x":180.0,"y":100.0},"thicknessPx":8.0,"confidence":.95,"provenance":"pdf-vector"},
+        {"id":"right","a":{"x":180.0,"y":100.0},"b":{"x":180.0,"y":180.0},"thicknessPx":8.0,"confidence":.95,"provenance":"pdf-vector"},
+        {"id":"bottom","a":{"x":100.0,"y":180.0},"b":{"x":180.0,"y":180.0},"thicknessPx":8.0,"confidence":.95,"provenance":"pdf-vector"},
+        {"id":"left","a":{"x":100.0,"y":100.0},"b":{"x":100.0,"y":180.0},"thicknessPx":8.0,"confidence":.95,"provenance":"pdf-vector"},
+    ]
+    recalibrate_extracted_room_confidence([room],walls,1000,1000)
+    assert .45<=room["confidence"]<=.63
+
+
+def test_named_small_vector_room_is_retained_with_high_confidence():
+    room={
+        "id":"room-1",
+        "name":"حمام",
+        "polygon":[
+            {"x":100.0,"y":100.0},{"x":180.0,"y":100.0},
+            {"x":180.0,"y":180.0},{"x":100.0,"y":180.0},
+        ],
+        "confidence":.88,
+        "boundaryWallIds":["top","right","bottom","left"],
+    }
+    walls=[
+        {"id":"top","a":{"x":100.0,"y":100.0},"b":{"x":180.0,"y":100.0},"thicknessPx":8.0,"confidence":.95,"provenance":"pdf-vector"},
+        {"id":"right","a":{"x":180.0,"y":100.0},"b":{"x":180.0,"y":180.0},"thicknessPx":8.0,"confidence":.95,"provenance":"pdf-vector"},
+        {"id":"bottom","a":{"x":100.0,"y":180.0},"b":{"x":180.0,"y":180.0},"thicknessPx":8.0,"confidence":.95,"provenance":"pdf-vector"},
+        {"id":"left","a":{"x":100.0,"y":100.0},"b":{"x":100.0,"y":180.0},"thicknessPx":8.0,"confidence":.95,"provenance":"pdf-vector"},
+    ]
+    recalibrate_extracted_room_confidence([room],walls,1000,1000)
+    assert room["confidence"]>=.88
