@@ -36,6 +36,8 @@ class Opening(BaseModel):
     id: str
     kind: Literal["door", "window"]
     doorSubtype: Literal["unknown","single_swing","double_swing","sliding"] | None = None
+    doorSwingSide: Literal["positive","negative","unknown"] | None = None
+    doorSwingDepthPx: float | None = Field(default=None, ge=0, le=30000)
     wallId: str | None = None
     a: Point
     b: Point
