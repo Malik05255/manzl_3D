@@ -102,6 +102,8 @@ class ValidationFinding(BaseModel):
     severity: Literal["info", "warning", "critical"]
     text: str
     roomIds: list[str] = []
+    wallIds: list[str] = []
+    openingIds: list[str] = []
 
 class ValidationReport(BaseModel):
     score: float = Field(ge=0, le=1)
