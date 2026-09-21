@@ -98,3 +98,20 @@ area instance                               0.961   0.921   0.940
     assert report["areaPixel"]["f1"]==.987
     assert report["areaInstance"]["f1"]==.94
     assert report["macroF1"]==.9467
+
+
+def test_double_swing_door_maps_to_official_aec_class():
+    source={
+        "widthPx":500,
+        "heightPx":400,
+        "walls":[],
+        "rooms":[],
+        "doors":[{
+            "id":"d1","kind":"door","doorSubtype":"double_swing",
+            "a":{"x":100.0,"y":100.0},"b":{"x":200.0,"y":100.0},"confidence":.9,
+        }],
+        "windows":[],
+        "symbols":[],
+    }
+    prediction=plan_to_aec_prediction(source,sheet="sheet",width=500,height=400)
+    assert prediction["objects"][0]["class"]=="Double Swing Door"
