@@ -263,3 +263,131 @@ def detect_windows(image:np.ndarray,walls:list[dict],meters_per_pixel:float|None
     for index,item in enumerate(result,start=1):
         item["id"]=f"window-{index}"
     return result
+
+
+def _endpoint_distance(wall:dict,point:dict)->float:
+    return min(
+        math.hypot(float(wall["a"]["x"])-float(point["x"]),float(wall["a"]["y"])-float(point["y"])),
+        math.hypot(float(wall["b"]["x"])-float(point["x"]),float(wall["b"]["y"])-float(point["y"])),
+    )
+
+
+def _axis_distance(wall:dict,opening:dict)->float:
+    orientation=_orientation(wall)
+    _,_,axis=_ordered_segment(wall)
+    cx=(float(opening["a"]["x"])+float(opening["b"]["x"]))/2
+    cy=(float(opening["a"]["y"])+float(opening["b"]["y"]))/2
+    return abs((cy if orientation=="h" else cx)-axis)
+
+
+def normalize_opening_hosts(walls:list[dict],doors:list[dict],windows:list[dict])->tuple[list[dict],list[dict],list[dict]]:
+    openings=[*doors,*windows]
+    if not walls or not openings:
+        return walls,doors,windows
+
+    by_id={str(wall["id"]):wall for wall in walls}
+    parent={wall_id:wall_id for wall_id in by_id}
+
+    def find(value:str)->str:
+        root=value
+        while parent[root]!=root:
+            root=parent[root]
+        while parent[value]!=value:
+            next_value=parent[value]
+            parent[value]=root
+            value=next_value
+        return root
+
+    def union(left:str,right:str):
+        a=find(left); b=find(right)
+        if a!=b:
+            parent[b]=a
+
+    for opening in openings:
+        opening_orientation="h" if abs(float(opening["b"]["x"])-float(opening["a"]["x"]))>=abs(float(opening["b"]["y"])-float(opening["a"]["y"])) else "v"
+        nearby=[]
+        for wall in walls:
+            if _orientation(wall)!=opening_orientation:
+                continue
+            tolerance=max(10.0,float(wall.get("thicknessPx",4.0))*3.0)
+            if _axis_distance(wall,opening)>tolerance:
+                continue
+            touches_a=_endpoint_distance(wall,opening["a"])<=tolerance*1.4
+            touches_b=_endpoint_distance(wall,opening["b"])<=tolerance*1.4
+            if touches_a or touches_b:
+                nearby.append(str(wall["id"]))
+        if len(nearby)>=2:
+            first=nearby[0]
+            for other in nearby[1:]:
+                union(first,other)
+
+    groups:dict[str,list[dict]]={}
+    for wall in walls:
+        groups.setdefault(find(str(wall["id"])),[]).append(wall)
+
+    replacement:dict[str,str]={}
+    normalized=[]
+    for group in groups.values():
+        if len(group)==1:
+            normalized.append(group[0])
+            continue
+
+        orientation=_orientation(group[0])
+        lengths=[
+            max(1.0,abs(_ordered_segment(wall)[1]-_ordered_segment(wall)[0]))
+            for wall in group
+        ]
+        canonical=max(
+            group,
+            key=lambda wall:(abs(_ordered_segment(wall)[1]-_ordered_segment(wall)[0]),str(wall["id"])),
+        )
+        total_length=sum(lengths)
+        axis=sum(_ordered_segment(wall)[2]*length for wall,length in zip(group,lengths))/max(total_length,1.0)
+        start=min(_ordered_segment(wall)[0] for wall in group)
+        end=max(_ordered_segment(wall)[1] for wall in group)
+        thickness=sum(float(wall.get("thicknessPx",4.0))*length for wall,length in zip(group,lengths))/max(total_length,1.0)
+        confidence=sum(float(wall.get("confidence",0.0))*length for wall,length in zip(group,lengths))/max(total_length,1.0)
+        provenances={wall.get("provenance") for wall in group if wall.get("provenance")}
+        provenance=next(iter(provenances)) if len(provenances)==1 else "mixed"
+        merged={
+            **canonical,
+            "a":{"x":float(start),"y":float(axis)} if orientation=="h" else {"x":float(axis),"y":float(start)},
+            "b":{"x":float(end),"y":float(axis)} if orientation=="h" else {"x":float(axis),"y":float(end)},
+            "thicknessPx":round(thickness,2),
+            "confidence":round(max(0.0,min(1.0,confidence)),3),
+            "reviewed":all(bool(wall.get("reviewed",False)) for wall in group),
+            "provenance":provenance or "opencv",
+        }
+        normalized.append(merged)
+        canonical_id=str(canonical["id"])
+        for wall in group:
+            replacement[str(wall["id"])]=canonical_id
+
+    normalized_by_id={str(wall["id"]):wall for wall in normalized}
+    for opening in openings:
+        wall_id=str(opening.get("wallId") or "")
+        if wall_id in replacement:
+            opening["wallId"]=replacement[wall_id]
+            continue
+
+        # Last-resort host lookup for a detected gap whose original chosen segment
+        # was removed by another opening in the same collinear wall chain.
+        opening_orientation="h" if abs(float(opening["b"]["x"])-float(opening["a"]["x"]))>=abs(float(opening["b"]["y"])-float(opening["a"]["y"])) else "v"
+        cx=(float(opening["a"]["x"])+float(opening["b"]["x"]))/2
+        cy=(float(opening["a"]["y"])+float(opening["b"]["y"]))/2
+        best=None
+        for candidate in normalized_by_id.values():
+            if _orientation(candidate)!=opening_orientation:
+                continue
+            start,end,axis=_ordered_segment(candidate)
+            position=cx if opening_orientation=="h" else cy
+            perpendicular=abs((cy if opening_orientation=="h" else cx)-axis)
+            tolerance=max(10.0,float(candidate.get("thicknessPx",4.0))*3.0)
+            if start-tolerance<=position<=end+tolerance and perpendicular<=tolerance:
+                score=perpendicular
+                if best is None or score<best[0]:
+                    best=(score,str(candidate["id"]))
+        if best is not None:
+            opening["wallId"]=best[1]
+
+    return normalized,doors,windows
