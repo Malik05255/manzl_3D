@@ -59,3 +59,30 @@ describe("manual wall snapping",()=>{
     expect(snapAxis(123,null,.05)).toBe(123);
   });
 });
+
+
+it("marks manually moved topology as reviewed mixed provenance",()=>{
+  const plan={
+    schemaVersion:1 as const,id:"p",widthPx:1000,heightPx:700,metersPerPixel:.01,calibrationConfidence:1,
+    walls:[
+      {id:"shared",a:{x:500,y:100},b:{x:500,y:500},thicknessPx:10,confidence:.9,reviewed:false,provenance:"opencv" as const},
+      {id:"top",a:{x:100,y:100},b:{x:500,y:100},thicknessPx:10,confidence:.9,reviewed:false,provenance:"opencv" as const},
+    ],
+    rooms:[
+      {id:"room",name:"غرفة",polygon:[{x:100,y:100},{x:500,y:100},{x:500,y:500},{x:100,y:500}],confidence:.9,areaM2:16,reviewed:false,provenance:"opencv" as const},
+    ],
+    doors:[
+      {id:"door",kind:"door" as const,wallId:"shared",a:{x:500,y:200},b:{x:500,y:290},confidence:.9,reviewed:false,provenance:"opencv" as const},
+    ],
+    windows:[],labels:[],
+    quality:{overall:.9,walls:.9,rooms:.9,text:.9,dimensions:.9,needsCalibration:false,warnings:[]},
+    source:{fileName:"x.png",mimeType:"image/png",page:1},
+  };
+  const original=plan.walls[0];
+  const next=moveWallAndTopology(plan,original,{...original,a:{...original.a,x:550},b:{...original.b,x:550}});
+  const moved=next.walls.find(item=>item.id==="shared")!;
+  expect(moved.reviewed).toBe(true);
+  expect(moved.provenance).toBe("mixed");
+  expect(next.rooms[0].provenance).toBe("mixed");
+  expect(next.doors[0].provenance).toBe("mixed");
+});
