@@ -69,3 +69,40 @@ describe("plan backup",()=>{
     expect(()=>parsePlanBackup(JSON.stringify(broken))).toThrow("BACKUP_OPENING_WALL");
   });
 });
+
+
+it("deep clones dimension symbol and analysis metadata for a new project",()=>{
+  const original:FloorPlanModel={
+    ...plan(),
+    labels:[{id:"label-1",text:"4.20 m",center:{x:200,y:30},confidence:.9,kind:"dimension",provenance:"ocr"}],
+    dimensions:[{
+      id:"dim-1",sourceLabelId:"label-1",text:"4.20 m",center:{x:200,y:30},
+      valueM:4.2,unit:"m",orientation:"horizontal",referenceWallId:"wall-1",
+      spanA:{x:100,y:25},spanB:{x:520,y:25},confidence:.9,provenance:"ocr",
+    }],
+    symbols:[{
+      id:"symbol-1",kind:"toilet",a:{x:500,y:300},b:{x:560,y:370},confidence:.9,provenance:"ai",
+    }],
+    analysis:{
+      pipelineVersion:"test",analyzedAt:"2026-09-22T00:00:00Z",
+      sourceSha256:"a".repeat(64),engines:["opencv","symbol-detector"],
+    },
+  };
+  const cloned=clonePlanForProject(original,"new-project");
+
+  expect(cloned.id).toBe("new-project");
+  expect(cloned.dimensions).not.toBe(original.dimensions);
+  expect(cloned.dimensions?.[0].center).not.toBe(original.dimensions?.[0].center);
+  expect(cloned.dimensions?.[0].spanA).not.toBe(original.dimensions?.[0].spanA);
+  expect(cloned.symbols).not.toBe(original.symbols);
+  expect(cloned.symbols?.[0].a).not.toBe(original.symbols?.[0].a);
+  expect(cloned.analysis).not.toBe(original.analysis);
+  expect(cloned.analysis?.engines).not.toBe(original.analysis?.engines);
+
+  cloned.symbols![0].a.x=999;
+  cloned.dimensions![0].center.x=999;
+  cloned.analysis!.engines.push("changed");
+  expect(original.symbols![0].a.x).toBe(500);
+  expect(original.dimensions![0].center.x).toBe(200);
+  expect(original.analysis!.engines).toEqual(["opencv","symbol-detector"]);
+});
