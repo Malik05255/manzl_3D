@@ -1,6 +1,6 @@
 import { describe,expect,it } from "vitest";
 import type { FloorPlanModel } from "@manzil/contracts";
-import { addOpeningToWall,changeOpeningKind,openingMetrics,positionOpening,removeOpening,resizeOpening } from "./openingGeometry";
+import { addOpeningToWall,changeDoorSubtype,changeOpeningKind,openingMetrics,positionOpening,removeOpening,resizeOpening } from "./openingGeometry";
 
 function plan():FloorPlanModel{
   return {
@@ -52,6 +52,16 @@ describe("opening geometry",()=>{
     source.doors[0].provenance="opencv";
     source.doors[0].reviewed=false;
     const next=resizeOpening(source,"d",1.0)!;
+    expect(next.doors[0].reviewed).toBe(true);
+    expect(next.doors[0].provenance).toBe("mixed");
+  });
+
+  it("can correct a door subtype",()=>{
+    const source=plan();
+    source.doors[0].provenance="opencv";
+    source.doors[0].reviewed=false;
+    const next=changeDoorSubtype(source,"d","double_swing")!;
+    expect(next.doors[0].doorSubtype).toBe("double_swing");
     expect(next.doors[0].reviewed).toBe(true);
     expect(next.doors[0].provenance).toBe("mixed");
   });
