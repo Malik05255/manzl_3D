@@ -69,6 +69,8 @@ class EditRequest(BaseModel):
     command: str
     plan: FloorPlan
     target_room_id: str | None = None
+    target_wall_id: str | None = None
+    target_opening_id: str | None = None
 
 class ResizeRequest(BaseModel):
     project_id: str
@@ -78,7 +80,7 @@ class ResizeRequest(BaseModel):
     plan: FloorPlan
 
 class Impact(BaseModel):
-    kind: Literal["room_resize", "room_remove", "wall_move", "door_move", "warning", "info"]
+    kind: Literal["room_resize", "room_remove", "wall_move", "wall_update", "door_move", "opening_update", "opening_remove", "warning", "info"]
     text: str
     severity: Literal["info", "warning", "critical"] = "info"
 
