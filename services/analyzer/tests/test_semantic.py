@@ -1,5 +1,5 @@
 from app.models import EditRequest,FloorPlan,Point,Quality,Room,Source
-from app.semantic import _canonical_from_payload,_extract_json,_load_providers
+from app.semantic import _canonical_from_payload,_deterministic_understands,_extract_json,_load_providers
 
 
 def sample_request(command="وسع غرفه النوم شوي"):
@@ -87,3 +87,8 @@ def test_semantic_merge_payload_is_canonicalized():
     },request)
     assert clarification is None
     assert normalized=="ادمج الصالة مع غرفة النوم"
+
+
+def test_explicit_merge_bypasses_external_semantic_provider():
+    request=sample_request("احذف الصالة وضمها الى غرفة النوم")
+    assert _deterministic_understands(request) is True

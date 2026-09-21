@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from .commands import find_target_room,normalize_arabic,resolve_target_size
+from .commands import find_target_room,normalize_arabic,parse_merge_rooms,resolve_target_size
 from .edit_geometry import bbox
 from .models import EditRequest
 
@@ -72,6 +72,8 @@ def _room_context(request:EditRequest)->list[dict]:
 
 
 def _deterministic_understands(request:EditRequest)->bool:
+    if parse_merge_rooms(request.command,request.plan.rooms) is not None:
+        return True
     target=find_target_room(request.command,request.plan.rooms)
     if target is None or not request.plan.metersPerPixel:
         return False
