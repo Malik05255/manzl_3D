@@ -74,7 +74,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const plan=await object.json<FloorPlanModel>();
     const upstream=await fetch(`${env.ANALYZER_URL.replace(/\/$/,"")}/v1/edit/proposals`,{
       method:"POST",
-      headers:{"content-type":"application/json","x-manzil-internal":env.INTERNAL_TOKEN},
+      headers:{"content-type":"application/json"},
       body:JSON.stringify({project_id:id,command,plan})
     });
     if(!upstream.ok) return json({error:"تعذر على H Engineer تحليل التعديل"},502);
