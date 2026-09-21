@@ -61,6 +61,26 @@ def _edge_wall_score(a,b,wall)->float:
     return overlap_score*0.72+distance_score*0.28
 
 
+def room_boundary_coverage(room,walls:list)->float:
+    polygon=_room_value(room,"polygon")
+    if len(polygon)<3:
+        return 0.0
+    total=0.0
+    matched=0.0
+    for index,point in enumerate(polygon):
+        other=polygon[(index+1)%len(polygon)]
+        ax,ay=_point(point); bx,by=_point(other)
+        length=math.hypot(bx-ax,by-ay)
+        if length<=1e-6:
+            continue
+        total+=length
+        if any(_edge_wall_score(point,other,wall)>=0.34 for wall in walls):
+            matched+=length
+    if total<=1e-6:
+        return 0.0
+    return max(0.0,min(1.0,matched/total))
+
+
 def link_room_boundaries(rooms:list,walls:list)->list:
     for room in rooms:
         polygon=_room_value(room,"polygon")
