@@ -187,4 +187,4 @@ def test_opening_geometry_edit_preserves_review_metadata():
     assert response.proposals
     opening=response.proposals[0].previewPlan.doors[0]
     assert opening.reviewed is True
-    assert opening.provenance=="opencv"
+    assert opening.provenance=="mixed"
