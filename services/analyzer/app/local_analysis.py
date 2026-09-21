@@ -39,9 +39,16 @@ def analyze_document_bytes_local(
     h,w=image.shape[:2]
     _,ink=preprocess(image)
 
-    labels=extract_ocr_labels(image)
+    try:
+        labels=extract_ocr_labels(image)
+        used_local_ocr=True
+    except Exception:
+        labels=[]
+        used_local_ocr=False
     vector_lines=[]
-    engines=["opencv","tesseract","canonical-wall-barrier"]
+    engines=["opencv","canonical-wall-barrier"]
+    if used_local_ocr:
+        engines.append("tesseract")
 
     if mime_type=="application/pdf":
         native_lines=extract_pdf_text_lines(data,page)
