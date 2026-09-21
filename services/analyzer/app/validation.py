@@ -360,3 +360,24 @@ def validate_plan(plan:FloorPlan)->ValidationReport:
     penalty=sum(weights[item.severity] for item in findings)
     score=max(0.0,min(1.0,1.0-penalty))
     return ValidationReport(score=round(score,3),findings=findings)
+
+
+def _finding_identity(item:ValidationFinding)->tuple:
+    return (
+        item.code,
+        tuple(sorted(item.roomIds)),
+        tuple(sorted(item.wallIds)),
+        tuple(sorted(item.openingIds)),
+    )
+
+
+def introduced_critical_findings(before:ValidationReport,after:ValidationReport)->list[ValidationFinding]:
+    existing={
+        _finding_identity(item)
+        for item in before.findings
+        if item.severity=="critical"
+    }
+    return [
+        item for item in after.findings
+        if item.severity=="critical" and _finding_identity(item) not in existing
+    ]
