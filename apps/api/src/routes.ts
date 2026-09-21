@@ -54,8 +54,8 @@ export async function route(request:Request,env:Env):Promise<Response>{
   const source=path.match(/^\/v1\/projects\/([^/]+)\/source$/);
   if(source&&request.method==="PUT"){
     const id=source[1];
-    const row=await getProjectRow(env,id);
-    if(!row) return json({error:"المشروع غير موجود"},404);
+    const secured=await protectedRow(request,env,id);
+    if(secured instanceof Response) return secured;
 
     const mime=request.headers.get("content-type")?.split(";")[0]??"";
     const allowed=new Set(["application/pdf","image/png","image/jpeg","image/webp"]);
@@ -83,14 +83,16 @@ export async function route(request:Request,env:Env):Promise<Response>{
 
   const projectMatch=path.match(/^\/v1\/projects\/([^/]+)$/);
   if(projectMatch&&request.method==="GET"){
-    const row=await getProjectRow(env,projectMatch[1]);
-    if(!row) return json({error:"المشروع غير موجود"},404);
-    return json(await projectView(env,row,true));
+    const secured=await protectedRow(request,env,projectMatch[1]);
+    if(secured instanceof Response) return secured;
+    return json(await projectView(env,secured,true));
   }
 
   const revision=path.match(/^\/v1\/projects\/([^/]+)\/revisions$/);
   if(revision&&request.method==="POST"){
     const id=revision[1];
+    const secured=await protectedRow(request,env,id);
+    if(secured instanceof Response) return secured;
     const body=await request.json<SaveRevisionRequest>();
     if(!body.plan||body.plan.schemaVersion!==1||body.plan.id!==id) return json({error:"صيغة المخطط غير صالحة"},400);
     await persistPlan(env,id,body.plan,cleanName(body.summary||"تعديل يدوي"));
@@ -101,7 +103,9 @@ export async function route(request:Request,env:Env):Promise<Response>{
   const proposals=path.match(/^\/v1\/projects\/([^/]+)\/ai\/proposals$/);
   if(proposals&&request.method==="POST"){
     const id=proposals[1];
-    const plan=await currentPlan(env,id);
+    const secured=await protectedRow(request,env,id);
+    if(secured instanceof Response) return secured;
+    const plan=await currentPlan(env,secured);
     if(!plan) return json({error:"المخطط غير جاهز للتحرير"},409);
     const body=await request.json<{command?:string}>();
     const command=(body.command??"").trim();
@@ -113,12 +117,14 @@ export async function route(request:Request,env:Env):Promise<Response>{
   const apply=path.match(/^\/v1\/projects\/([^/]+)\/ai\/apply$/);
   if(apply&&request.method==="POST"){
     const id=apply[1];
+    const secured=await protectedRow(request,env,id);
+    if(secured instanceof Response) return secured;
     const body=await request.json<ApplyProposalRequest>();
     const command=(body.command??"").trim();
     const selectedId=body.proposal?.id;
     if(!command||!selectedId) return json({error:"طلب التعديل غير مكتمل"},400);
 
-    const plan=await currentPlan(env,id);
+    const plan=await currentPlan(env,secured);
     if(!plan) return json({error:"المخطط غير جاهز للتحرير"},409);
 
     let fresh:EditProposalResponse;
