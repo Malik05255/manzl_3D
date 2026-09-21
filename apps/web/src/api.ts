@@ -116,6 +116,16 @@ export function uploadSource(projectId:string,file:File,onProgress:(value:number
 
 export const retryAnalysis=(id:string,sourcePage?:number|null)=>request<ProjectView>(`/v1/projects/${id}/retry-analysis`,{method:"POST",body:JSON.stringify({sourcePage:sourcePage??null})});
 
+export async function activateFloor(id:string,floorId:string,expectedRevision:number){
+  const project=await request<ProjectView>(`/v1/projects/${id}/floors/${encodeURIComponent(floorId)}/activate`,{
+    method:"POST",
+    body:JSON.stringify({expectedRevision}),
+  });
+  rememberKnownProject(project);
+  rememberLastProjectId(id);
+  return project;
+}
+
 export async function getProject(id:string){
   const project=await request<ProjectView>(`/v1/projects/${id}`);
   rememberLastProjectId(id);
