@@ -86,7 +86,7 @@ def _raster_candidates(ink:np.ndarray|None,width:int,height:int)->list[dict]:
         raw=cv2.HoughLinesP(mask,1,np.pi/180,threshold=threshold,minLineLength=min_length,maxLineGap=gap)
         if raw is None:
             continue
-        for x1,y1,x2,y2 in raw[:,0]:
+        for x1,y1,x2,y2 in np.asarray(raw).reshape(-1,4):
             dx=abs(int(x2)-int(x1)); dy=abs(int(y2)-int(y1))
             if axis=="horizontal" and dx>=max(min_length,dy*6):
                 result.append(_line(axis,x1,x2,(y1+y2)/2,"raster"))
