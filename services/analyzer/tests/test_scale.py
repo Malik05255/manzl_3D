@@ -135,3 +135,25 @@ def test_room_size_pair_does_not_pollute_scale_candidates():
     )
     assert scale is None
     assert confidence is None
+
+
+def test_dimension_near_wall_end_uses_segment_distance():
+    scale,confidence=estimate_scale(
+        [label("l1","4.00 m",75,90)],
+        [wall("w1",50,100,450,100)],
+        1000,
+        800,
+    )
+    assert round(scale,4)==0.01
+    assert confidence is not None and confidence>=0.55
+
+
+def test_dimension_beyond_wall_end_is_not_forced_to_distant_wall():
+    scale,confidence=estimate_scale(
+        [label("l1","4.00 m",900,90)],
+        [wall("w1",50,100,450,100)],
+        1000,
+        800,
+    )
+    assert scale is None
+    assert confidence is None
