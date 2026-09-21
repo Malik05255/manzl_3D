@@ -36,6 +36,19 @@ def is_rectangular_room(room:Room,tol:float=3.0)->bool:
         remaining.pop(match)
     return True
 
+def is_orthogonal_room(room:Room,tol:float=3.0)->bool:
+    if len(room.polygon)<4:
+        return False
+    for index,point in enumerate(room.polygon):
+        other=room.polygon[(index+1)%len(room.polygon)]
+        dx=abs(other.x-point.x)
+        dy=abs(other.y-point.y)
+        if dx<=tol and dy<=tol:
+            return False
+        if dx>tol and dy>tol:
+            return False
+    return True
+
 def set_rect(room:Room,box:tuple[float,float,float,float],mpp:float)->None:
     x1,y1,x2,y2=box
     pts=((x1,y1),(x2,y1),(x2,y2),(x1,y2))
@@ -65,6 +78,33 @@ def move_room_boundary(room:Room,axis:str,old:float,new:float,tol:float,mpp:floa
         return False
     room.areaM2=round(_polygon_area_px2(room)*(mpp**2),2)
     return True
+
+def resize_room_side(room:Room,side:str,new:float,mpp:float,tol:float)->bool:
+    x1,y1,x2,y2=bbox(room)
+    if is_rectangular_room(room,tol):
+        if side=="right":
+            set_rect(room,(x1,y1,new,y2),mpp)
+        elif side=="left":
+            set_rect(room,(new,y1,x2,y2),mpp)
+        elif side=="bottom":
+            set_rect(room,(x1,y1,x2,new),mpp)
+        elif side=="top":
+            set_rect(room,(x1,new,x2,y2),mpp)
+        else:
+            return False
+        return True
+
+    if not is_orthogonal_room(room,tol):
+        return False
+    if side=="right":
+        return move_room_boundary(room,"x",x2,new,tol,mpp)
+    if side=="left":
+        return move_room_boundary(room,"x",x1,new,tol,mpp)
+    if side=="bottom":
+        return move_room_boundary(room,"y",y2,new,tol,mpp)
+    if side=="top":
+        return move_room_boundary(room,"y",y1,new,tol,mpp)
+    return False
 
 def overlap(a1:float,a2:float,b1:float,b2:float)->float:
     return max(0.0,min(a2,b2)-max(a1,b1))
@@ -145,7 +185,8 @@ def apply_side(plan:FloorPlan,target:Room,side:str,delta_px:float,mpp:float)->tu
         new=tx2+delta_px
         if any(bbox(room)[2]-new<max(base_min_px,minimum_clear_span_m(room)/mpp) for room in neighbors):
             return False,[],[]
-        set_rect(target,(tx1,ty1,new,ty2),mpp)
+        if not resize_room_side(target,side,new,mpp,tol):
+            return False,[],[]
         for room in neighbors:
             if not move_room_boundary(room,"x",tx2,new,tol,mpp):
                 return False,[],[]
@@ -154,7 +195,8 @@ def apply_side(plan:FloorPlan,target:Room,side:str,delta_px:float,mpp:float)->tu
         new=tx1-delta_px
         if any(new-bbox(room)[0]<max(base_min_px,minimum_clear_span_m(room)/mpp) for room in neighbors):
             return False,[],[]
-        set_rect(target,(new,ty1,tx2,ty2),mpp)
+        if not resize_room_side(target,side,new,mpp,tol):
+            return False,[],[]
         for room in neighbors:
             if not move_room_boundary(room,"x",tx1,new,tol,mpp):
                 return False,[],[]
@@ -163,7 +205,8 @@ def apply_side(plan:FloorPlan,target:Room,side:str,delta_px:float,mpp:float)->tu
         new=ty2+delta_px
         if any(bbox(room)[3]-new<max(base_min_px,minimum_clear_span_m(room)/mpp) for room in neighbors):
             return False,[],[]
-        set_rect(target,(tx1,ty1,tx2,new),mpp)
+        if not resize_room_side(target,side,new,mpp,tol):
+            return False,[],[]
         for room in neighbors:
             if not move_room_boundary(room,"y",ty2,new,tol,mpp):
                 return False,[],[]
@@ -172,7 +215,8 @@ def apply_side(plan:FloorPlan,target:Room,side:str,delta_px:float,mpp:float)->tu
         new=ty1-delta_px
         if any(new-bbox(room)[1]<max(base_min_px,minimum_clear_span_m(room)/mpp) for room in neighbors):
             return False,[],[]
-        set_rect(target,(tx1,new,tx2,ty2),mpp)
+        if not resize_room_side(target,side,new,mpp,tol):
+            return False,[],[]
         for room in neighbors:
             if not move_room_boundary(room,"y",ty1,new,tol,mpp):
                 return False,[],[]
