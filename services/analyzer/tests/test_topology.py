@@ -1,5 +1,5 @@
 from app.models import FloorPlan,Point,Quality,Room,Source,Wall
-from app.topology import canonicalize_plan,classify_wall_roles,link_room_boundaries,recalibrate_extracted_room_confidence,relink_plan_boundaries,room_boundary_coverage
+from app.topology import canonicalize_plan,classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence,relink_plan_boundaries,room_boundary_coverage
 
 
 def test_links_rectangular_room_to_four_nearby_walls():
@@ -255,3 +255,47 @@ def test_named_small_vector_room_is_retained_with_high_confidence():
     ]
     recalibrate_extracted_room_confidence([room],walls,1000,1000)
     assert room["confidence"]>=.88
+
+
+
+def test_filters_small_unlabeled_furniture_thin_enclosure():
+    rooms=[{
+        "id":"main","name":"صالة","polygon":[
+            {"x":80.0,"y":80.0},{"x":920.0,"y":80.0},
+            {"x":920.0,"y":720.0},{"x":80.0,"y":720.0},
+        ],"confidence":.9,"boundaryWallIds":["outer-top","outer-right","outer-bottom","outer-left"],
+    },{
+        "id":"furniture","name":"غرفة 2","polygon":[
+            {"x":300.0,"y":300.0},{"x":440.0,"y":300.0},
+            {"x":440.0,"y":390.0},{"x":300.0,"y":390.0},
+        ],"confidence":.84,"boundaryWallIds":["f-top","f-right","f-bottom","f-left"],
+    }]
+    walls=[
+        {"id":"outer-top","a":{"x":70.0,"y":70.0},"b":{"x":930.0,"y":70.0},"thicknessPx":18.0,"confidence":.95},
+        {"id":"outer-right","a":{"x":930.0,"y":70.0},"b":{"x":930.0,"y":730.0},"thicknessPx":18.0,"confidence":.95},
+        {"id":"outer-bottom","a":{"x":70.0,"y":730.0},"b":{"x":930.0,"y":730.0},"thicknessPx":18.0,"confidence":.95},
+        {"id":"outer-left","a":{"x":70.0,"y":70.0},"b":{"x":70.0,"y":730.0},"thicknessPx":18.0,"confidence":.95},
+        {"id":"f-top","a":{"x":295.0,"y":295.0},"b":{"x":445.0,"y":295.0},"thicknessPx":3.0,"confidence":.80},
+        {"id":"f-right","a":{"x":445.0,"y":295.0},"b":{"x":445.0,"y":395.0},"thicknessPx":3.0,"confidence":.80},
+        {"id":"f-bottom","a":{"x":295.0,"y":395.0},"b":{"x":445.0,"y":395.0},"thicknessPx":3.0,"confidence":.80},
+        {"id":"f-left","a":{"x":295.0,"y":295.0},"b":{"x":295.0,"y":395.0},"thicknessPx":3.0,"confidence":.80},
+    ]
+    kept=filter_nonarchitectural_enclosures(rooms,walls,1000,800)
+    assert [room["id"] for room in kept]==["main"]
+
+
+def test_named_small_thin_enclosure_is_not_filtered():
+    room={
+        "id":"closet","name":"مخزن","polygon":[
+            {"x":300.0,"y":300.0},{"x":440.0,"y":300.0},
+            {"x":440.0,"y":390.0},{"x":300.0,"y":390.0},
+        ],"confidence":.88,"boundaryWallIds":["a","b","c","d"],
+    }
+    walls=[
+        {"id":"architectural","a":{"x":50.0,"y":50.0},"b":{"x":950.0,"y":50.0},"thicknessPx":18.0,"confidence":.95},
+        {"id":"a","a":{"x":295.0,"y":295.0},"b":{"x":445.0,"y":295.0},"thicknessPx":3.0,"confidence":.80},
+        {"id":"b","a":{"x":445.0,"y":295.0},"b":{"x":445.0,"y":395.0},"thicknessPx":3.0,"confidence":.80},
+        {"id":"c","a":{"x":295.0,"y":395.0},"b":{"x":445.0,"y":395.0},"thicknessPx":3.0,"confidence":.80},
+        {"id":"d","a":{"x":295.0,"y":295.0},"b":{"x":295.0,"y":395.0},"thicknessPx":3.0,"confidence":.80},
+    ]
+    assert filter_nonarchitectural_enclosures([room],walls,1000,800)==[room]
