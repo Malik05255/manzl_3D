@@ -313,3 +313,40 @@ def test_action_context_selects_target_when_neighbor_is_also_named():
     target=find_target_room("عدل غرفة النوم إلى 5×4 على حساب الصالة",plan.rooms)
     assert target is not None
     assert target.id=="bed"
+
+
+def test_resize_preserves_irregular_neighbor_polygon():
+    plan=sample_plan()
+    plan.rooms=[
+        Room(
+            id="bed",
+            name="غرفة النوم",
+            polygon=[Point(x=100,y=100),Point(x=500,y=100),Point(x=500,y=500),Point(x=100,y=500)],
+            confidence=.95,
+            areaM2=16,
+        ),
+        Room(
+            id="hall",
+            name="الصالة",
+            polygon=[
+                Point(x=500,y=100),Point(x=900,y=100),Point(x=900,y=300),
+                Point(x=700,y=300),Point(x=700,y=500),Point(x=500,y=500),
+            ],
+            confidence=.95,
+            areaM2=12,
+        ),
+    ]
+    plan.walls=[Wall(id="shared",a=Point(x=500,y=100),b=Point(x=500,y=500),thicknessPx=4,confidence=.9)]
+
+    response=build_proposals(EditRequest(
+        project_id="project-1",
+        command="عدل غرفة النوم إلى 5×4",
+        plan=plan,
+    ))
+    assert response.proposals
+    preview=response.proposals[0].previewPlan
+    hall=next(room for room in preview.rooms if room.id=="hall")
+    assert len(hall.polygon)==6
+    moved_boundary=[point.x for point in hall.polygon if point.y in (100,500)]
+    assert 600 in moved_boundary
+    assert any(point.x==700 and point.y==300 for point in hall.polygon)
