@@ -32,7 +32,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
   if(path==="/v1/version") return json({version:env.APP_VERSION??"0.1.0"});
 
   if(path==="/v1/projects"&&request.method==="POST"){
-    const body=await request.json<{name?:string}>().catch(()=>({}));
+    const body:{name?:string}=await request.json<{name?:string}>().catch(()=>({}));
     const id=crypto.randomUUID();
     const now=new Date().toISOString();
     const name=cleanName(body.name??"مخطط جديد");
