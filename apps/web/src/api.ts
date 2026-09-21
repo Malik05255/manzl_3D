@@ -141,8 +141,8 @@ export async function getProjectPreview(id:string):Promise<string|null>{
   if(!response.ok)throw new Error("تعذر تحميل المخطط الأصلي");
   return URL.createObjectURL(await response.blob());
 }
-export const askEngineer=(id:string,command:string,context?:{targetRoomId?:string|null;targetWallId?:string|null;targetOpeningId?:string|null})=>request<EditProposalResponse>(`/v1/projects/${id}/ai/proposals`,{method:"POST",body:JSON.stringify({command,targetRoomId:context?.targetRoomId??null,targetWallId:context?.targetWallId??null,targetOpeningId:context?.targetOpeningId??null})});
-export const resizeRoomPrecisely=(id:string,roomId:string,widthM:number,heightM:number)=>request<EditProposalResponse>(`/v1/projects/${id}/geometry/resize-proposals`,{method:"POST",body:JSON.stringify({roomId,widthM,heightM})});
+export const askEngineer=(id:string,command:string,expectedRevision:number,context?:{targetRoomId?:string|null;targetWallId?:string|null;targetOpeningId?:string|null})=>request<EditProposalResponse>(`/v1/projects/${id}/ai/proposals`,{method:"POST",body:JSON.stringify({command,expectedRevision,targetRoomId:context?.targetRoomId??null,targetWallId:context?.targetWallId??null,targetOpeningId:context?.targetOpeningId??null})});
+export const resizeRoomPrecisely=(id:string,roomId:string,widthM:number,heightM:number,expectedRevision:number)=>request<EditProposalResponse>(`/v1/projects/${id}/geometry/resize-proposals`,{method:"POST",body:JSON.stringify({roomId,widthM,heightM,expectedRevision})});
 export const validateProject=(id:string,plan:FloorPlanModel)=>request<ValidationReport>(`/v1/projects/${id}/validate`,{method:"POST",body:JSON.stringify({plan})});
 export async function applyProposal(id:string,payload:ApplyProposalRequest){const project=await request<ProjectView>(`/v1/projects/${id}/ai/apply`,{method:"POST",body:JSON.stringify(payload)});rememberKnownProject(project);return project;}
 export const saveDraft=(id:string,plan:FloorPlanModel,expectedRevision:number)=>request<ProjectView>(`/v1/projects/${id}/draft`,{method:"PUT",body:JSON.stringify({plan,expectedRevision})});
