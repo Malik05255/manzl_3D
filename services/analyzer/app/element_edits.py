@@ -383,6 +383,13 @@ def build_selected_element_proposals(req:EditRequest)->ProposalResponse|None:
         opening=_find_opening(req.plan,req.target_opening_id)
         if opening is None:
             return ProposalResponse(command=req.command,proposals=[],needsClarification="الفتحة المحددة لم تعد موجودة في المخطط.")
+        host_wall=next((item for item in req.plan.walls if item.id==opening.wallId),None) if opening.wallId else None
+        if host_wall is not None and (host_wall.locked or host_wall.role=="structural"):
+            return ProposalResponse(
+                command=req.command,
+                proposals=[],
+                needsClarification="الفتحة مرتبطة بجدار محمي. فك حماية الجدار يدويًا بعد التأكد من ملاءمة التعديل ثم أعد الطلب.",
+            )
         if not opening.reviewed and opening.confidence<OPENING_EDIT_CONFIDENCE_MIN:
             return ProposalResponse(
                 command=req.command,
@@ -465,6 +472,13 @@ def build_selected_element_proposals(req:EditRequest)->ProposalResponse|None:
         wall=next((item for item in req.plan.walls if item.id==req.target_wall_id),None)
         if wall is None:
             return ProposalResponse(command=req.command,proposals=[],needsClarification="الجدار المحدد لم يعد موجودًا في المخطط.")
+        if wall.locked or wall.role=="structural":
+            role_text="إنشائي" if wall.role=="structural" else "خارجي/محمي"
+            return ProposalResponse(
+                command=req.command,
+                proposals=[],
+                needsClarification=f"الجدار المحدد {role_text} ومقفل ضد التعديل التلقائي. فك الحماية يدويًا إذا كنت متأكدًا من التعديل.",
+            )
         if not wall.reviewed and wall.confidence<WALL_EDIT_CONFIDENCE_MIN:
             return ProposalResponse(
                 command=req.command,
