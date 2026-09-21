@@ -178,7 +178,14 @@ def canonicalize_plan(plan:FloorPlan)->FloorPlan:
             room.areaM2=round(_polygon_area_px2(room.polygon)*factor,2)
 
     valid_wall_ids={wall.id for wall in candidate.walls}
+    valid_label_ids={label.id for label in candidate.labels}
     for room in candidate.rooms:
         room.boundaryWallIds=[wall_id for wall_id in room.boundaryWallIds if wall_id in valid_wall_ids]
+    for dimension in candidate.dimensions:
+        if dimension.referenceWallId and dimension.referenceWallId not in valid_wall_ids:
+            dimension.referenceWallId=None
+            dimension.orientation="unknown"
+        if dimension.sourceLabelId and dimension.sourceLabelId not in valid_label_ids:
+            dimension.sourceLabelId=None
 
     return candidate
