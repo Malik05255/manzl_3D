@@ -87,6 +87,8 @@ export interface ValidationFinding {
   severity: "info" | "warning" | "critical";
   text: string;
   roomIds: string[];
+  wallIds?: string[];
+  openingIds?: string[];
 }
 export interface ValidationReport {
   score: number;
