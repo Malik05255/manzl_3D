@@ -153,3 +153,24 @@ def test_low_confidence_wall_requires_confirmation():
     ))
     assert not response.proposals
     assert "منخفضة الثقة" in (response.needsClarification or "")
+
+
+def test_reviewed_low_confidence_wall_can_be_edited():
+    plan=sample_plan()
+    wall=next(item for item in plan.walls if item.id=="shared")
+    wall.confidence=.50
+    wall.reviewed=True
+    response=build_proposals(EditRequest(
+        project_id="p1",command="حركه يمين 20 سم",target_wall_id="shared",plan=plan,
+    ))
+    assert response.proposals
+
+
+def test_reviewed_low_confidence_opening_can_be_edited():
+    plan=sample_plan()
+    plan.doors[0].confidence=.60
+    plan.doors[0].reviewed=True
+    response=build_proposals(EditRequest(
+        project_id="p1",command="اجعل عرضه 1 متر",target_opening_id="door-1",plan=plan,
+    ))
+    assert response.proposals
