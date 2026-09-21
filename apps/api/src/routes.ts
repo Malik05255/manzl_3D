@@ -45,7 +45,10 @@ async function analyzerValidation(env:Env,id:string,plan:FloorPlanModel):Promise
 }
 
 function criticalFindingKey(item:ValidationReport["findings"][number]){
-  return `${item.code}:${[...item.roomIds].sort().join(",")}`;
+  const rooms=[...item.roomIds].sort().join(",");
+  const walls=[...(item.wallIds??[])].sort().join(",");
+  const openings=[...(item.openingIds??[])].sort().join(",");
+  return `${item.code}:rooms=${rooms}:walls=${walls}:openings=${openings}`;
 }
 
 async function validateTransition(env:Env,id:string,before:FloorPlanModel|null,after:FloorPlanModel){
