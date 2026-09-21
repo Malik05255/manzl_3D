@@ -1,9 +1,10 @@
 import { useEffect,useMemo,useRef,useState } from "react";
 import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Clock3,Cloud,Download,FileImage,FileText,Hammer,Layers3,LoaderCircle,Redo2,Ruler,Save,ShieldCheck,Sparkles,Undo2,UploadCloud,WandSparkles,X } from "lucide-react";
 import type { EditProposal,FloorPlanModel,Point,ProjectView,RevisionView,ValidationReport } from "@manzil/contracts";
-import { applyProposal,askEngineer,createProject,forgetLastProject,getLastProjectId,getProject,getProjectPreview,listRevisions,resizeRoomPrecisely,restoreRevision,saveDraft,saveRevision,uploadSource,validateProject } from "./api";
+import { applyProposal,askEngineer,createProject,forgetLastProject,getLastProjectId,getProject,getProjectPreview,importProjectBackup,inferSourceMime,listRevisions,resizeRoomPrecisely,restoreRevision,saveDraft,saveRevision,uploadSource,validateProject } from "./api";
 import { PlanCanvas } from "./PlanCanvas";
 import { exportPlanJson,exportPlanPng,exportPlanSvg } from "./exportPlan";
+import { parsePlanBackup } from "./planBackup";
 import { useAppUpdate } from "./useAppUpdate";
 
 type Screen="home"|"choice"|"upload"|"processing"|"editor";
@@ -33,12 +34,35 @@ function Choice({onEdit,onBack}:{onEdit:()=>void;onBack:()=>void}){return <main 
 </main>;}
 
 function Upload({onStarted,onBack}:{onStarted:(p:ProjectView)=>void;onBack:()=>void}){
-  const input=useRef<HTMLInputElement|null>(null);const[busy,setBusy]=useState(false);const[pct,setPct]=useState(0);const[error,setError]=useState<string|null>(null);
-  const handle=async(file?:File)=>{if(!file)return;const allowed=["application/pdf","image/png","image/jpeg","image/webp"];if(!allowed.includes(file.type)){setError("الملف يجب أن يكون PDF أو صورة PNG/JPG/WEBP.");return;}setBusy(true);setError(null);try{const p=await createProject(file.name.replace(/\.[^.]+$/,""));await uploadSource(p.id,file,setPct);onStarted({...p,status:"queued",phase:"upload",progress:10});}catch(e){setError(e instanceof Error?e.message:"حدث خطأ غير متوقع");setBusy(false);}};
+  const input=useRef<HTMLInputElement|null>(null);const[busy,setBusy]=useState(false);const[pct,setPct]=useState(0);const[error,setError]=useState<string|null>(null);const[mode,setMode]=useState<"upload"|"backup">("upload");
+  const handle=async(file?:File)=>{
+    if(!file)return;
+    const backup=file.name.toLowerCase().endsWith(".json")||file.type==="application/json";
+    const sourceMime=inferSourceMime(file);
+    if(!backup&&!sourceMime){setError("الملف يجب أن يكون PDF أو PNG/JPG/WEBP أو نسخة مشروع JSON.");return;}
+    setBusy(true);setPct(0);setMode(backup?"backup":"upload");setError(null);
+    try{
+      const name=file.name.replace(/\.(manzil\.)?json$/i,"").replace(/\.[^.]+$/,"")||"مخطط مستورد";
+      if(backup){
+        const parsed=parsePlanBackup(await file.text());
+        const ready=await importProjectBackup(name,parsed);
+        onStarted(ready);
+        return;
+      }
+      const p=await createProject(name);
+      await uploadSource(p.id,file,setPct);
+      onStarted({...p,status:"queued",phase:"upload",progress:10});
+    }catch(e){
+      const code=e instanceof Error?e.message:"";
+      const backupErrors=new Set(["BACKUP_TOO_LARGE","BACKUP_INVALID_JSON","BACKUP_SCHEMA","BACKUP_ID","BACKUP_SIZE","BACKUP_SCALE","BACKUP_CALIBRATION","BACKUP_WALLS","BACKUP_ROOMS","BACKUP_DOORS","BACKUP_WINDOWS","BACKUP_LABELS","BACKUP_QUALITY","BACKUP_SOURCE","BACKUP_DUPLICATE_IDS"]);
+      setError(backupErrors.has(code)?"نسخة المشروع غير صالحة أو غير متوافقة مع منزل H.":e instanceof Error?e.message:"حدث خطأ غير متوقع");
+      setBusy(false);
+    }
+  };
   return <main className="center-page"><div className="top-inline"><button className="ghost" onClick={onBack}><ArrowLeft size={18}/> رجوع</button><Brand compact/></div>
-    <section className="upload-card"><span className="eyebrow"><Sparkles size={16}/> تعديل مخطط قائم</span><h2>ارفع المخطط</h2><p>PDF أو صورة واضحة. تبدأ المعالجة السحابية فور اكتمال الرفع.</p>
-      <button className="drop-zone" onClick={()=>input.current?.click()} disabled={busy}>{busy?<LoaderCircle className="spin" size={44}/>:<UploadCloud size={44}/>}<strong>{busy?`جارٍ الرفع ${pct}%`:"اختر ملفًا من جهازك"}</strong><span>PDF · PNG · JPG · WEBP</span></button>
-      <input ref={input} hidden type="file" accept=".pdf,image/png,image/jpeg,image/webp" onChange={e=>handle(e.target.files?.[0])}/>{error&&<div className="error-box">{error}</div>}
+    <section className="upload-card"><span className="eyebrow"><Sparkles size={16}/> تعديل مخطط قائم</span><h2>ارفع المخطط</h2><p>ارفع PDF أو صورة للتحليل، أو استعد نسخة مشروع JSON سبق تصديرها من منزل H.</p>
+      <button className="drop-zone" onClick={()=>input.current?.click()} disabled={busy}>{busy?<LoaderCircle className="spin" size={44}/>:<UploadCloud size={44}/>}<strong>{busy?(mode==="backup"?"جارٍ استعادة المشروع...":`جارٍ الرفع ${pct}%`):"اختر ملفًا من جهازك"}</strong><span>PDF · PNG · JPG · WEBP · JSON</span></button>
+      <input ref={input} hidden type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.json,application/pdf,application/json,image/png,image/jpeg,image/webp" onChange={e=>handle(e.target.files?.[0])}/>{error&&<div className="error-box">{error}</div>}
     </section>
   </main>;
 }
@@ -247,7 +271,7 @@ export default function App(){
   return <>{updateReady&&<UpdateBanner onInstall={installUpdate}/>}
     {screen==="home"&&<Home onStart={()=>setScreen("choice")} onResume={resume} resumeAvailable={resumeAvailable} resumeBusy={resumeBusy}/>}
     {screen==="choice"&&<Choice onEdit={()=>setScreen("upload")} onBack={home}/>}
-    {screen==="upload"&&<Upload onBack={()=>setScreen("choice")} onStarted={p=>{setProject(p);setResumeAvailable(true);setScreen("processing");}}/>}
+    {screen==="upload"&&<Upload onBack={()=>setScreen("choice")} onStarted={p=>{setProject(p);setResumeAvailable(true);setScreen(p.status==="ready"&&p.plan?"editor":"processing");}}/>}
     {screen==="processing"&&project&&<Processing projectId={project.id} onReady={p=>{setProject(p);setScreen("editor");}} onHome={home}/>}
     {screen==="editor"&&project?.plan&&<Editor initialProject={project} onHome={home}/>}
   </>;

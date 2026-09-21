@@ -1,0 +1,35 @@
+import { describe,expect,it } from "vitest";
+import type { FloorPlanModel } from "@manzil/contracts";
+import { clonePlanForProject,parsePlanBackup } from "./planBackup";
+
+function plan():FloorPlanModel{
+  return {
+    schemaVersion:1,id:"old",widthPx:800,heightPx:600,metersPerPixel:.01,calibrationConfidence:.9,
+    walls:[{id:"wall-1",a:{x:0,y:0},b:{x:800,y:0},thicknessPx:8,confidence:.9}],
+    rooms:[{id:"room-1",name:"غرفة",polygon:[{x:0,y:0},{x:400,y:0},{x:400,y:300},{x:0,y:300}],confidence:.9,areaM2:12}],
+    doors:[],windows:[],labels:[],
+    quality:{overall:.9,walls:.9,rooms:.9,text:.8,dimensions:.9,needsCalibration:false,warnings:[]},
+    source:{fileName:"plan.png",mimeType:"image/png",page:1},
+  };
+}
+
+describe("plan backup",()=>{
+  it("round trips a valid canonical plan",()=>{
+    const parsed=parsePlanBackup(JSON.stringify(plan()));
+    expect(parsed.id).toBe("old");
+    expect(parsed.rooms[0].name).toBe("غرفة");
+  });
+
+  it("rejects malformed geometry",()=>{
+    const broken={...plan(),walls:[{id:"wall-1",a:{x:"bad",y:0},b:{x:5,y:5},thicknessPx:4,confidence:.9}]};
+    expect(()=>parsePlanBackup(JSON.stringify(broken))).toThrow("BACKUP_WALLS");
+  });
+
+  it("clones a backup under the new cloud project id",()=>{
+    const original=plan();
+    const cloned=clonePlanForProject(original,"new-project");
+    expect(cloned.id).toBe("new-project");
+    expect(cloned.rooms).not.toBe(original.rooms);
+    expect(cloned.rooms[0].polygon).not.toBe(original.rooms[0].polygon);
+  });
+});

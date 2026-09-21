@@ -53,11 +53,22 @@ export async function createProject(name:string){
   return project;
 }
 
+export function inferSourceMime(file:{name:string;type?:string}){
+  const declared=(file.type??"").toLowerCase();
+  if(["application/pdf","image/png","image/jpeg","image/webp"].includes(declared))return declared;
+  const name=file.name.toLowerCase();
+  if(name.endsWith(".pdf"))return "application/pdf";
+  if(name.endsWith(".png"))return "image/png";
+  if(name.endsWith(".jpg")||name.endsWith(".jpeg"))return "image/jpeg";
+  if(name.endsWith(".webp"))return "image/webp";
+  return null;
+}
+
 export function uploadSource(projectId:string,file:File,onProgress:(value:number)=>void):Promise<void>{
   return new Promise((resolve,reject)=>{
     const xhr=new XMLHttpRequest();
     xhr.open("PUT",`${API_BASE}/v1/projects/${projectId}/source?filename=${encodeURIComponent(file.name)}`);
-    xhr.setRequestHeader("content-type",file.type||"application/octet-stream");
+    xhr.setRequestHeader("content-type",inferSourceMime(file)??"application/octet-stream");
     const token=projectToken(projectId);
     if(token)xhr.setRequestHeader("authorization",`Bearer ${token}`);
     xhr.upload.onprogress=e=>{if(e.lengthComputable)onProgress(Math.round(e.loaded/e.total*100));};
@@ -96,3 +107,12 @@ export function saveRevision(id:string,plan:FloorPlanModel,summary:string){
 
 export const listRevisions=(id:string)=>request<{items:RevisionView[]}>(`/v1/projects/${id}/revisions`);
 export const restoreRevision=(id:string,revision:number)=>request<ProjectView>(`/v1/projects/${id}/revisions/${revision}/restore`,{method:"POST"});
+
+
+export async function importProjectBackup(name:string,plan:FloorPlanModel){
+  const project=await createProject(name);
+  const imported:FloorPlanModel={...plan,id:project.id};
+  const ready=await saveRevision(project.id,imported,"استيراد نسخة مشروع");
+  rememberLastProjectId(project.id);
+  return ready;
+}
