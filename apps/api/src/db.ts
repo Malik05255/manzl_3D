@@ -38,3 +38,14 @@ export async function persistPlan(env:Env,id:string,plan:FloorPlanModel,summary:
       .bind(key,revision,"المشروع جاهز للتعديل",now,id)
   ]);
 }
+
+
+export async function persistDraft(env:Env,id:string,plan:FloorPlanModel){
+  const row=await getProjectRow(env,id);
+  if(!row) throw new Error("PROJECT_NOT_FOUND");
+  const key=`projects/${id}/draft/current.json`;
+  await env.ASSETS.put(key,JSON.stringify(plan),{httpMetadata:{contentType:"application/json"}});
+  const now=new Date().toISOString();
+  await env.DB.prepare("UPDATE projects SET plan_key=?, status='ready', phase='ready', progress=100, message=?, error=NULL, updated_at=? WHERE id=?")
+    .bind(key,"تم حفظ المسودة سحابيًا",now,id).run();
+}
