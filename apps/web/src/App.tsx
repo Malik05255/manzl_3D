@@ -226,17 +226,17 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     if(!previous)return;
     setUndoStack(stack=>stack.slice(0,-1));
     setRedoStack(stack=>[...stack.slice(-49),plan]);
-    setPlan(previous);setSelectedWall(null);setWallThicknessCm("");setSelectedRoom(null);setSelectedOpening(null);setPreview(null);setProposals([]);
+    setPlan(previous);setSelectedWall(null);setWallThicknessCm("");setSelectedRoom(null);setSelectedOpening(null);setSelectedDimension(null);setPreview(null);setProposals([]);
   };
   const redoLocal=()=>{
     const next=redoStack.at(-1);
     if(!next)return;
     setRedoStack(stack=>stack.slice(0,-1));
     setUndoStack(stack=>[...stack.slice(-49),plan]);
-    setPlan(next);setSelectedWall(null);setWallThicknessCm("");setSelectedRoom(null);setSelectedOpening(null);setPreview(null);setProposals([]);
+    setPlan(next);setSelectedWall(null);setWallThicknessCm("");setSelectedRoom(null);setSelectedOpening(null);setSelectedDimension(null);setPreview(null);setProposals([]);
   };
   const selectWall=(wallId:string|null)=>{
-    setSelectedWall(wallId);setSelectedRoom(null);setSelectedOpening(null);setPreview(null);setProposals([]);
+    setSelectedWall(wallId);setSelectedRoom(null);setSelectedOpening(null);setSelectedDimension(null);setPreview(null);setProposals([]);
     const wall=plan.walls.find(item=>item.id===wallId);
     if(!wall||!plan.metersPerPixel){setWallThicknessCm("");return;}
     setWallThicknessCm((wall.thicknessPx*plan.metersPerPixel*100).toFixed(1));
@@ -246,7 +246,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     if(!next){setNotice("الجدار قصير جدًا. اختر نقطتين أبعد عن بعضهما.");return;}
     const created=next.walls.find(wall=>!plan.walls.some(existing=>existing.id===wall.id));
     applyLocalPlan(next);
-    setSelectedRoom(null);setSelectedOpening(null);setPreview(null);setProposals([]);
+    setSelectedRoom(null);setSelectedOpening(null);setSelectedDimension(null);setPreview(null);setProposals([]);
     if(created){
       setSelectedWall(created.id);
       setWallThicknessCm(next.metersPerPixel?(created.thicknessPx*next.metersPerPixel*100).toFixed(1):"");
@@ -314,7 +314,7 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     setNotice(wall.locked?"تم فك حماية الجدار. راجع أثر أي تعديل بعناية.":"تمت حماية الجدار من التعديل والحركة.");
   };
   const selectRoom=(roomId:string|null)=>{
-    setSelectedRoom(roomId);setSelectedWall(null);setSelectedOpening(null);setPreview(null);setProposals([]);
+    setSelectedRoom(roomId);setSelectedWall(null);setSelectedOpening(null);setSelectedDimension(null);setPreview(null);setProposals([]);
     const room=plan.rooms.find(item=>item.id===roomId);
     setExactName(room?.name??"");
     if(!room||!plan.metersPerPixel){setExactWidth("");setExactHeight("");return;}
@@ -323,11 +323,16 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     setExactHeight(((Math.max(...ys)-Math.min(...ys))*plan.metersPerPixel).toFixed(2));
   };
   const selectOpening=(openingId:string|null)=>{
-    setSelectedOpening(openingId);setSelectedRoom(null);setSelectedWall(null);setPreview(null);setProposals([]);
+    setSelectedOpening(openingId);setSelectedRoom(null);setSelectedWall(null);setSelectedDimension(null);setPreview(null);setProposals([]);
     if(!openingId){setOpeningWidth("");setOpeningPosition(50);return;}
     const metrics=openingMetrics(plan,openingId);
     setOpeningWidth(metrics?.widthM?.toFixed(2)??"");
     setOpeningPosition(Math.round(metrics?.positionPct??50));
+  };
+  const selectDimension=(dimensionId:string|null)=>{
+    setSelectedDimension(dimensionId);setSelectedRoom(null);setSelectedWall(null);setSelectedOpening(null);setPreview(null);setProposals([]);
+    const dimension=(plan.dimensions??[]).find(item=>item.id===dimensionId);
+    setDimensionValue(dimension?.valueM?.toFixed(2)??"");
   };
   const addOpening=(kind:Opening["kind"])=>{
     if(!selectedWall)return;
@@ -382,10 +387,11 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     if(openingHostProtected(plan,selectedOpening)){setNotice("الفتحة على جدار محمي. فك حماية الجدار أولًا.");return;}
     applyLocalPlan(removeOpening(plan,selectedOpening));setSelectedOpening(null);setOpeningWidth("");setNotice("تم حذف الفتحة محليًا. يمكنك التراجع قبل الحفظ.");
   };
-  const focusReviewItem=(item:{kind:"room"|"wall"|"opening";id:string})=>{
+  const focusReviewItem=(item:{kind:"room"|"wall"|"opening"|"dimension";id:string})=>{
     if(item.kind==="room"){selectRoom(item.id);return;}
     if(item.kind==="wall"){selectWall(item.id);return;}
-    selectOpening(item.id);
+    if(item.kind==="opening"){selectOpening(item.id);return;}
+    selectDimension(item.id);
   };
   const confirmSelectedReading=()=>{
     const item=selectedReviewItem;
@@ -394,14 +400,59 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
       applyLocalPlan({...plan,rooms:plan.rooms.map(room=>room.id===item.id?{...room,reviewed:true}:room)});
     }else if(item.kind==="wall"){
       applyLocalPlan({...plan,walls:plan.walls.map(wall=>wall.id===item.id?{...wall,reviewed:true}:wall)});
-    }else{
+    }else if(item.kind==="opening"){
       applyLocalPlan({
         ...plan,
         doors:plan.doors.map(opening=>opening.id===item.id?{...opening,reviewed:true}:opening),
         windows:plan.windows.map(opening=>opening.id===item.id?{...opening,reviewed:true}:opening),
       });
+    }else{
+      applyLocalPlan({
+        ...plan,
+        dimensions:(plan.dimensions??[]).map(dimension=>dimension.id===item.id?{...dimension,reviewed:true}:dimension),
+      });
     }
     setNotice("تم تأكيد قراءة العنصر. سيُحفظ ضمن المسودة السحابية تلقائيًا.");
+  };
+  const updateSelectedDimensionValue=()=>{
+    if(!selectedDimension)return;
+    const value=Number(dimensionValue.replace(",","."));
+    if(!Number.isFinite(value)||value<=0||value>1000){setNotice("أدخل بعدًا صحيحًا بالمتر بين 0 و1000.");return;}
+    const current=(plan.dimensions??[]).find(item=>item.id===selectedDimension);
+    if(!current)return;
+    applyLocalPlan({
+      ...plan,
+      dimensions:(plan.dimensions??[]).map(item=>item.id===current.id?{
+        ...item,valueM:value,reviewed:true,provenance:manualProvenance(item.provenance)
+      }:item),
+    });
+    setDimensionValue(value.toFixed(2));
+    setNotice("تم تصحيح قيمة البعد مع الاحتفاظ بنص القراءة الأصلي للمراجعة.");
+  };
+  const calibrateFromSelectedDimension=()=>{
+    if(!selectedDimension)return;
+    const dimension=(plan.dimensions??[]).find(item=>item.id===selectedDimension);
+    if(!dimension?.valueM||!dimension.referenceWallId){setNotice("هذا البعد غير مرتبط بجدار واضح. اربطه بصريًا عبر قراءة أخرى أو استخدم المعايرة اليدوية.");return;}
+    const wall=plan.walls.find(item=>item.id===dimension.referenceWallId);
+    if(!wall){setNotice("الجدار المرتبط بالبعد لم يعد موجودًا.");return;}
+    const pixels=Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y);
+    if(pixels<5){setNotice("طول الجدار المرتبط غير صالح للمعايرة.");return;}
+    const mpp=dimension.valueM/pixels;
+    if(!Number.isFinite(mpp)||mpp<=0||mpp>10){setNotice("البعد لا ينتج مقياسًا صالحًا للمخطط.");return;}
+    const rooms=plan.rooms.map(room=>{
+      let area=0;
+      for(let i=0;i<room.polygon.length;i++){const p=room.polygon[i],q=room.polygon[(i+1)%room.polygon.length];area+=p.x*q.y-q.x*p.y;}
+      return {...room,areaM2:Number((Math.abs(area)/2*mpp*mpp).toFixed(2))};
+    });
+    applyLocalPlan({
+      ...plan,
+      metersPerPixel:mpp,
+      calibrationConfidence:1,
+      rooms,
+      dimensions:(plan.dimensions??[]).map(item=>item.id===dimension.id?{...item,reviewed:true,provenance:manualProvenance(item.provenance)}:item),
+      quality:{...plan.quality,needsCalibration:false,dimensions:Math.max(plan.quality.dimensions,.95),warnings:plan.quality.warnings.filter(item=>!item.includes("مقياس")&&!item.includes("معاير"))},
+    });
+    setNotice(`تم تثبيت المقياس من البعد المؤكد ${dimension.valueM.toFixed(2)} م. راجع القياسات ثم احفظ المشروع.`);
   };
   const renameSelectedRoom=()=>{
     const room=plan.rooms.find(item=>item.id===selectedRoom);
