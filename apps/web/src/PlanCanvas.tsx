@@ -331,12 +331,14 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
           const showMetrics=Boolean(renderPlan.metersPerPixel)&&metrics.widthPx>=70&&metrics.heightPx>=55;
           const selected=selectedRoomId===room.id;
           const validationSeverity=validationByRoom.get(room.id);
+          const uncertain=!room.reviewed&&room.confidence<.78;
           return <g key={room.id}>
             <polygon
               points={room.polygon.map(p=>`${p.x},${p.y}`).join(" ")}
-              fill={selected?"rgba(37,99,235,.14)":"rgba(37,99,235,.055)"}
-              stroke={selected?"#2563eb":"rgba(37,99,235,.16)"}
-              strokeWidth={selected?3:1}
+              fill={selected?"rgba(37,99,235,.14)":uncertain?"rgba(217,119,6,.055)":"rgba(37,99,235,.055)"}
+              stroke={selected?"#2563eb":uncertain?"#d97706":"rgba(37,99,235,.16)"}
+              strokeWidth={selected?3:uncertain?2:1}
+              strokeDasharray={!selected&&uncertain?"8 6":undefined}
               className={readonly||calibrationMode||measureMode?undefined:"editable-room"}
               onPointerDown={event=>{if(readonly||calibrationMode||measureMode||panMode)return;event.stopPropagation();onSelectRoom?.(room.id);}}
             />
@@ -359,30 +361,33 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
         })}
         {renderPlan.walls.map(wall=>{
           const severity=validationByWall.get(wall.id);
-          const stroke=selectedWallId===wall.id?"#2563eb":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":severity==="info"?"#2563eb":"#0f172a";
+          const uncertain=!wall.reviewed&&wall.confidence<.72;
+          const stroke=selectedWallId===wall.id?"#2563eb":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":severity==="info"?"#2563eb":uncertain?"#d97706":"#0f172a";
           return <line key={wall.id}
             x1={wall.a.x} y1={wall.a.y} x2={wall.b.x} y2={wall.b.y}
             stroke={stroke}
             strokeWidth={Math.max(wall.thicknessPx,selectedWallId===wall.id?5:severity==="critical"?5:3)}
             strokeLinecap="round" className={readonly||calibrationMode||measureMode?undefined:"editable-wall"}
-            strokeDasharray={severity&&!selectedWallId?severity==="critical"?"14 6":"10 6":undefined}
+            strokeDasharray={severity&&!selectedWallId?severity==="critical"?"14 6":"10 6":uncertain&&!selectedWallId?"7 5":undefined}
             onPointerDown={e=>{if(readonly||calibrationMode||measureMode||panMode)return;e.currentTarget.setPointerCapture(e.pointerId);onSelectOpening?.(null);onSelectWall?.(wall.id);setDrag({wallId:wall.id,startClient:{x:e.clientX,y:e.clientY},original:wall,basePlan:plan,changed:false});}}
           />;
         })}
         {renderPlan.doors.map(o=>{
           const severity=validationByOpening.get(o.id);
-          const stroke=selectedOpeningId===o.id?"#1d4ed8":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":"#0ea5e9";
+          const uncertain=!o.reviewed&&o.confidence<.84;
+          const stroke=selectedOpeningId===o.id?"#1d4ed8":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":uncertain?"#d97706":"#0ea5e9";
           return <g key={o.id} className={readonly||calibrationMode||measureMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode||measureMode||panMode)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
             {!readonly&&!calibrationMode&&<line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="transparent" strokeWidth={18}/>}
-            <line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke={stroke} strokeWidth={selectedOpeningId===o.id?7:severity==="critical"?6:4} strokeLinecap="round" strokeDasharray={severity&&!selectedOpeningId?"9 5":undefined}/>
+            <line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke={stroke} strokeWidth={selectedOpeningId===o.id?7:severity==="critical"?6:4} strokeLinecap="round" strokeDasharray={severity&&!selectedOpeningId?"9 5":uncertain&&!selectedOpeningId?"7 5":undefined}/>
           </g>;
         })}
         {renderPlan.windows.map(o=>{
           const severity=validationByOpening.get(o.id);
-          const stroke=selectedOpeningId===o.id?"#1d4ed8":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":"#38bdf8";
+          const uncertain=!o.reviewed&&o.confidence<.84;
+          const stroke=selectedOpeningId===o.id?"#1d4ed8":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":uncertain?"#d97706":"#38bdf8";
           return <g key={o.id} className={readonly||calibrationMode||measureMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode||measureMode||panMode)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
             {!readonly&&!calibrationMode&&<line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="transparent" strokeWidth={18}/>}
-            <line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke={stroke} strokeWidth={selectedOpeningId===o.id?6:severity==="critical"?5:3} strokeLinecap="round" strokeDasharray={severity&&!selectedOpeningId?"9 5":undefined}/>
+            <line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke={stroke} strokeWidth={selectedOpeningId===o.id?6:severity==="critical"?5:3} strokeLinecap="round" strokeDasharray={severity&&!selectedOpeningId?"9 5":uncertain&&!selectedOpeningId?"7 5":undefined}/>
           </g>;
         })}
         {measurement!==null&&measurePoints.length===2&&<g pointerEvents="none">
