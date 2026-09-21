@@ -31,6 +31,13 @@ def classify_text(text:str)->str:
     if any(word in low for word in ROOM_WORDS): return "room_name"
     if re.search(r"(m\s*[²2]|م\s*[²2]|متر\s*مربع)",low): return "note"
     if re.search(r"\d+(?:\.\d+)?\s*(?:m|م|متر)\b",low) or re.search(r"\d+(?:\.\d+)?\s*[x×*]\s*\d+(?:\.\d+)?",low): return "dimension"
+    if re.fullmatch(r"\s*\d+\.\d+\s*",low):
+        try:
+            value=float(low.strip())
+            if 0.4<=value<=50:
+                return "dimension"
+        except ValueError:
+            pass
     if re.search(r"\d+(?:\.\d+)?",low): return "unknown"
     return "note" if len(low)>2 else "unknown"
 

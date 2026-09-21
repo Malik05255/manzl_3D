@@ -1,0 +1,60 @@
+from app.scale import estimate_scale
+
+
+def wall(wall_id,x1,y1,x2,y2):
+    return {
+        "id":wall_id,
+        "a":{"x":float(x1),"y":float(y1)},
+        "b":{"x":float(x2),"y":float(y2)},
+        "thicknessPx":8.0,
+        "confidence":0.9,
+    }
+
+
+def label(label_id,text,x,y,kind="dimension"):
+    return {
+        "id":label_id,
+        "text":text,
+        "center":{"x":float(x),"y":float(y)},
+        "confidence":0.9,
+        "kind":kind,
+    }
+
+
+def test_single_unitless_number_does_not_calibrate_plan():
+    scale,confidence=estimate_scale(
+        [label("l1","4.00",250,90)],
+        [wall("w1",50,100,450,100)],
+        1000,
+        800,
+    )
+    assert scale is None
+    assert confidence is None
+
+
+def test_consistent_unitless_dimensions_can_calibrate_plan():
+    scale,confidence=estimate_scale(
+        [
+            label("l1","4.00",250,90),
+            label("l2","6.00",350,290),
+        ],
+        [
+            wall("w1",50,100,450,100),
+            wall("w2",50,300,650,300),
+        ],
+        1000,
+        800,
+    )
+    assert round(scale,4)==0.01
+    assert confidence is not None and confidence>=0.6
+
+
+def test_single_explicit_metric_dimension_is_allowed():
+    scale,confidence=estimate_scale(
+        [label("l1","4.00 m",250,90)],
+        [wall("w1",50,100,450,100)],
+        1000,
+        800,
+    )
+    assert round(scale,4)==0.01
+    assert confidence is not None and confidence>=0.55
