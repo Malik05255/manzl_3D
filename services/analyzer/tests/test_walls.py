@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.walls import _estimate_thickness,add_vector_wall_candidates,enrich_walls_with_vector,rasterize_wall_mask
+from app.walls import _estimate_thickness,_merge_near_collinear_candidates,add_vector_wall_candidates,enrich_walls_with_vector,rasterize_wall_mask
 
 
 def test_estimates_filled_horizontal_wall_thickness():
@@ -159,3 +159,39 @@ def test_raster_detector_finds_double_line_slanted_wall():
     ]
     assert slanted
     assert any(wall["confidence"]>=.85 for wall in slanted)
+
+
+
+def test_merges_tiny_slanted_fragments_but_preserves_opening_gap():
+    fragments=[
+        {
+            "a":{"x":100.0,"y":100.0},
+            "b":{"x":220.0,"y":190.0},
+            "thicknessPx":10.0,
+            "confidence":.88,
+            "provenance":"opencv",
+        },
+        {
+            "a":{"x":224.0,"y":193.0},
+            "b":{"x":350.0,"y":287.5},
+            "thicknessPx":10.0,
+            "confidence":.90,
+            "provenance":"opencv",
+        },
+    ]
+    merged=_merge_near_collinear_candidates(fragments)
+    assert len(merged)==1
+    assert merged[0]["confidence"]==.9
+    assert merged[0]["b"]["x"]>340
+
+    opening_gap=[
+        fragments[0],
+        {
+            "a":{"x":280.0,"y":235.0},
+            "b":{"x":410.0,"y":332.5},
+            "thicknessPx":10.0,
+            "confidence":.9,
+            "provenance":"opencv",
+        },
+    ]
+    assert len(_merge_near_collinear_candidates(opening_gap))==2
