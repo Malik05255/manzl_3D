@@ -301,10 +301,10 @@ def test_parallel_wall_band_collapse_does_not_bridge_opening_gap():
 
 
 
-def test_dimension_aligned_vector_candidate_is_quarantined():
+def test_dimension_aligned_thin_vector_candidate_is_quarantined():
     vectors=[
-        {"a":{"x":100.0,"y":100.0},"b":{"x":500.0,"y":100.0},"widthPx":1.5},
-        {"a":{"x":100.0,"y":112.0},"b":{"x":500.0,"y":112.0},"widthPx":1.5},
+        {"a":{"x":100.0,"y":100.0},"b":{"x":500.0,"y":100.0},"widthPx":1.0},
+        {"a":{"x":100.0,"y":104.0},"b":{"x":500.0,"y":104.0},"widthPx":1.0},
     ]
     labels=[{
         "text":"4.00 m",
@@ -419,3 +419,20 @@ def test_thin_pdf_vector_quarantines_wall_even_when_raster_thickness_is_inflated
     )
     assert quarantined=={"inflated-dimension-line"}
     assert walls[0]["confidence"]<=.64
+
+
+
+def test_thick_vector_wall_near_dimension_text_keeps_high_confidence():
+    vectors=[
+        {"a":{"x":100.0,"y":180.0},"b":{"x":700.0,"y":180.0},"widthPx":10.0},
+        {"a":{"x":120.0,"y":260.0},"b":{"x":300.0,"y":260.0},"widthPx":1.2},
+    ]
+    labels=[{
+        "text":"6.00 m",
+        "center":{"x":400.0,"y":160.0},
+        "confidence":.98,
+        "kind":"dimension",
+    }]
+    result=add_vector_wall_candidates([],vectors,900,1200,labels=labels)
+    wall=next(item for item in result if item["a"]["y"]==item["b"]["y"]==180.0)
+    assert wall["confidence"]>=.90
