@@ -7,7 +7,7 @@ from pydantic import BaseModel,HttpUrl
 from .commands import find_target_room,parse_target_size
 from .document import decode_document_with_page,preprocess
 from .edits import build_proposals,build_resize_proposals
-from .models import EditRequest,FloorPlan,ProposalResponse,ResizeRequest
+from .models import EditRequest,FloorPlan,ProposalResponse,ResizeRequest,ValidationReport,ValidationRequest
 from .ocr import extract_ocr_labels
 from .openings import detect_doors
 from .pipeline import assemble_plan
@@ -15,6 +15,7 @@ from .rooms import detect_rooms
 from .scale import estimate_scale
 from .semantic import normalize_edit_semantics
 from .walls import detect_walls
+from .validation import validate_plan
 
 app=FastAPI(title="Manzil H Analyzer",version="0.1.0")
 
@@ -115,3 +116,9 @@ async def resize_proposals(req:ResizeRequest,x_manzil_internal:str|None=Header(d
         return ProposalResponse(command="تعديل دقيق",proposals=[],needsClarification="الغرفة المحددة لم تعد موجودة في المخطط.")
     command=f"عدل {target.name} إلى {req.width_m:g}×{req.height_m:g}"
     return build_resize_proposals(req.plan,target,req.width_m,req.height_m,command)
+
+
+@app.post("/v1/validate",response_model=ValidationReport)
+async def validate(req:ValidationRequest,x_manzil_internal:str|None=Header(default=None)):
+    authorize(x_manzil_internal)
+    return validate_plan(req.plan)

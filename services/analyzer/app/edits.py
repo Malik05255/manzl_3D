@@ -3,6 +3,7 @@ from itertools import product
 from .commands import find_target_room,normalize_arabic,resolve_target_size
 from .edit_geometry import apply_side,bbox,is_rectangular_room,minimum_clear_span_m
 from .models import EditRequest,FloorPlan,Impact,Proposal,ProposalResponse,Room
+from .validation import validate_plan
 
 SERVICE_ROOM_WORDS=("حمام","دوره مياه","دورة مياه","مطبخ","درج","مصعد","غسيل")
 
@@ -87,18 +88,26 @@ def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:fl
         else:
             title=f"التعديل باتجاه {dirs}"
 
+        validation=validate_plan(candidate)
+        if any(finding.severity=="critical" for finding in validation.findings):
+            continue
+
         warnings=[]
         if target_size_warning:
             warnings.append(target_size_warning)
         if service_rooms:
             warnings.append(f"هذا الخيار يغيّر فراغ خدمة: {' و'.join(service_rooms)}.")
-        penalty=0.14*len(service_rooms)+0.04*max(0,len(affected)-1)
+        warnings.extend(finding.text for finding in validation.findings if finding.severity=="warning")
+        warnings=list(dict.fromkeys(warnings))
+        validation_penalty=max(0.0,1.0-validation.score)*0.35
+        penalty=0.14*len(service_rooms)+0.04*max(0,len(affected)-1)+validation_penalty
         confidence=max(0.55,min(0.95,plan.quality.overall-penalty))
         proposal=Proposal(
             id=proposal_id,
             title=title,
             summary=summary,
             confidence=confidence,
+            validationScore=validation.score,
             impacts=[
                 Impact(
                     kind="room_resize",

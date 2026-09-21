@@ -86,6 +86,7 @@ class Proposal(BaseModel):
     title: str
     summary: str
     confidence: float
+    validationScore: float = Field(default=1.0, ge=0, le=1)
     impacts: list[Impact]
     warnings: list[str]
     previewPlan: FloorPlan
@@ -94,3 +95,18 @@ class ProposalResponse(BaseModel):
     command: str
     proposals: list[Proposal]
     needsClarification: str | None = None
+
+
+class ValidationFinding(BaseModel):
+    code: str
+    severity: Literal["info", "warning", "critical"]
+    text: str
+    roomIds: list[str] = []
+
+class ValidationReport(BaseModel):
+    score: float = Field(ge=0, le=1)
+    findings: list[ValidationFinding] = []
+
+class ValidationRequest(BaseModel):
+    project_id: str
+    plan: FloorPlan

@@ -66,6 +66,7 @@ export interface EditProposal {
   title: string;
   summary: string;
   confidence: number;
+  validationScore?: number;
   impacts: ProposalImpact[];
   warnings: string[];
   previewPlan: FloorPlanModel;
@@ -78,3 +79,14 @@ export interface EditProposalResponse {
 export interface ApplyProposalRequest { command: string; proposal: EditProposal; }
 export interface SaveRevisionRequest { summary: string; plan: FloorPlanModel; }
 export interface RevisionView { revision: number; summary: string; createdAt: string; }
+
+export interface ValidationFinding {
+  code: string;
+  severity: "info" | "warning" | "critical";
+  text: string;
+  roomIds: string[];
+}
+export interface ValidationReport {
+  score: number;
+  findings: ValidationFinding[];
+}
