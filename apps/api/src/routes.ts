@@ -176,7 +176,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const id=validateMatch[1];
     const secured=await protectedRow(request,env,id);
     if(secured instanceof Response) return secured;
-    const body=await request.json<{plan?:FloorPlanModel}>().catch(()=>({}));
+    const body:{plan?:FloorPlanModel}=await request.json<{plan?:FloorPlanModel}>().catch(()=>({}));
     const stored=await currentPlan(env,secured);
     const plan=body.plan??stored;
     if(!plan) return json({error:"المخطط غير جاهز للفحص"},409);
