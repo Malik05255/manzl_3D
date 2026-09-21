@@ -14,7 +14,8 @@ cd services/analyzer
 PYTHONPATH=. python -m app.aec_benchmark \
   --dataset /path/to/aec-geometric-bench/dataset \
   --output /tmp/manzil-aec15 \
-  --scorer /path/to/aec-geometric-bench/scoring/score.py
+  --scorer /path/to/aec-geometric-bench/scoring/score.py \
+  --report-json /tmp/manzil-aec15-report.json
 ```
 
 For a quick development pass, add `--limit 1` or `--limit 3`.
@@ -34,6 +35,8 @@ The analyzer now supports an optional server-side architectural symbol detector 
 `services/analyzer/tests/test_workflow_e2e.py` generates a deterministic vector PDF, runs document analysis, asks H Engineer for a preview, canonicalizes and validates the result, serializes a saved snapshot, then restores the baseline snapshot.
 
 It runs in the normal CI analyzer job.
+
+The normal CI also includes a **full local black-box E2E** job. It starts a real local Cloudflare Worker with D1, R2 and Queue bindings plus the FastAPI Analyzer, applies all D1 migrations, uploads a generated PDF through the public API, waits for queue analysis, requests an H Engineer preview, applies it, verifies revision history, and restores the previous revision. This catches integration failures that unit tests cannot see.
 
 ## Staging black-box E2E
 
@@ -82,6 +85,6 @@ Supported kinds are `sink`, `toilet`, `bathtub`, `shower`, `cooktop`, and `stair
 
 ## GitHub Actions real benchmark
 
-Run the manual workflow **AEC Real Drawing Benchmark** and choose a limit from 1 to 15. It checks out the released benchmark into the ephemeral GitHub runner, runs Manzil H, executes the official scorer, writes the score into the workflow summary, and uploads predictions plus the score as an artifact.
+Run the manual workflow **AEC Real Drawing Benchmark**, confirm that the dataset licence permits the run, and choose a limit from 1 to 15. It records both the Manzil H and dataset commit SHAs, checks out the released benchmark into the ephemeral GitHub runner, runs Manzil H, executes the official scorer, writes the score into the workflow summary, and uploads predictions plus both `score.txt` and machine-readable `report.json` as artifacts.
 
 If the repository secrets `SYMBOL_DETECTOR_URL` and `SYMBOL_DETECTOR_TOKEN` are configured, fixture classes are evaluated through the same server-side symbol detector. If they are absent, the workflow intentionally measures the geometry/opening baseline without inventing fixture detections.
