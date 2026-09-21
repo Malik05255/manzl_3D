@@ -131,32 +131,20 @@ def test_dimension_line_does_not_split_room_topology():
         filename="dimension-line.pdf",
     )
 
-    suspicious=[
-        wall for wall in prediction["walls"]
-        if wall["confidence"]<=.64
-        and abs(wall["a"]["y"]-wall["b"]["y"])<4
-        and min(wall["a"]["y"],wall["b"]["y"])>300
-    ]
-    assert suspicious,{
-        "walls":[
-            (
-                wall["id"],
-                wall["a"],
-                wall["b"],
-                wall["thicknessPx"],
-                wall["confidence"],
-                wall.get("provenance"),
-            )
-            for wall in prediction["walls"]
-        ],
-        "labels":[
-            (label["text"],label["center"],label["kind"],label["confidence"])
-            for label in prediction["labels"]
-        ],
-        "dimensions":prediction.get("dimensions",[]),
-    }
+    assert any(
+        dimension.get("valueM") is not None
+        and abs(float(dimension["valueM"])-4.0)<.01
+        for dimension in prediction.get("dimensions",[])
+    ),prediction.get("dimensions",[])
     assert len(prediction["rooms"])==1,prediction["rooms"]
-    assert not (
-        set(prediction["rooms"][0].get("boundaryWallIds",[]))
-        & {wall["id"] for wall in suspicious}
-    )
+
+    boundary_ids=set(prediction["rooms"][0].get("boundaryWallIds",[]))
+    boundary_walls=[
+        wall for wall in prediction["walls"]
+        if wall["id"] in boundary_ids
+    ]
+    assert not any(
+        abs(wall["a"]["y"]-wall["b"]["y"])<4
+        and abs(((wall["a"]["y"]+wall["b"]["y"])/2)-(160*PDF_RENDER_SCALE))<24
+        for wall in boundary_walls
+    ),boundary_walls
