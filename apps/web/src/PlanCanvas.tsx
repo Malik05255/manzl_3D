@@ -1,5 +1,5 @@
 import { useEffect,useMemo,useRef,useState } from "react";
-import type { FloorPlanModel,Point,ValidationFinding,Wall } from "@manzil/contracts";
+import type { ElementProvenance,FloorPlanModel,Point,ValidationFinding,Wall } from "@manzil/contracts";
 import { Hand,Magnet,Minus,Plus,RotateCcw,Ruler } from "lucide-react";
 import { easePreview,interpolatePlan } from "./previewInterpolation";
 
@@ -27,6 +27,10 @@ type PanDragState={pointerId:number;startClient:Point;scrollLeft:number;scrollTo
 
 function overlap(a1:number,a2:number,b1:number,b2:number){
   return Math.max(0,Math.min(a2,b2)-Math.max(a1,b1));
+}
+
+function manualProvenance(value?:ElementProvenance):ElementProvenance{
+  return value?"mixed":"manual";
 }
 
 export function snapAxis(value:number,metersPerPixel?:number|null,stepM=.05){
@@ -100,9 +104,10 @@ export function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall)
 
   const walls=plan.walls.map(wall=>{
     if(movedWallIds.has(wall.id)){
+      const metadata={reviewed:wall.id===original.id?true:wall.reviewed,provenance:manualProvenance(wall.provenance)};
       return vertical
-        ?{...wall,a:{...wall.a,x:wall.a.x+delta},b:{...wall.b,x:wall.b.x+delta}}
-        :{...wall,a:{...wall.a,y:wall.a.y+delta},b:{...wall.b,y:wall.b.y+delta}};
+        ?{...wall,...metadata,a:{...wall.a,x:wall.a.x+delta},b:{...wall.b,x:wall.b.x+delta}}
+        :{...wall,...metadata,a:{...wall.a,y:wall.a.y+delta},b:{...wall.b,y:wall.b.y+delta}};
     }
 
     const wallVertical=Math.abs(wall.a.x-wall.b.x)<=Math.abs(wall.a.y-wall.b.y);
@@ -110,10 +115,14 @@ export function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall)
 
     if(vertical){
       const movePoint=(point:Point)=>Math.abs(point.x-oldAxis)<=tolerance&&point.y>=span1-tolerance&&point.y<=span2+tolerance?{...point,x:axis}:point;
-      return {...wall,a:movePoint(wall.a),b:movePoint(wall.b)};
+      const a=movePoint(wall.a),b=movePoint(wall.b);
+      const changed=a!==wall.a||b!==wall.b;
+      return changed?{...wall,a,b,provenance:manualProvenance(wall.provenance)}:wall;
     }
     const movePoint=(point:Point)=>Math.abs(point.y-oldAxis)<=tolerance&&point.x>=span1-tolerance&&point.x<=span2+tolerance?{...point,y:axis}:point;
-    return {...wall,a:movePoint(wall.a),b:movePoint(wall.b)};
+    const a=movePoint(wall.a),b=movePoint(wall.b);
+    const changed=a!==wall.a||b!==wall.b;
+    return changed?{...wall,a,b,provenance:manualProvenance(wall.provenance)}:wall;
   });
 
   const rooms=plan.rooms.map(room=>{
@@ -130,13 +139,15 @@ export function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall)
       if(!vertical&&Math.abs(point.y-oldAxis)<=tolerance) return {...point,y:axis};
       return point;
     });
-    return {...room,polygon,areaM2:plan.metersPerPixel?Number((polygonArea(polygon)*plan.metersPerPixel*plan.metersPerPixel).toFixed(2)):room.areaM2};
+    return {...room,polygon,areaM2:plan.metersPerPixel?Number((polygonArea(polygon)*plan.metersPerPixel*plan.metersPerPixel).toFixed(2)):room.areaM2,provenance:manualProvenance(room.provenance)};
   });
 
   const openings=[...plan.doors,...plan.windows];
   const movedOpenings=new Map(openings.filter(o=>o.wallId&&movedWallIds.has(o.wallId)).map(o=>[
     o.id,
-    vertical?{...o,a:{...o.a,x:o.a.x+delta},b:{...o.b,x:o.b.x+delta}}:{...o,a:{...o.a,y:o.a.y+delta},b:{...o.b,y:o.b.y+delta}}
+    vertical
+      ?{...o,a:{...o.a,x:o.a.x+delta},b:{...o.b,x:o.b.x+delta},provenance:manualProvenance(o.provenance)}
+      :{...o,a:{...o.a,y:o.a.y+delta},b:{...o.b,y:o.b.y+delta},provenance:manualProvenance(o.provenance)}
   ]));
 
   return {
