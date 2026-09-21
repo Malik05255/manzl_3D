@@ -86,3 +86,28 @@ it("marks manually moved topology as reviewed mixed provenance",()=>{
   expect(next.rooms[0].provenance).toBe("mixed");
   expect(next.doors[0].provenance).toBe("mixed");
 });
+
+
+it("moves a slanted wall as a rigid segment and keeps connected topology attached",()=>{
+  const source:FloorPlanModel={
+    schemaVersion:1,id:"diag",widthPx:500,heightPx:400,metersPerPixel:.01,calibrationConfidence:1,
+    walls:[
+      {id:"diag",a:{x:100,y:100},b:{x:250,y:250},thicknessPx:8,confidence:.9,provenance:"opencv"},
+      {id:"connected",a:{x:250,y:250},b:{x:350,y:250},thicknessPx:8,confidence:.9,provenance:"opencv"},
+    ],
+    rooms:[{id:"r",name:"R",polygon:[{x:100,y:100},{x:250,y:250},{x:350,y:100}],confidence:.9,areaM2:1.875,provenance:"opencv"}],
+    doors:[{id:"door",kind:"door",wallId:"diag",a:{x:160,y:160},b:{x:200,y:200},confidence:.9,provenance:"opencv"}],
+    windows:[],labels:[],
+    quality:{overall:.9,walls:.9,rooms:.9,text:.9,dimensions:.9,needsCalibration:false,warnings:[]},
+    source:{fileName:"x.png",mimeType:"image/png",page:1},
+  };
+  const original=source.walls[0];
+  const next=moveWallAndTopology(source,original,{...original,a:{x:120,y:80},b:{x:270,y:230}});
+  const moved=next.walls.find(item=>item.id==="diag")!;
+  expect(moved.b.x-moved.a.x).toBeCloseTo(150,6);
+  expect(moved.b.y-moved.a.y).toBeCloseTo(150,6);
+  expect(next.walls.find(item=>item.id==="connected")!.a).toEqual({x:270,y:230});
+  expect(next.doors[0].a).toEqual({x:180,y:140});
+  expect(next.rooms[0].polygon[0]).toEqual({x:120,y:80});
+  expect(next.rooms[0].polygon[1]).toEqual({x:270,y:230});
+});
