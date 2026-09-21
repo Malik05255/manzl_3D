@@ -104,5 +104,18 @@ export function calibratePlanFromSpan(plan:FloorPlanModel,valueM:number,a:Point,
 export function calibratePlanFromDimensionSpan(plan:FloorPlanModel,dimensionId:string,a:Point,b:Point):FloorPlanModel|null{
   const dimension=(plan.dimensions??[]).find(item=>item.id===dimensionId);
   if(!dimension?.reviewed||!dimension.valueM)return null;
-  return calibratePlanFromSpan(plan,dimension.valueM,a,b);
+  const calibrated=calibratePlanFromSpan(plan,dimension.valueM,a,b);
+  if(!calibrated)return null;
+  const orientation=Math.abs(b.x-a.x)>=Math.abs(b.y-a.y)?"horizontal":"vertical";
+  return {
+    ...calibrated,
+    dimensions:(calibrated.dimensions??[]).map(item=>item.id===dimensionId?{
+      ...item,
+      spanA:{...a},
+      spanB:{...b},
+      orientation,
+      reviewed:true,
+      provenance:manualProvenance(item.provenance),
+    }:item),
+  };
 }
