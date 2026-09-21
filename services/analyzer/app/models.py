@@ -53,6 +53,19 @@ class PlanLabel(BaseModel):
     reviewed: bool = False
     provenance: ElementProvenance | None = None
 
+class Dimension(BaseModel):
+    id: str
+    sourceLabelId: str | None = None
+    text: str
+    center: Point
+    valueM: float | None = Field(default=None, gt=0, le=1000)
+    unit: Literal["m","cm","mm","unknown"] = "unknown"
+    orientation: Literal["horizontal","vertical","unknown"] = "unknown"
+    referenceWallId: str | None = None
+    confidence: float = Field(ge=0, le=1)
+    reviewed: bool = False
+    provenance: ElementProvenance | None = None
+
 class AnalysisMetadata(BaseModel):
     pipelineVersion: str
     analyzedAt: str
@@ -86,6 +99,7 @@ class FloorPlan(BaseModel):
     doors: list[Opening] = []
     windows: list[Opening] = []
     labels: list[PlanLabel]
+    dimensions: list[Dimension] = []
     quality: Quality
     source: Source
     analysis: AnalysisMetadata | None = None
