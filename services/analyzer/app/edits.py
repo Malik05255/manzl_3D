@@ -5,6 +5,7 @@ from .edit_geometry import absorb_neighbor,adjacent,apply_side,bbox,is_orthogona
 from .element_edits import build_selected_element_proposals
 from .models import EditRequest,FloorPlan,Impact,Proposal,ProposalResponse,Room
 from .provenance import mark_ai_changes
+from .topology import relink_plan_boundaries
 from .validation import validate_plan
 
 SERVICE_ROOM_WORDS=("حمام","دوره مياه","دورة مياه","مطبخ","درج","مصعد","غسيل")
@@ -51,6 +52,7 @@ def _absorb_service_alternative(plan:FloorPlan,target:Room,target_w:float,target
         ok,impacts=absorb_neighbor(candidate,candidate_target,service,side,delta,mpp)
         if not ok:
             continue
+        relink_plan_boundaries(candidate)
         mark_ai_changes(plan,candidate)
         validation=validate_plan(candidate)
         if any(item.severity=="critical" for item in validation.findings):
@@ -163,6 +165,7 @@ def build_resize_proposals(plan:FloorPlan,target:Room,target_w:float,target_h:fl
         else:
             title=f"التعديل باتجاه {dirs}"
 
+        relink_plan_boundaries(candidate)
         mark_ai_changes(plan,candidate)
         validation=validate_plan(candidate)
         if any(finding.severity=="critical" for finding in validation.findings):
@@ -254,6 +257,7 @@ def build_merge_proposal(plan:FloorPlan,source:Room,target:Room,command:str)->Pr
             needsClarification="لا يمكن دمج الغرفتين تلقائيًا دون إنشاء شكل غير منتظم أو فراغ غير مغطى. استخدم التعديل اليدوي لهذه الحالة.",
         )
 
+    relink_plan_boundaries(candidate)
     mark_ai_changes(plan,candidate)
     validation=validate_plan(candidate)
     if any(item.severity=="critical" for item in validation.findings):
