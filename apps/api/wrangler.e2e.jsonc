@@ -1,0 +1,31 @@
+{
+  "name":"manzil-h-api-e2e",
+  "main":"src/index.ts",
+  "compatibility_date":"2026-09-20",
+  "vars":{
+    "ANALYZER_URL":"http://127.0.0.1:8080",
+    "API_PUBLIC_URL":"http://127.0.0.1:8787",
+    "INTERNAL_TOKEN":"e2e-internal-token",
+    "APP_VERSION":"e2e",
+    "ALLOWED_ORIGIN":"http://127.0.0.1:4173"
+  },
+  "d1_databases":[
+    {
+      "binding":"DB",
+      "database_name":"manzil-h-e2e",
+      "database_id":"00000000-0000-0000-0000-000000000001",
+      "migrations_dir":"migrations"
+    }
+  ],
+  "r2_buckets":[
+    {"binding":"ASSETS","bucket_name":"manzil-h-e2e-assets"}
+  ],
+  "queues":{
+    "producers":[
+      {"binding":"ANALYZE_QUEUE","queue":"manzil-h-e2e-analysis"}
+    ],
+    "consumers":[
+      {"queue":"manzil-h-e2e-analysis","max_batch_size":1,"max_batch_timeout":1}
+    ]
+  }
+}
