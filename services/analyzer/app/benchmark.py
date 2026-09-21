@@ -105,6 +105,51 @@ def _room_metrics(predicted:list[dict],truth:list[dict],iou_threshold:float)->di
     return result
 
 
+def _symbol_box_iou(left:dict,right:dict)->float:
+    try:
+        lax,lay=_point(left,"a"); lbx,lby=_point(left,"b")
+        rax,ray=_point(right,"a"); rbx,rby=_point(right,"b")
+    except (KeyError,TypeError,ValueError):
+        return 0.0
+    lx1,lx2=sorted((lax,lbx)); ly1,ly2=sorted((lay,lby))
+    rx1,rx2=sorted((rax,rbx)); ry1,ry2=sorted((ray,rby))
+    intersection=max(0.0,min(lx2,rx2)-max(lx1,rx1))*max(0.0,min(ly2,ry2)-max(ly1,ry1))
+    if intersection<=0:
+        return 0.0
+    left_area=max(0.0,lx2-lx1)*max(0.0,ly2-ly1)
+    right_area=max(0.0,rx2-rx1)*max(0.0,ry2-ry1)
+    union=left_area+right_area-intersection
+    return intersection/union if union>0 else 0.0
+
+
+def _symbol_metrics(predicted:list[dict],truth:list[dict],iou_threshold:float=.50)->tuple[dict,dict]:
+    kinds=sorted({
+        str(item.get("kind",""))
+        for item in [*predicted,*truth]
+        if str(item.get("kind",""))
+    })
+    by_kind={}
+    total_tp=0
+    for kind in kinds:
+        pred=[item for item in predicted if str(item.get("kind",""))==kind]
+        expected=[item for item in truth if str(item.get("kind",""))==kind]
+        remaining=set(range(len(expected)))
+        matches=0
+        for item in pred:
+            best=None
+            for index in remaining:
+                score=_symbol_box_iou(item,expected[index])
+                if score>=iou_threshold and (best is None or score>best[0]):
+                    best=(score,index)
+            if best is not None:
+                remaining.remove(best[1])
+                matches+=1
+        by_kind[kind]=_metrics(matches,len(pred),len(expected))
+        total_tp+=matches
+    aggregate=_metrics(total_tp,len(predicted),len(truth))
+    return aggregate,by_kind
+
+
 def _dimension_distance(left:dict,right:dict,tolerance_px:float)->float|None:
     lv=left.get("valueM"); rv=right.get("valueM")
     if lv is None or rv is None:
@@ -168,10 +213,18 @@ def evaluate_floor_plan(
     )
     rooms=_room_metrics(prediction.get("rooms",[]),truth.get("rooms",[]),room_iou_threshold)
     dimensions=_dimension_metrics(prediction.get("dimensions",[]),truth.get("dimensions",[]),tolerance_px)
+    symbols,symbol_classes=_symbol_metrics(
+        prediction.get("symbols",[]),
+        truth.get("symbols",[]),
+    )
     categories={"walls":walls,"rooms":rooms,"openings":openings,"dimensions":dimensions}
+    if prediction.get("symbols") or truth.get("symbols"):
+        categories["symbols"]=symbols
     macro_f1=sum(float(item["f1"]) for item in categories.values())/len(categories)
     return {
         **categories,
+        "symbols":symbols,
+        "symbolClasses":symbol_classes,
         "doors":doors,
         "windows":windows,
         "macroF1":round(macro_f1,4),
