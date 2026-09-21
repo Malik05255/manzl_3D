@@ -17,7 +17,7 @@ from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
 from .topology import canonicalize_plan,classify_wall_roles,link_room_boundaries
 from .semantic import normalize_edit_semantics
-from .walls import detect_walls,enrich_walls_with_vector
+from .walls import detect_walls,enrich_walls_with_vector,rasterize_wall_mask
 from .validation import validate_plan
 
 app=FastAPI(title="Manzil H Analyzer",version="0.1.0")
@@ -137,9 +137,10 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     doors=detect_doors(image,walls,scale)
     windows=detect_windows(image,walls,scale)
     walls,doors,windows=normalize_opening_hosts(walls,doors,windows)
+    room_barrier_mask=rasterize_wall_mask(walls,h,w,wall_mask)
 
     await progress(req.callback_url,req.project_id,"rooms",78,"فهم الغرف والعلاقات")
-    rooms=detect_rooms(wall_mask,labels,scale)
+    rooms=detect_rooms(room_barrier_mask,labels,scale)
     link_room_boundaries(rooms,walls)
     classify_wall_roles(walls,rooms)
 
