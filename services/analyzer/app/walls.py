@@ -139,6 +139,123 @@ def enrich_walls_with_vector(walls:list[dict],vector_lines:list[dict])->list[dic
     return result
 
 
+def add_vector_wall_candidates(walls:list[dict],vector_lines:list[dict],height:int,width:int)->list[dict]:
+    """Add only high-confidence vector wall centerlines supported by a close parallel pair.
+
+    A single PDF vector line is not enough evidence because dimension and guide
+    lines are common in architectural drawings. Parallel-pair evidence is a
+    conservative signal for double-line walls.
+    """
+    if not vector_lines:
+        return walls
+
+    min_side=float(max(1,min(height,width)))
+    min_length=max(45.0,min_side*0.04)
+    max_separation=max(10.0,min(42.0,min_side*0.025))
+
+    def orientation(line:dict)->str:
+        dx=abs(float(line["b"]["x"])-float(line["a"]["x"]))
+        dy=abs(float(line["b"]["y"])-float(line["a"]["y"]))
+        return "h" if dx>=dy else "v"
+
+    def ordered(line:dict,axis:str)->tuple[float,float,float]:
+        if axis=="h":
+            return (
+                min(float(line["a"]["x"]),float(line["b"]["x"])),
+                max(float(line["a"]["x"]),float(line["b"]["x"])),
+                (float(line["a"]["y"])+float(line["b"]["y"]))/2,
+            )
+        return (
+            min(float(line["a"]["y"]),float(line["b"]["y"])),
+            max(float(line["a"]["y"]),float(line["b"]["y"])),
+            (float(line["a"]["x"])+float(line["b"]["x"]))/2,
+        )
+
+    candidates=[]
+    for index,left in enumerate(vector_lines):
+        axis=orientation(left)
+        ls,le,la=ordered(left,axis)
+        llen=le-ls
+        if llen<min_length:
+            continue
+        for right in vector_lines[index+1:]:
+            if orientation(right)!=axis:
+                continue
+            rs,re,ra=ordered(right,axis)
+            rlen=re-rs
+            if rlen<min_length:
+                continue
+            separation=abs(la-ra)
+            if separation<2.0 or separation>max_separation:
+                continue
+            shared=max(0.0,min(le,re)-max(ls,rs))
+            overlap_ratio=shared/max(1.0,min(llen,rlen))
+            if overlap_ratio<0.72 or shared<min_length:
+                continue
+            if separation/max(shared,1.0)>0.09:
+                continue
+
+            start=max(ls,rs)
+            end=min(le,re)
+            center_axis=(la+ra)/2
+            stroke=(float(left.get("widthPx",1.0))+float(right.get("widthPx",1.0)))/2
+            thickness=max(2.0,min(48.0,separation+stroke))
+            if axis=="h":
+                a={"x":start,"y":center_axis}; b={"x":end,"y":center_axis}
+            else:
+                a={"x":center_axis,"y":start}; b={"x":center_axis,"y":end}
+            confidence=min(0.98,0.91+0.07*overlap_ratio)
+            candidates.append({
+                "a":a,"b":b,
+                "thicknessPx":round(thickness,2),
+                "confidence":round(confidence,3),
+                "reviewed":False,
+                "provenance":"pdf-vector",
+            })
+
+    result=[dict(wall) for wall in walls]
+
+    def duplicate(candidate:dict,existing:dict)->bool:
+        axis=orientation(candidate)
+        if orientation(existing)!=axis:
+            return False
+        cs,ce,ca=ordered(candidate,axis)
+        es,ee,ea=ordered(existing,axis)
+        shared=max(0.0,min(ce,ee)-max(cs,es))
+        if shared<=0:
+            return False
+        overlap_ratio=shared/max(1.0,min(ce-cs,ee-es))
+        axis_tol=max(
+            6.0,
+            float(candidate.get("thicknessPx",4.0))*1.5,
+            float(existing.get("thicknessPx",4.0))*1.5,
+        )
+        return abs(ca-ea)<=axis_tol and overlap_ratio>=0.55
+
+    accepted=[]
+    for candidate in sorted(
+        candidates,
+        key=lambda item:(
+            -float(item["confidence"]),
+            -math.hypot(item["b"]["x"]-item["a"]["x"],item["b"]["y"]-item["a"]["y"]),
+        ),
+    ):
+        if any(duplicate(candidate,existing) for existing in [*result,*accepted]):
+            continue
+        accepted.append(candidate)
+
+    existing_ids={str(wall.get("id","")) for wall in result}
+    next_index=1
+    for candidate in accepted:
+        while f"wall-vector-{next_index}" in existing_ids:
+            next_index+=1
+        candidate["id"]=f"wall-vector-{next_index}"
+        existing_ids.add(candidate["id"])
+        result.append(candidate)
+        next_index+=1
+    return result
+
+
 def rasterize_wall_mask(walls:list[dict],height:int,width:int,base_mask:np.ndarray|None=None)->np.ndarray:
     """Build a room-separation barrier from canonical wall centerlines.
 
