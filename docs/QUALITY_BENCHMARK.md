@@ -27,7 +27,7 @@ The adapter currently maps:
 - rooms -> benchmark areas
 - wall centerlines + thickness -> wall polygons
 
-This deliberately exposes a current limitation: Manzil does not yet classify sanitary/kitchen symbols or distinguish single/double/sliding doors. Those categories therefore remain visible as recall gaps instead of being guessed.
+The analyzer now supports an optional server-side architectural symbol detector for sink, toilet, bathtub, shower, cooktop and stairs. Detected fixtures are canonical FloorPlanModel elements, rendered in the editor/export, and mapped into the official AEC object classes where applicable. If no detector is configured, those classes remain explicit recall gaps rather than being guessed. Door subtype classification (single/double/sliding) is still not inferred.
 
 ## Core E2E
 
@@ -59,3 +59,22 @@ MANZIL_E2E_API_URL=https://your-staging-api.example
 Then run **Staging E2E** through GitHub Actions workflow dispatch.
 
 The staging workflow intentionally is not part of every push because it consumes deployed cloud resources and requires a real Worker + D1 + R2 + Queue + Analyzer environment.
+
+
+## Architectural symbol provider
+
+The optional symbol detector is configured only in the Analyzer environment:
+
+```text
+SYMBOL_DETECTOR_URL=https://internal-or-managed-detector.example/infer
+SYMBOL_DETECTOR_TOKEN=server-only-secret
+SYMBOL_MIN_CONFIDENCE=0.78
+```
+
+The endpoint receives `image/png` bytes and returns JSON such as:
+
+```json
+{"symbols":[{"kind":"toilet","bbox":[100,120,180,220],"confidence":0.94}]}
+```
+
+Supported kinds are `sink`, `toilet`, `bathtub`, `shower`, `cooktop`, and `stairs`. Unknown classes, invalid boxes and detections below the threshold are discarded; same-class duplicates are suppressed by IoU NMS. The token never reaches the web client.
