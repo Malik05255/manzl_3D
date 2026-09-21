@@ -19,6 +19,38 @@ function analysisIdentity(url:URL){
 async function app(request:Request,env:Env){
   const url=new URL(request.url);
 
+  if(url.pathname==="/health"&&request.method==="GET"){
+    return json({ok:true,service:"manzil-h-api",version:env.APP_VERSION??"unknown"});
+  }
+
+  if(url.pathname==="/ready"&&request.method==="GET"){
+    const configOk=Boolean(
+      env.INTERNAL_TOKEN&&
+      env.ANALYZER_URL&&
+      env.API_PUBLIC_URL&&
+      !env.ANALYZER_URL.includes("YOUR-")&&
+      !env.API_PUBLIC_URL.includes("example.com")
+    );
+    let databaseOk=false;
+    try{
+      const result=await env.DB.prepare("SELECT 1 AS ok").first<{ok:number}>();
+      databaseOk=result?.ok===1;
+    }catch{
+      databaseOk=false;
+    }
+    const ok=configOk&&databaseOk&&Boolean(env.ASSETS)&&Boolean(env.ANALYZE_QUEUE);
+    return json({
+      ok,
+      checks:{
+        config:configOk,
+        database:databaseOk,
+        objectStorage:Boolean(env.ASSETS),
+        queue:Boolean(env.ANALYZE_QUEUE),
+      },
+      version:env.APP_VERSION??"unknown",
+    },ok?200:503);
+  }
+
   if(url.pathname==="/internal/progress"&&request.method==="POST"){
     if(!internalAuthorized(request,env)) return json({error:"unauthorized"},401);
     const identity=analysisIdentity(url);
