@@ -77,13 +77,15 @@ def labels_from_google_vision_response(payload:dict[str,Any])->list[dict]:
     return labels
 
 
-def _encode_for_google(image:np.ndarray)->str:
+def _encode_for_google(image:np.ndarray)->tuple[str,float]:
     working=image
+    coordinate_scale=1.0
     height,width=working.shape[:2]
     max_side=max(height,width)
     limit=5200
     if max_side>limit:
         ratio=limit/max_side
+        coordinate_scale=1.0/ratio
         working=cv2.resize(
             working,
             (max(1,int(round(width*ratio))),max(1,int(round(height*ratio)))),
@@ -92,11 +94,11 @@ def _encode_for_google(image:np.ndarray)->str:
     ok,encoded=cv2.imencode(".png",working,[cv2.IMWRITE_PNG_COMPRESSION,4])
     if not ok:
         raise ValueError("CLOUD_OCR_ENCODE_FAILED")
-    return base64.b64encode(encoded.tobytes()).decode("ascii")
+    return base64.b64encode(encoded.tobytes()).decode("ascii"),coordinate_scale
 
 
 async def extract_google_vision_labels(image:np.ndarray,api_key:str,timeout_s:float=35.0)->list[dict]:
-    content=_encode_for_google(image)
+    content,coordinate_scale=_encode_for_google(image)
     body={
         "requests":[{
             "image":{"content":content},
@@ -113,7 +115,12 @@ async def extract_google_vision_labels(image:np.ndarray,api_key:str,timeout_s:fl
         first=(payload.get("responses") or [{}])[0]
         if isinstance(first,dict) and first.get("error"):
             return []
-        return labels_from_google_vision_response(payload)
+        labels=labels_from_google_vision_response(payload)
+        if coordinate_scale!=1.0:
+            for label in labels:
+                label["center"]["x"]*=coordinate_scale
+                label["center"]["y"]*=coordinate_scale
+        return labels
     return []
 
 
