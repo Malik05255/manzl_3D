@@ -70,6 +70,7 @@ def test_resize_builds_visible_preview_and_shrinks_neighbor():
     assert round(room_width(bed,0.01),2)==5.0
     assert round(room_width(hall,0.01),2)==3.0
     assert any("الصالة" in impact.text for impact in response.proposals[0].impacts)
+    assert "الصالة" in response.proposals[0].title
 
 
 def test_relative_resize_builds_preview():
