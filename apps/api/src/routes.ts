@@ -1,7 +1,8 @@
 import type { ApplyProposalRequest,EditProposalResponse,FloorPlanModel,SaveRevisionRequest } from "@manzil/contracts";
+import { createProjectAccess,hasProjectAccess } from "./access";
 import { getProjectRow,persistPlan,projectView } from "./db";
 import { cleanName,json } from "./http";
-import type { Env } from "./types";
+import type { Env,ProjectRow } from "./types";
 
 async function analyzerProposals(env:Env,id:string,command:string,plan:FloorPlanModel):Promise<EditProposalResponse>{
   const upstream=await fetch(`${env.ANALYZER_URL.replace(/\/$/,"")}/v1/edit/proposals`,{
@@ -16,9 +17,15 @@ async function analyzerProposals(env:Env,id:string,command:string,plan:FloorPlan
   return upstream.json<EditProposalResponse>();
 }
 
-async function currentPlan(env:Env,id:string):Promise<FloorPlanModel|null>{
+async function protectedRow(request:Request,env:Env,id:string):Promise<ProjectRow|Response>{
   const row=await getProjectRow(env,id);
-  if(!row?.plan_key) return null;
+  if(!row) return json({error:"المشروع غير موجود"},404);
+  if(!(await hasProjectAccess(request,row))) return json({error:"ليس لديك صلاحية الوصول إلى هذا المشروع"},401);
+  return row;
+}
+
+async function currentPlan(env:Env,row:ProjectRow):Promise<FloorPlanModel|null>{
+  if(!row.plan_key) return null;
   const object=await env.ASSETS.get(row.plan_key);
   return object?object.json<FloorPlanModel>():null;
 }
