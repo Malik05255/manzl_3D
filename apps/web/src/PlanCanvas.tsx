@@ -91,7 +91,7 @@ export function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall)
   }).map(wall=>wall.id));
   movedWallIds.add(original.id);
 
-  const walls=renderPlan.walls.map(wall=>{
+  const walls=plan.walls.map(wall=>{
     if(movedWallIds.has(wall.id)){
       return vertical
         ?{...wall,a:{...wall.a,x:wall.a.x+delta},b:{...wall.b,x:wall.b.x+delta}}
@@ -109,7 +109,7 @@ export function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall)
     return {...wall,a:movePoint(wall.a),b:movePoint(wall.b)};
   });
 
-  const rooms=renderPlan.rooms.map(room=>{
+  const rooms=plan.rooms.map(room=>{
     const xs=room.polygon.map(p=>p.x); const ys=room.polygon.map(p=>p.y);
     const left=Math.min(...xs),right=Math.max(...xs),top=Math.min(...ys),bottom=Math.max(...ys);
     const shared=vertical?overlap(top,bottom,span1,span2):overlap(left,right,span1,span2);
