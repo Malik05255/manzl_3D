@@ -5,7 +5,7 @@ import httpx
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,HttpUrl
 from .commands import find_target_room,parse_target_size
-from .document import decode_document_with_page,extract_pdf_text_lines,extract_pdf_vector_lines,preprocess
+from .document import decode_document_with_page,extract_pdf_text_lines,extract_pdf_vector_lines,pdf_page_count,preprocess
 from .edits import build_proposals,build_resize_proposals
 from .models import EditRequest,FloorPlan,ProposalResponse,ResizeRequest,ValidationReport,ValidationRequest
 from .ocr import _merge_labels,classify_text,extract_ocr_labels
@@ -26,6 +26,7 @@ class AnalyzeRequest(BaseModel):
     mime_type:str
     callback_url:HttpUrl|None=None
     preview_url:HttpUrl|None=None
+    source_page:int|None=None
 
 def authorize(token:str|None):
     expected=os.getenv("INTERNAL_TOKEN","")
@@ -75,8 +76,12 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     if len(data)>50*1024*1024:
         raise HTTPException(status_code=413,detail="file too large")
 
-    await progress(req.callback_url,req.project_id,"preprocess",23,"اختيار صفحة المخطط الأنسب")
-    image,source_page=decode_document_with_page(data,req.mime_type)
+    source_page_count=pdf_page_count(data) if req.mime_type=="application/pdf" else 1
+    if req.source_page is not None:
+        await progress(req.callback_url,req.project_id,"preprocess",23,f"تحليل الصفحة {req.source_page} من الملف")
+    else:
+        await progress(req.callback_url,req.project_id,"preprocess",23,"اختيار صفحة المخطط الأنسب")
+    image,source_page=decode_document_with_page(data,req.mime_type,req.source_page)
     h,w=image.shape[:2]
     await upload_preview(req.preview_url,image)
     _,ink=preprocess(image)
@@ -118,7 +123,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     rooms=detect_rooms(wall_mask,labels,scale)
 
     await progress(req.callback_url,req.project_id,"validation",93,"التحقق من جودة النتيجة")
-    result=assemble_plan(image,req.project_id,req.filename,req.mime_type,labels,walls,rooms,scale,scale_confidence,source_page=source_page,doors=doors,windows=windows)
+    result=assemble_plan(image,req.project_id,req.filename,req.mime_type,labels,walls,rooms,scale,scale_confidence,source_page=source_page,source_page_count=source_page_count,doors=doors,windows=windows)
     return FloorPlan.model_validate(result)
 
 @app.post("/v1/edit/proposals",response_model=ProposalResponse)
