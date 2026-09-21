@@ -1,4 +1,4 @@
-from app.commands import parse_target_size
+from app.commands import find_target_room,parse_target_size,resolve_target_size
 from app.edits import build_proposals
 from app.models import EditRequest,FloorPlan,Point,Quality,Room,Source,Wall
 
@@ -46,6 +46,19 @@ def test_arabic_digits_are_understood():
     assert parse_target_size("عدل غرفة النوم إلى ٥×٥") == (5.0,5.0)
 
 
+def test_metric_units_around_separator_are_understood():
+    assert parse_target_size("خلي غرفة النوم 5 متر في 4 متر") == (5.0,4.0)
+
+
+def test_named_dimensions_are_understood():
+    assert resolve_target_size("خلي عرض غرفة النوم 5 متر وعمقها 4 متر",4.0,4.0) == (5.0,4.0)
+
+
+def test_relative_width_change_is_understood():
+    assert resolve_target_size("زود عرض غرفة النوم متر",4.0,4.0) == (5.0,4.0)
+    assert resolve_target_size("نقص عرض غرفة النوم 50 سم",4.0,4.0) == (3.5,4.0)
+
+
 def test_resize_builds_visible_preview_and_shrinks_neighbor():
     request=EditRequest(project_id="project-1",command="عدل غرفة النوم إلى 5×4",plan=sample_plan())
     response=build_proposals(request)
@@ -59,8 +72,29 @@ def test_resize_builds_visible_preview_and_shrinks_neighbor():
     assert any("الصالة" in impact.text for impact in response.proposals[0].impacts)
 
 
+def test_relative_resize_builds_preview():
+    request=EditRequest(project_id="project-1",command="زود عرض غرفة النوم متر",plan=sample_plan())
+    response=build_proposals(request)
+    assert response.proposals
+    preview=response.proposals[0].previewPlan
+    bed=next(room for room in preview.rooms if room.id=="bed")
+    assert round(room_width(bed,0.01),2)==5.0
+
+
 def test_metric_edit_requires_calibration():
     request=EditRequest(project_id="project-1",command="عدل غرفة النوم إلى 5×4",plan=sample_plan(None))
     response=build_proposals(request)
     assert not response.proposals
     assert "مقياس" in (response.needsClarification or "")
+
+
+def test_generic_room_word_does_not_guess_between_rooms():
+    plan=sample_plan()
+    plan.rooms.append(Room(
+        id="child",
+        name="غرفة طفل",
+        polygon=[Point(x=100,y=510),Point(x=300,y=510),Point(x=300,y=650),Point(x=100,y=650)],
+        confidence=0.9,
+        areaM2=2.8,
+    ))
+    assert find_target_room("عدل الغرفة إلى 5×4",plan.rooms) is None
