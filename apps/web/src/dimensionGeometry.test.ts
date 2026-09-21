@@ -98,6 +98,10 @@ describe("dimension geometry",()=>{
     source.dimensions![0].reviewed=true;
     const next=calibratePlanFromDimensionSpan(source,"dimension-1",{x:120,y:80},{x:520,y:80})!;
     expect(next.metersPerPixel).toBeCloseTo(.0125,6);
+    expect(next.dimensions?.[0].spanA).toEqual({x:120,y:80});
+    expect(next.dimensions?.[0].spanB).toEqual({x:520,y:80});
+    expect(next.dimensions?.[0].orientation).toBe("horizontal");
+    expect(next.dimensions?.[0].provenance).toBe("mixed");
   });
 
   it("refuses dimension calibration before human review",()=>{
