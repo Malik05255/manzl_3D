@@ -1,0 +1,30 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  web-and-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm run build
+  analyzer:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/analyzer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -q
+      - run: docker build -t manzil-h-analyzer:test .
