@@ -113,8 +113,11 @@ def _door_leaf_evidence(
     gap_px:float,
     wall_angle_deg:float,
 )->int:
-    roi,_,_=_opening_roi(image,a,b,gap_px)
+    roi,offset_x,offset_y=_opening_roi(image,a,b,gap_px)
     evidence=0
+    hinge_tolerance=max(8.0,gap_px*0.28)
+    ax,ay=_point(a)
+    bx,by=_point(b)
     for x1,y1,x2,y2 in _hough_segments(roi,gap_px):
         dx=float(x2-x1)
         dy=float(y2-y1)
@@ -123,7 +126,22 @@ def _door_leaf_evidence(
             continue
         angle=math.degrees(math.atan2(dy,dx))%180.0
         delta=_angle_delta_degrees(angle,wall_angle_deg)
-        if 18<=delta<=82:
+        if not 18<=delta<=82:
+            continue
+
+        endpoints=[
+            (offset_x+x1,offset_y+y1),
+            (offset_x+x2,offset_y+y2),
+        ]
+        hinge_distance=min(
+            math.hypot(px-ax,py-ay)
+            for px,py in endpoints
+        )
+        hinge_distance=min(
+            hinge_distance,
+            min(math.hypot(px-bx,py-by) for px,py in endpoints),
+        )
+        if hinge_distance<=hinge_tolerance:
             evidence+=1
     return evidence
 
@@ -168,7 +186,9 @@ def _parallel_window_evidence(
     uy=vy/gap_length
     gap_start=min(ax*ux+ay*uy,bx*ux+by*uy)
     gap_end=max(ax*ux+ay*uy,bx*ux+by*uy)
-    evidence=0
+    nx=-uy
+    ny=ux
+    offsets=[]
     for x1,y1,x2,y2 in _hough_segments(roi,gap_px):
         dx=float(x2-x1)
         dy=float(y2-y1)
@@ -185,8 +205,21 @@ def _parallel_window_evidence(
         # outside the gap are not window glazing.
         if projection<gap_start-gap_px*.08 or projection>gap_end+gap_px*.08:
             continue
-        evidence+=1
-    return evidence
+        offsets.append(mx*nx+my*ny)
+
+    if not offsets:
+        return 0
+
+    # Hough frequently returns both edges of one thick stroke. Count separated
+    # glazing centerlines rather than raw Hough segments.
+    cluster_distance=max(5.0,gap_px*.04)
+    clusters=[]
+    for value in sorted(offsets):
+        if not clusters or abs(value-clusters[-1][-1])>cluster_distance:
+            clusters.append([value])
+        else:
+            clusters[-1].append(value)
+    return len(clusters)
 
 
 def _gap_between_walls(
