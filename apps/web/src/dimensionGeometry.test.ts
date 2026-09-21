@@ -1,6 +1,6 @@
 import { describe,expect,it } from "vitest";
 import type { FloorPlanModel } from "@manzil/contracts";
-import { calibratePlanFromDimension,correctDimensionValue,dimensionWallCandidates,linkDimensionToWall } from "./dimensionGeometry";
+import { calibratePlanFromDimensionSpan,calibratePlanFromSpan,correctDimensionValue,dimensionWallCandidates,linkDimensionToWall } from "./dimensionGeometry";
 
 function plan():FloorPlanModel{
   return {
@@ -64,15 +64,13 @@ describe("dimension geometry",()=>{
     expect(source.dimensions?.[0].valueM).toBe(5);
   });
 
-  it("calibrates the whole plan from a reviewed linked dimension without moving geometry",()=>{
+  it("calibrates the whole plan from an explicit pixel span without moving geometry",()=>{
     const source=plan();
-    source.dimensions![0].reviewed=true;
     const beforeWall=JSON.stringify(source.walls[0]);
-    const next=calibratePlanFromDimension(source,"dimension-1")!;
+    const next=calibratePlanFromSpan(source,5,{x:100,y:80},{x:500,y:80})!;
     expect(next.metersPerPixel).toBeCloseTo(.0125,6);
     expect(next.calibrationConfidence).toBe(1);
     expect(next.rooms[0].areaM2).toBe(25);
-    expect(next.dimensions?.[0].reviewed).toBe(true);
     expect(next.quality.needsCalibration).toBe(false);
     expect(JSON.stringify(next.walls[0])).toBe(beforeWall);
   });
@@ -95,15 +93,22 @@ describe("dimension geometry",()=>{
     expect(linked.dimensions?.[0].provenance).toBe("mixed");
   });
 
-  it("refuses calibration before human review",()=>{
+  it("calibrates from a reviewed dimension only when its span is explicit",()=>{
     const source=plan();
-    expect(calibratePlanFromDimension(source,"dimension-1")).toBeNull();
+    source.dimensions![0].reviewed=true;
+    const next=calibratePlanFromDimensionSpan(source,"dimension-1",{x:120,y:80},{x:520,y:80})!;
+    expect(next.metersPerPixel).toBeCloseTo(.0125,6);
   });
 
-  it("refuses calibration when the dimension is not linked to a wall",()=>{
+  it("refuses dimension calibration before human review",()=>{
+    const source=plan();
+    expect(calibratePlanFromDimensionSpan(source,"dimension-1",{x:100,y:80},{x:500,y:80})).toBeNull();
+  });
+
+  it("does not require a wall link when the user supplies the actual dimension span",()=>{
     const source=plan();
     source.dimensions![0].reviewed=true;
     source.dimensions![0].referenceWallId=null;
-    expect(calibratePlanFromDimension(source,"dimension-1")).toBeNull();
+    expect(calibratePlanFromDimensionSpan(source,"dimension-1",{x:100,y:80},{x:500,y:80})).not.toBeNull();
   });
 });
