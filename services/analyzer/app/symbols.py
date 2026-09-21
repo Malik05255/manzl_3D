@@ -214,12 +214,22 @@ def _prepare_yolo_rows(output:np.ndarray,class_count:int)->np.ndarray:
         value=value[0]
     if value.ndim!=2:
         return np.empty((0,4+class_count),dtype=np.float32)
-    feature_sizes={4+class_count,5+class_count}
-    if value.shape[0] in feature_sizes and value.shape[1] not in feature_sizes:
-        value=value.T
-    if value.shape[1] not in feature_sizes:
-        return np.empty((0,4+class_count),dtype=np.float32)
-    return value
+
+    v8_features=4+class_count
+    v5_features=5+class_count
+
+    # YOLOv5-style exports are expected as [detections, 5+classes].
+    if value.shape[1] in {v8_features,v5_features}:
+        return value
+
+    # YOLOv8 commonly exports [4+classes, detections] and needs a transpose.
+    # Do not transpose a 5+classes leading dimension: [1, 5+C, N] is
+    # ambiguous and accepting it silently can turn an unrelated tensor into
+    # plausible fixture detections.
+    if value.shape[0]==v8_features and value.shape[1] not in {v8_features,v5_features}:
+        return value.T
+
+    return np.empty((0,v8_features),dtype=np.float32)
 
 
 def _decode_yolo_output(
