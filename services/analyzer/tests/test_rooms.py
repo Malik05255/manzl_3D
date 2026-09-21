@@ -41,3 +41,24 @@ def test_detect_rooms_preserves_slanted_closed_room():
     assert len(xs)>=3
     assert len(ys)>=3
     assert 7.5<rooms[0]["areaM2"]<10.0
+
+
+
+def test_detects_large_enclosed_room_over_old_page_ratio_limit():
+    mask=np.zeros((500,500),dtype=np.uint8)
+    cv2.rectangle(mask,(40,40),(460,460),255,12)
+    rooms=detect_rooms(mask,[],meters_per_pixel=.01)
+    assert len(rooms)==1
+    assert rooms[0]["areaM2"]>15
+
+
+def test_detects_small_valid_room_on_low_resolution_plan():
+    mask=np.zeros((240,240),dtype=np.uint8)
+    cv2.rectangle(mask,(25,25),(75,80),255,6)
+    cv2.rectangle(mask,(100,25),(215,215),255,6)
+    rooms=detect_rooms(mask,[],meters_per_pixel=.02)
+    assert len(rooms)>=2
+    assert any(
+        max(point["x"] for point in room["polygon"])-min(point["x"] for point in room["polygon"])<70
+        for room in rooms
+    )
