@@ -81,6 +81,8 @@ def analyze_document_bytes_local(
             symbols=asyncio.run(extract_symbol_detections(image))
         except Exception:
             symbols=[]
+    if symbols:
+        engines.append("symbol-detector")
 
     walls,wall_mask=detect_walls(ink)
     if vector_lines:
