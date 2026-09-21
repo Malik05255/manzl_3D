@@ -2,7 +2,7 @@ import fitz
 import numpy as np
 import cv2
 
-from app.document import PDF_RENDER_SCALE,_order_quad,_plan_likeness_score,_warp_quad,decode_document_with_page,extract_pdf_text_lines,extract_pdf_vector_lines,normalize_resolution
+from app.document import PDF_RENDER_SCALE,_order_quad,_plan_likeness_score,_warp_quad,decode_document_with_page,extract_pdf_text_lines,extract_pdf_vector_lines,normalize_resolution,pdf_page_count
 
 
 def test_plan_likeness_prefers_orthogonal_geometry():
@@ -95,3 +95,29 @@ def test_pdf_native_vector_lines_are_scaled_to_render_coordinates():
     assert horizontal["a"]["x"]==50*PDF_RENDER_SCALE
     assert vertical["a"]["x"]==200*PDF_RENDER_SCALE
     assert horizontal["widthPx"]>=5*PDF_RENDER_SCALE
+
+
+def test_pdf_can_render_explicit_selected_page():
+    document=fitz.open()
+    first=document.new_page(width=300,height=300)
+    first.insert_text((80,150),"PAGE ONE",fontsize=18)
+    second=document.new_page(width=300,height=300)
+    second.insert_text((80,150),"PAGE TWO",fontsize=18)
+    data=document.tobytes()
+    document.close()
+
+    image,page=decode_document_with_page(data,"application/pdf",preferred_page=1)
+    assert page==1
+    assert image.shape[0]>0
+    assert pdf_page_count(data)==2
+
+
+def test_pdf_rejects_out_of_range_selected_page():
+    document=fitz.open()
+    document.new_page(width=300,height=300)
+    data=document.tobytes()
+    document.close()
+
+    import pytest
+    with pytest.raises(ValueError,match="PDF_PAGE_OUT_OF_RANGE"):
+        decode_document_with_page(data,"application/pdf",preferred_page=2)
