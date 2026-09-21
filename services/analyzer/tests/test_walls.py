@@ -243,3 +243,31 @@ def test_vector_wall_fragments_union_but_real_gap_stays_open():
     ]
     walls=add_vector_wall_candidates([],with_opening,600,800)
     assert len(walls)==2
+
+
+
+def test_high_resolution_detector_keeps_short_thick_partition():
+    from app.walls import detect_walls
+
+    ink=np.zeros((4000,4000),dtype=np.uint8)
+    # 150px is shorter than the old ~222px Hough minimum at this resolution.
+    cv2.rectangle(ink,(1800,1900),(1950,1910),255,-1)
+    walls,_=detect_walls(ink)
+    assert any(
+        abs(wall["b"]["x"]-wall["a"]["x"])>=120
+        and abs(wall["b"]["y"]-wall["a"]["y"])<8
+        for wall in walls
+    )
+
+
+def test_high_resolution_detector_rejects_short_thin_annotation_stroke():
+    from app.walls import detect_walls
+
+    ink=np.zeros((4000,4000),dtype=np.uint8)
+    cv2.line(ink,(1800,1900),(1950,1900),255,1)
+    walls,_=detect_walls(ink)
+    assert not any(
+        abs(wall["b"]["x"]-wall["a"]["x"])>=120
+        and abs(((wall["a"]["y"]+wall["b"]["y"])/2)-1900)<10
+        for wall in walls
+    )
