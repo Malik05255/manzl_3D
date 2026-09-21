@@ -642,6 +642,35 @@ def _candidate_near_dimension_label(
     return False
 
 
+def quarantine_dimension_aligned_walls(
+    walls:list[dict],
+    labels:list[dict],
+    height:int,
+    width:int,
+)->set[str]:
+    """Downgrade thin extracted lines that align with explicit dimension text.
+
+    The wall remains in the canonical model for review, but callers can exclude
+    its id from automatic room/opening topology.
+    """
+    min_side=float(max(1,min(height,width)))
+    thin_limit=max(4.5,min(8.0,min_side*.0045))
+    quarantined:set[str]=set()
+    for wall in walls:
+        try:
+            thickness=float(wall.get("thicknessPx",4.0))
+            wall_id=str(wall.get("id",""))
+        except (TypeError,ValueError):
+            continue
+        if not wall_id or thickness>thin_limit:
+            continue
+        if not _candidate_near_dimension_label(wall,labels,min_side):
+            continue
+        wall["confidence"]=min(float(wall.get("confidence",0.0)),0.64)
+        quarantined.add(wall_id)
+    return quarantined
+
+
 def add_vector_wall_candidates(
     walls:list[dict],
     vector_lines:list[dict],
@@ -741,6 +770,7 @@ def rasterize_wall_mask(
     width:int,
     base_mask:np.ndarray|None=None,
     min_pdf_vector_confidence:float|None=None,
+    excluded_wall_ids:set[str]|None=None,
 )->np.ndarray:
     """Build a room-separation barrier from canonical wall centerlines."""
     if base_mask is None:
@@ -750,7 +780,10 @@ def rasterize_wall_mask(
             raise ValueError("WALL_MASK_SHAPE")
         mask=base_mask.copy()
 
+    excluded=excluded_wall_ids or set()
     for wall in walls:
+        if str(wall.get("id","")) in excluded:
+            continue
         if (
             min_pdf_vector_confidence is not None
             and str(wall.get("provenance",""))=="pdf-vector"
