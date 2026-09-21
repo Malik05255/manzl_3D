@@ -5,6 +5,7 @@ import { ApiError,activateFloor,applyProposal,askEngineer,clearProjectDraft,crea
 import type { KnownProject } from "./api";
 import { DEFAULT_PLAN_LAYERS,PlanCanvas,moveWallAndTopology } from "./PlanCanvas";
 import type { PlanLayerVisibility } from "./PlanCanvas";
+import { calibratePlanFromDimension,correctDimensionValue } from "./dimensionGeometry";
 import { exportPlanJson,exportPlanPng,exportPlanSvg } from "./exportPlan";
 import { parsePlanBackup } from "./planBackup";
 import { addOpeningToWall,changeOpeningKind,findOpening,openingMetrics,positionOpening,removeOpening,resizeOpening } from "./openingGeometry";
@@ -418,40 +419,21 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
     if(!selectedDimension)return;
     const value=Number(dimensionValue.replace(",","."));
     if(!Number.isFinite(value)||value<=0||value>1000){setNotice("أدخل بعدًا صحيحًا بالمتر بين 0 و1000.");return;}
-    const current=(plan.dimensions??[]).find(item=>item.id===selectedDimension);
-    if(!current)return;
-    applyLocalPlan({
-      ...plan,
-      dimensions:(plan.dimensions??[]).map(item=>item.id===current.id?{
-        ...item,valueM:value,reviewed:true,provenance:manualProvenance(item.provenance)
-      }:item),
-    });
+    const next=correctDimensionValue(plan,selectedDimension,value);
+    if(!next){setNotice("تعذر تصحيح البعد المحدد.");return;}
+    applyLocalPlan(next);
     setDimensionValue(value.toFixed(2));
     setNotice("تم تصحيح قيمة البعد مع الاحتفاظ بنص القراءة الأصلي للمراجعة.");
   };
   const calibrateFromSelectedDimension=()=>{
     if(!selectedDimension)return;
     const dimension=(plan.dimensions??[]).find(item=>item.id===selectedDimension);
-    if(!dimension?.valueM||!dimension.referenceWallId){setNotice("هذا البعد غير مرتبط بجدار واضح. اربطه بصريًا عبر قراءة أخرى أو استخدم المعايرة اليدوية.");return;}
+    if(!dimension?.valueM||!dimension.referenceWallId){setNotice("هذا البعد غير مرتبط بجدار واضح. استخدم المعايرة اليدوية أو اختر بعدًا مرتبطًا بجدار.");return;}
     const wall=plan.walls.find(item=>item.id===dimension.referenceWallId);
     if(!wall){setNotice("الجدار المرتبط بالبعد لم يعد موجودًا.");return;}
-    const pixels=Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y);
-    if(pixels<5){setNotice("طول الجدار المرتبط غير صالح للمعايرة.");return;}
-    const mpp=dimension.valueM/pixels;
-    if(!Number.isFinite(mpp)||mpp<=0||mpp>10){setNotice("البعد لا ينتج مقياسًا صالحًا للمخطط.");return;}
-    const rooms=plan.rooms.map(room=>{
-      let area=0;
-      for(let i=0;i<room.polygon.length;i++){const p=room.polygon[i],q=room.polygon[(i+1)%room.polygon.length];area+=p.x*q.y-q.x*p.y;}
-      return {...room,areaM2:Number((Math.abs(area)/2*mpp*mpp).toFixed(2))};
-    });
-    applyLocalPlan({
-      ...plan,
-      metersPerPixel:mpp,
-      calibrationConfidence:1,
-      rooms,
-      dimensions:(plan.dimensions??[]).map(item=>item.id===dimension.id?{...item,reviewed:true,provenance:manualProvenance(item.provenance)}:item),
-      quality:{...plan.quality,needsCalibration:false,dimensions:Math.max(plan.quality.dimensions,.95),warnings:plan.quality.warnings.filter(item=>!item.includes("مقياس")&&!item.includes("معاير"))},
-    });
+    const next=calibratePlanFromDimension(plan,selectedDimension);
+    if(!next){setNotice("تعذر اشتقاق مقياس صالح من هذا البعد والجدار المرتبط.");return;}
+    applyLocalPlan(next);
     setNotice(`تم تثبيت المقياس من البعد المؤكد ${dimension.valueM.toFixed(2)} م. راجع القياسات ثم احفظ المشروع.`);
   };
   const renameSelectedRoom=()=>{
