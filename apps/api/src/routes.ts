@@ -5,11 +5,11 @@ import { clearDraft,getProjectRow,persistDraft,persistPlan,projectView } from ".
 import { cleanName,json } from "./http";
 import type { Env,ProjectRow } from "./types";
 
-async function analyzerProposals(env:Env,id:string,command:string,plan:FloorPlanModel,targetRoomId?:string|null):Promise<EditProposalResponse>{
+async function analyzerProposals(env:Env,id:string,command:string,plan:FloorPlanModel,targetRoomId?:string|null,targetWallId?:string|null,targetOpeningId?:string|null):Promise<EditProposalResponse>{
   const upstream=await fetch(`${env.ANALYZER_URL.replace(/\/$/,"")}/v1/edit/proposals`,{
     method:"POST",
     headers:{"content-type":"application/json","x-manzil-internal":env.INTERNAL_TOKEN},
-    body:JSON.stringify({project_id:id,command,plan,target_room_id:targetRoomId??null})
+    body:JSON.stringify({project_id:id,command,plan,target_room_id:targetRoomId??null,target_wall_id:targetWallId??null,target_opening_id:targetOpeningId??null})
   });
   if(!upstream.ok){
     const detail=await upstream.text().catch(()=>"");
@@ -315,12 +315,16 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(secured instanceof Response) return secured;
     const plan=await currentPlan(env,secured);
     if(!plan) return json({error:"المخطط غير جاهز للتحرير"},409);
-    const body=await request.json<{command?:string;targetRoomId?:string|null}>();
+    const body=await request.json<{command?:string;targetRoomId?:string|null;targetWallId?:string|null;targetOpeningId?:string|null}>();
     const command=(body.command??"").trim();
     const targetRoomId=(body.targetRoomId??"").trim()||null;
+    const targetWallId=(body.targetWallId??"").trim()||null;
+    const targetOpeningId=(body.targetOpeningId??"").trim()||null;
     if(!command) return json({error:"اكتب التعديل المطلوب"},400);
     if(targetRoomId&&!plan.rooms.some(room=>room.id===targetRoomId)) return json({error:"الغرفة المحددة لم تعد موجودة"},409);
-    try{return json(await analyzerProposals(env,id,command,plan,targetRoomId));}
+    if(targetWallId&&!plan.walls.some(wall=>wall.id===targetWallId)) return json({error:"الجدار المحدد لم يعد موجودًا"},409);
+    if(targetOpeningId&&![...plan.doors,...plan.windows].some(opening=>opening.id===targetOpeningId)) return json({error:"الفتحة المحددة لم تعد موجودة"},409);
+    try{return json(await analyzerProposals(env,id,command,plan,targetRoomId,targetWallId,targetOpeningId));}
     catch(error){return json({error:error instanceof Error?error.message:"تعذر تحليل الطلب"},502);}
   }
 
@@ -338,10 +342,14 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(!plan) return json({error:"المخطط غير جاهز للتحرير"},409);
 
     const targetRoomId=(body.targetRoomId??"").trim()||null;
+    const targetWallId=(body.targetWallId??"").trim()||null;
+    const targetOpeningId=(body.targetOpeningId??"").trim()||null;
     if(targetRoomId&&!plan.rooms.some(room=>room.id===targetRoomId)) return json({error:"الغرفة المحددة لم تعد موجودة"},409);
+    if(targetWallId&&!plan.walls.some(wall=>wall.id===targetWallId)) return json({error:"الجدار المحدد لم يعد موجودًا"},409);
+    if(targetOpeningId&&![...plan.doors,...plan.windows].some(opening=>opening.id===targetOpeningId)) return json({error:"الفتحة المحددة لم تعد موجودة"},409);
 
     let fresh:EditProposalResponse;
-    try{fresh=await analyzerProposals(env,id,command,plan,targetRoomId);}
+    try{fresh=await analyzerProposals(env,id,command,plan,targetRoomId,targetWallId,targetOpeningId);}
     catch(error){return json({error:error instanceof Error?error.message:"تعذر التحقق من التعديل"},502);}
 
     const selected=fresh.proposals.find(proposal=>proposal.id===selectedId);
