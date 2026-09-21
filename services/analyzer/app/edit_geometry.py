@@ -309,6 +309,10 @@ def absorb_neighbor(plan:FloorPlan,target:Room,neighbor:Room,side:str,delta_px:f
     ]
     plan.doors=[opening for opening in plan.doors if opening.wallId not in shared_wall_ids]
     plan.windows=[opening for opening in plan.windows if opening.wallId not in shared_wall_ids]
+    for dimension in plan.dimensions:
+        if dimension.referenceWallId in shared_wall_ids:
+            dimension.referenceWallId=None
+            dimension.orientation="unknown"
 
     impacts=[
         Impact(kind="room_remove",text=f"إزالة {neighbor.name} وضم مساحته إلى {target.name}",severity="critical"),
