@@ -71,3 +71,27 @@ def test_more_low_confidence_walls_do_not_artificially_create_high_quality():
     )
     assert plan["quality"]["walls"]<.40
     assert any("متوسط ثقة الجدران" in item for item in plan["quality"]["warnings"])
+
+
+
+def test_quality_warns_when_pdf_vector_is_quarantined():
+    image=np.zeros((600,600,3),dtype=np.uint8)
+    suspicious=[
+        {
+            "id":"wall-vector-1",
+            "a":{"x":100.0,"y":200.0},
+            "b":{"x":500.0,"y":200.0},
+            "thicknessPx":10.0,
+            "confidence":.64,
+            "reviewed":False,
+            "provenance":"pdf-vector",
+        }
+    ]
+    plan=assemble_plan(
+        image,"vector-warning","x.pdf","application/pdf",[],
+        suspicious,[],None,None,
+    )
+    assert any(
+        "دون استخدامه تلقائيًا في إغلاق الغرف" in item
+        for item in plan["quality"]["warnings"]
+    )
