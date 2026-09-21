@@ -54,7 +54,7 @@ def _plan_likeness_score(image:np.ndarray)->float:
     )
     long_lines=0
     if raw is not None:
-        for x1,y1,x2,y2 in raw[:,0]:
+        for x1,y1,x2,y2 in np.asarray(raw).reshape(-1,4):
             dx=abs(int(x2)-int(x1))
             dy=abs(int(y2)-int(y1))
             if dx>=dy*5 or dy>=dx*5:
@@ -74,7 +74,7 @@ def _plan_likeness_score(image:np.ndarray)->float:
     arbitrary_long_lines=0
     angle_buckets=set()
     if general is not None:
-        for x1,y1,x2,y2 in general[:,0]:
+        for x1,y1,x2,y2 in np.asarray(general).reshape(-1,4):
             dx=float(x2-x1)
             dy=float(y2-y1)
             length=float((dx*dx+dy*dy)**0.5)
@@ -181,7 +181,7 @@ def _deskew_angle(image:np.ndarray)->float:
         return 0.0
     angles=[]
     weights=[]
-    for x1,y1,x2,y2 in raw[:,0]:
+    for x1,y1,x2,y2 in np.asarray(raw).reshape(-1,4):
         dx=float(x2-x1); dy=float(y2-y1)
         length=float((dx*dx+dy*dy)**0.5)
         if length<40:
