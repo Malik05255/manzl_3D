@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.walls import _estimate_thickness,_merge_near_collinear_candidates,add_vector_wall_candidates,enrich_walls_with_vector,rasterize_wall_mask
+from app.walls import _estimate_thickness,_merge_axis_lines,_merge_near_collinear_candidates,add_vector_wall_candidates,enrich_walls_with_vector,rasterize_wall_mask
 
 
 def test_estimates_filled_horizontal_wall_thickness():
@@ -195,3 +195,51 @@ def test_merges_tiny_slanted_fragments_but_preserves_opening_gap():
         },
     ]
     assert len(_merge_near_collinear_candidates(opening_gap))==2
+
+
+
+def test_axis_merge_unions_overlapping_fragments():
+    merged=_merge_axis_lines([
+        (20,50,180,50),
+        (150,52,320,52),
+        (40,100,40,220),
+        (42,200,42,340),
+    ])
+    horizontal=[line for line in merged if line[1]==line[3]]
+    vertical=[line for line in merged if line[0]==line[2]]
+    assert len(horizontal)==1
+    assert horizontal[0][0]==20 and horizontal[0][2]==320
+    assert 50<=horizontal[0][1]<=52
+    assert len(vertical)==1
+    assert vertical[0][1]==100 and vertical[0][3]==340
+    assert 40<=vertical[0][0]<=42
+
+
+def test_axis_merge_preserves_opening_sized_gap():
+    merged=_merge_axis_lines([
+        (20,80,120,80),
+        (170,80,300,80),
+    ])
+    assert len(merged)==2
+
+
+def test_vector_wall_fragments_union_but_real_gap_stays_open():
+    contiguous=[
+        {"a":{"x":50.0,"y":100.0},"b":{"x":210.0,"y":100.0},"widthPx":1.0},
+        {"a":{"x":50.0,"y":110.0},"b":{"x":210.0,"y":110.0},"widthPx":1.0},
+        {"a":{"x":190.0,"y":100.0},"b":{"x":360.0,"y":100.0},"widthPx":1.0},
+        {"a":{"x":190.0,"y":110.0},"b":{"x":360.0,"y":110.0},"widthPx":1.0},
+    ]
+    walls=add_vector_wall_candidates([],contiguous,600,800)
+    assert len(walls)==1
+    assert min(walls[0]["a"]["x"],walls[0]["b"]["x"])<=51
+    assert max(walls[0]["a"]["x"],walls[0]["b"]["x"])>=359
+
+    with_opening=[
+        {"a":{"x":50.0,"y":100.0},"b":{"x":150.0,"y":100.0},"widthPx":1.0},
+        {"a":{"x":50.0,"y":110.0},"b":{"x":150.0,"y":110.0},"widthPx":1.0},
+        {"a":{"x":250.0,"y":100.0},"b":{"x":360.0,"y":100.0},"widthPx":1.0},
+        {"a":{"x":250.0,"y":110.0},"b":{"x":360.0,"y":110.0},"widthPx":1.0},
+    ]
+    walls=add_vector_wall_candidates([],with_opening,600,800)
+    assert len(walls)==2
