@@ -3,6 +3,29 @@ import type { ApplyProposalRequest, EditProposalResponse, FloorPlanModel, Projec
 const API_BASE=(import.meta.env.VITE_API_BASE_URL as string|undefined)?.replace(/\/$/,"")??"http://localhost:8787";
 const tokenKey=(projectId:string)=>`manzil:project-token:${projectId}`;
 const lastProjectKey="manzil:last-project";
+const knownProjectsKey="manzil:known-projects";
+
+export interface KnownProject{ id:string; name:string; updatedAt:string; }
+
+function readKnownProjects():KnownProject[]{
+  try{
+    const value=JSON.parse(localStorage.getItem(knownProjectsKey)??"[]") as unknown;
+    if(!Array.isArray(value))return [];
+    return value.filter((item):item is KnownProject=>Boolean(item&&typeof item==="object"&&typeof (item as KnownProject).id==="string"&&typeof (item as KnownProject).name==="string"&&typeof (item as KnownProject).updatedAt==="string")).slice(0,20);
+  }catch{return [];}
+}
+function rememberKnownProject(project:Pick<ProjectView,"id"|"name"|"updatedAt">){
+  try{
+    const next=[{id:project.id,name:project.name,updatedAt:project.updatedAt},...readKnownProjects().filter(item=>item.id!==project.id)]
+      .sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).slice(0,20);
+    localStorage.setItem(knownProjectsKey,JSON.stringify(next));
+  }catch{}
+}
+export function getKnownProjects(){return readKnownProjects();}
+export function forgetKnownProject(projectId:string){
+  try{localStorage.removeItem(tokenKey(projectId));localStorage.setItem(knownProjectsKey,JSON.stringify(readKnownProjects().filter(item=>item.id!==projectId)));}catch{}
+}
+
 
 function projectIdFromPath(path:string){
   return path.match(/^\/v1\/projects\/([^/]+)/)?.[1]??null;
@@ -50,6 +73,8 @@ async function request<T>(path:string,init?:RequestInit):Promise<T>{
 export async function createProject(name:string){
   const project=await request<ProjectView>("/v1/projects",{method:"POST",body:JSON.stringify({name})});
   if(project.accessToken) rememberProjectToken(project.id,project.accessToken);
+  rememberLastProjectId(project.id);
+  rememberKnownProject(project);
   return project;
 }
 
@@ -84,6 +109,7 @@ export function uploadSource(projectId:string,file:File,onProgress:(value:number
 export async function getProject(id:string){
   const project=await request<ProjectView>(`/v1/projects/${id}`);
   rememberLastProjectId(id);
+  rememberKnownProject(project);
   return project;
 }
 export async function getProjectPreview(id:string):Promise<string|null>{
@@ -98,21 +124,25 @@ export async function getProjectPreview(id:string):Promise<string|null>{
 export const askEngineer=(id:string,command:string)=>request<EditProposalResponse>(`/v1/projects/${id}/ai/proposals`,{method:"POST",body:JSON.stringify({command})});
 export const resizeRoomPrecisely=(id:string,roomId:string,widthM:number,heightM:number)=>request<EditProposalResponse>(`/v1/projects/${id}/geometry/resize-proposals`,{method:"POST",body:JSON.stringify({roomId,widthM,heightM})});
 export const validateProject=(id:string,plan:FloorPlanModel)=>request<ValidationReport>(`/v1/projects/${id}/validate`,{method:"POST",body:JSON.stringify({plan})});
-export const applyProposal=(id:string,payload:ApplyProposalRequest)=>request<ProjectView>(`/v1/projects/${id}/ai/apply`,{method:"POST",body:JSON.stringify(payload)});
+export async function applyProposal(id:string,payload:ApplyProposalRequest){const project=await request<ProjectView>(`/v1/projects/${id}/ai/apply`,{method:"POST",body:JSON.stringify(payload)});rememberKnownProject(project);return project;}
 export const saveDraft=(id:string,plan:FloorPlanModel,expectedRevision:number)=>request<ProjectView>(`/v1/projects/${id}/draft`,{method:"PUT",body:JSON.stringify({plan,expectedRevision})});
-export function saveRevision(id:string,plan:FloorPlanModel,summary:string,expectedRevision:number){
+export async function saveRevision(id:string,plan:FloorPlanModel,summary:string,expectedRevision:number){
   const payload:SaveRevisionRequest={plan,summary,expectedRevision};
-  return request<ProjectView>(`/v1/projects/${id}/revisions`,{method:"POST",body:JSON.stringify(payload)});
+  const project=await request<ProjectView>(`/v1/projects/${id}/revisions`,{method:"POST",body:JSON.stringify(payload)});
+  rememberKnownProject(project);
+  rememberLastProjectId(id);
+  return project;
 }
 
 export const listRevisions=(id:string)=>request<{items:RevisionView[]}>(`/v1/projects/${id}/revisions`);
-export const restoreRevision=(id:string,revision:number)=>request<ProjectView>(`/v1/projects/${id}/revisions/${revision}/restore`,{method:"POST"});
+export async function restoreRevision(id:string,revision:number){const project=await request<ProjectView>(`/v1/projects/${id}/revisions/${revision}/restore`,{method:"POST"});rememberKnownProject(project);return project;}
 
 
 export async function importProjectBackup(name:string,plan:FloorPlanModel){
   const project=await createProject(name);
   const imported:FloorPlanModel={...plan,id:project.id};
   const ready=await saveRevision(project.id,imported,"استيراد نسخة مشروع",project.revision);
+  rememberKnownProject(ready);
   rememberLastProjectId(project.id);
   return ready;
 }
