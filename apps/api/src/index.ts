@@ -43,7 +43,9 @@ async function app(request:Request,env:Env){
     if(!internalAuthorized(request,env)) return json({error:"unauthorized"},401);
     const row=await getProjectRow(env,decodeURIComponent(source[1]));
     if(!row?.source_key) return json({error:"source not found"},404);
-    const object=await env.ASSETS.get(row.source_key);
+    const requestedKey=url.searchParams.get("key");
+    if(requestedKey&&requestedKey!==row.source_key) return json({error:"stale source"},409);
+    const object=await env.ASSETS.get(requestedKey||row.source_key);
     if(!object) return json({error:"source not found"},404);
     const headers=new Headers();
     object.writeHttpMetadata(headers);
