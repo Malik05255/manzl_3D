@@ -6,7 +6,7 @@ from .commands import parse_selected_opening_action,parse_selected_wall_action
 from .edit_geometry import bbox,minimum_clear_span_m,overlap
 from .models import EditRequest,FloorPlan,Impact,Opening,Point,Proposal,ProposalResponse,Wall
 from .provenance import mark_ai_changes
-from .topology import relink_plan_boundaries
+from .topology import canonicalize_plan
 from .validation import validate_plan
 
 WALL_EDIT_CONFIDENCE_MIN=0.72
@@ -354,8 +354,8 @@ def _move_wall_topology(plan:FloorPlan,wall_id:str,amount_m:float,direction:str)
 
 
 def _finalize(plan:FloorPlan,candidate:FloorPlan,proposal_id:str,title:str,summary:str,impacts:list[Impact],confidence_penalty:float=0.04,extra_warnings:list[str]|None=None)->ProposalResponse:
-    relink_plan_boundaries(candidate)
     mark_ai_changes(plan,candidate)
+    candidate=canonicalize_plan(candidate)
     report=validate_plan(candidate)
     if any(item.severity=="critical" for item in report.findings):
         return ProposalResponse(
