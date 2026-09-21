@@ -6,9 +6,11 @@ export type ElementProvenance = "opencv" | "pdf-vector" | "ocr" | "cloud-ocr" | 
 export type WallRole = "unknown" | "interior" | "exterior" | "structural";
 export interface Wall { id: string; a: Point; b: Point; thicknessPx: number; confidence: number; heightM?: number | null; role?: WallRole; locked?: boolean; reviewed?: boolean; provenance?: ElementProvenance; }
 export interface Room { id: string; name: string; polygon: Point[]; confidence: number; areaM2?: number | null; ceilingHeightM?: number | null; boundaryWallIds?: string[]; reviewed?: boolean; provenance?: ElementProvenance; }
+export type DoorSubtype = "unknown" | "single_swing" | "double_swing" | "sliding";
 export interface Opening {
   id: string;
   kind: "door" | "window";
+  doorSubtype?: DoorSubtype;
   wallId?: string | null;
   a: Point;
   b: Point;
@@ -196,6 +198,7 @@ function fpOpening(value:unknown):value is Opening{
   return fpObject(value)
     &&typeof value.id==="string"&&value.id.length>0
     &&(value.kind==="door"||value.kind==="window")
+    &&(value.doorSubtype===undefined||["unknown","single_swing","double_swing","sliding"].includes(String(value.doorSubtype)))
     &&(value.wallId===undefined||value.wallId===null||typeof value.wallId==="string")
     &&fpPoint(value.a)&&fpPoint(value.b)
     &&fpConfidence(value.confidence)
