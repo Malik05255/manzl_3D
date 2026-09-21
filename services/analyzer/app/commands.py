@@ -189,8 +189,8 @@ def resize_neighbor_constraints(command:str,rooms:list,target)->tuple[set[str],s
     text=normalize_arabic(command)
     preferred:set[str]=set()
     excluded:set[str]=set()
-    preferred_markers=("على حساب","من مساحه","خذ من","اقتطع من","خصم من")
-    excluded_markers=("بدون تغيير","دون تغيير","لا تغير","لا تصغر","لا تعدل","ما تغير","لا تمس","بدون المساس")
+    preferred_markers=tuple(normalize_arabic(value) for value in ("على حساب","من مساحة","خذ من","اقتطع من","خصم من"))
+    excluded_markers=tuple(normalize_arabic(value) for value in ("بدون تغيير","دون تغيير","لا تغير","لا تصغر","لا تعدل","ما تغير","لا تمس","بدون المساس"))
 
     for room in rooms:
         if room.id==target.id:
