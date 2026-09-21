@@ -19,7 +19,7 @@ def _metric_value(text:str)->tuple[float|None,bool]:
     return value,explicit
 
 
-def estimate_scale(labels:list[dict],walls:list[dict],width:int,height:int)->tuple[float|None,float|None]:
+def _scale_candidates(labels:list[dict],walls:list[dict],width:int,height:int)->list[tuple[float,bool]]:
     candidates:list[tuple[float,bool]]=[]
     max_distance=min(width,height)*0.12
 
@@ -47,22 +47,42 @@ def estimate_scale(labels:list[dict],walls:list[dict],width:int,height:int)->tup
             ratio=value/best[1]
             if 0.0005<=ratio<=0.25:
                 candidates.append((ratio,explicit))
+    return candidates
 
+
+def estimate_scale_with_diagnostics(labels:list[dict],walls:list[dict],width:int,height:int)->tuple[float|None,float|None,list[str]]:
+    candidates=_scale_candidates(labels,walls,width,height)
     if not candidates:
-        return None,None
+        return None,None,[]
 
-    ratios=[ratio for ratio,_ in candidates]
+    explicit=[item for item in candidates if item[1]]
+    working=explicit if explicit else candidates
+    warnings:list[str]=[]
+
+    if not explicit and len(working)<2:
+        return None,None,[]
+
+    ratios=[ratio for ratio,_ in working]
     center=median(ratios)
     filtered=[
-        (ratio,explicit)
-        for ratio,explicit in candidates
+        (ratio,is_explicit)
+        for ratio,is_explicit in working
         if abs(ratio-center)/max(center,1e-9)<=0.18
-    ] or candidates
+    ]
 
-    explicit_count=sum(1 for _,explicit in filtered if explicit)
-    if explicit_count==0 and len(filtered)<2:
-        # A single unitless number is too ambiguous to calibrate a whole drawing.
-        return None,None
+    if len(working)>=2 and not filtered:
+        return None,None,["الأبعاد المقروءة تعطي مقاييس متعارضة؛ يلزم تثبيت المقياس يدويًا قبل التعديل بالمتر."]
+
+    # If most explicit readings disagree, do not force an automatic scale.
+    if len(working)>=3 and len(filtered)/len(working)<0.60:
+        return None,None,["هناك تعارض كبير بين الأبعاد المقروءة؛ لم يعتمد النظام مقياسًا تلقائيًا."]
+
+    if not filtered:
+        filtered=working
+
+    rejected=len(working)-len(filtered)
+    if rejected:
+        warnings.append(f"تم تجاهل {rejected} قراءة أبعاد متعارضة عند حساب مقياس الرسم.")
 
     filtered_ratios=[ratio for ratio,_ in filtered]
     result=median(filtered_ratios)
@@ -70,11 +90,20 @@ def estimate_scale(labels:list[dict],walls:list[dict],width:int,height:int)->tup
     spread=median(deviations) if deviations else 1.0
 
     if len(filtered)==1:
-        confidence=0.60 if explicit_count else 0.0
+        confidence=0.60 if explicit else 0.0
     else:
         confidence=0.68+min(0.18,0.06*(len(filtered)-2))
-        if explicit_count:
+        if explicit:
             confidence+=0.06
         confidence-=min(0.20,spread)
+
+    if spread>0.08:
+        warnings.append("يوجد تباين ملحوظ بين الأبعاد المستخدمة في المعايرة؛ راجع المقياس بصريًا.")
+
     confidence=max(0.55,min(0.95,confidence))
-    return result,confidence
+    return result,confidence,warnings
+
+
+def estimate_scale(labels:list[dict],walls:list[dict],width:int,height:int)->tuple[float|None,float|None]:
+    scale,confidence,_=estimate_scale_with_diagnostics(labels,walls,width,height)
+    return scale,confidence
