@@ -172,6 +172,7 @@ def validate_plan(plan:FloorPlan)->ValidationReport:
                 ))
 
     wall_ids={wall.id for wall in plan.walls}
+    walls_by_id={wall.id:wall for wall in plan.walls}
     for room in plan.rooms:
         missing_boundaries=[wall_id for wall_id in room.boundaryWallIds if wall_id not in wall_ids]
         if missing_boundaries:
@@ -231,6 +232,32 @@ def validate_plan(plan:FloorPlan)->ValidationReport:
                     wallIds=list(room.boundaryWallIds),
                 ))
 
+            boundary_walls=[
+                walls_by_id[wall_id]
+                for wall_id in room.boundaryWallIds
+                if wall_id in walls_by_id
+            ]
+            generated_name=(
+                room.name.startswith("غرفة ")
+                and room.name.removeprefix("غرفة ").strip().isdigit()
+            )
+            area_ratio=_polygon_area_px2(room.polygon)/max(
+                1.0,
+                float(plan.widthPx)*float(plan.heightPx),
+            )
+            vector_only=bool(boundary_walls) and all(
+                wall.provenance=="pdf-vector"
+                for wall in boundary_walls
+            )
+            if generated_name and vector_only and area_ratio<0.012:
+                findings.append(ValidationFinding(
+                    code="room_vector_enclosure_unverified",
+                    severity="warning",
+                    text=f"{room.name} مساحة صغيرة غير مسماة وحدودها مستخرجة فقط من PDF vector؛ تحقق أنها غرفة وليست أثاثًا أو رمزًا.",
+                    roomIds=[room.id],
+                    wallIds=list(room.boundaryWallIds),
+                ))
+
         if mpp and mpp>0:
             width=width_px*mpp
             height=height_px*mpp
@@ -281,7 +308,6 @@ def validate_plan(plan:FloorPlan)->ValidationReport:
                 roomIds=[left.id,right.id],
             ))
 
-    walls_by_id={wall.id:wall for wall in plan.walls}
     openings=[*plan.doors,*plan.windows]
     for opening in openings:
         wall=walls_by_id.get(opening.wallId) if opening.wallId else None
