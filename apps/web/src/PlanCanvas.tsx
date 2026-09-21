@@ -161,6 +161,28 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
     }
     return result;
   },[validationFindings]);
+  const validationByWall=useMemo(()=>{
+    const rank={info:1,warning:2,critical:3} as const;
+    const result=new Map<string,ValidationFinding["severity"]>();
+    for(const finding of validationFindings){
+      for(const wallId of finding.wallIds??[]){
+        const current=result.get(wallId);
+        if(!current||rank[finding.severity]>rank[current])result.set(wallId,finding.severity);
+      }
+    }
+    return result;
+  },[validationFindings]);
+  const validationByOpening=useMemo(()=>{
+    const rank={info:1,warning:2,critical:3} as const;
+    const result=new Map<string,ValidationFinding["severity"]>();
+    for(const finding of validationFindings){
+      for(const openingId of finding.openingIds??[]){
+        const current=result.get(openingId);
+        if(!current||rank[finding.severity]>rank[current])result.set(openingId,finding.severity);
+      }
+    }
+    return result;
+  },[validationFindings]);
 
   const screenToPlan=(clientX:number,clientY:number):Point=>{
     const svg=svgRef.current;if(!svg)return{x:0,y:0};
@@ -256,21 +278,34 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
             </text>}
           </g>;
         })}
-        {plan.walls.map(wall=><line key={wall.id}
-          x1={wall.a.x} y1={wall.a.y} x2={wall.b.x} y2={wall.b.y}
-          stroke={selectedWallId===wall.id?"#2563eb":"#0f172a"}
-          strokeWidth={Math.max(wall.thicknessPx,selectedWallId===wall.id?5:3)}
-          strokeLinecap="round" className={readonly||calibrationMode?undefined:"editable-wall"}
-          onPointerDown={e=>{if(readonly||calibrationMode)return;e.currentTarget.setPointerCapture(e.pointerId);onSelectOpening?.(null);onSelectWall?.(wall.id);setDrag({wallId:wall.id,startClient:{x:e.clientX,y:e.clientY},original:wall,basePlan:plan,changed:false});}}
-        />)}
-        {plan.doors.map(o=><g key={o.id} className={readonly||calibrationMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
-          {!readonly&&!calibrationMode&&<line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="transparent" strokeWidth={18}/>}
-          <line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke={selectedOpeningId===o.id?"#1d4ed8":"#0ea5e9"} strokeWidth={selectedOpeningId===o.id?7:4} strokeLinecap="round"/>
-        </g>)}
-        {plan.windows.map(o=><g key={o.id} className={readonly||calibrationMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
-          {!readonly&&!calibrationMode&&<line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="transparent" strokeWidth={18}/>}
-          <line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke={selectedOpeningId===o.id?"#1d4ed8":"#38bdf8"} strokeWidth={selectedOpeningId===o.id?6:3} strokeLinecap="round"/>
-        </g>)}
+        {plan.walls.map(wall=>{
+          const severity=validationByWall.get(wall.id);
+          const stroke=selectedWallId===wall.id?"#2563eb":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":severity==="info"?"#2563eb":"#0f172a";
+          return <line key={wall.id}
+            x1={wall.a.x} y1={wall.a.y} x2={wall.b.x} y2={wall.b.y}
+            stroke={stroke}
+            strokeWidth={Math.max(wall.thicknessPx,selectedWallId===wall.id?5:severity==="critical"?5:3)}
+            strokeLinecap="round" className={readonly||calibrationMode?undefined:"editable-wall"}
+            strokeDasharray={severity&&!selectedWallId?severity==="critical"?"14 6":"10 6":undefined}
+            onPointerDown={e=>{if(readonly||calibrationMode)return;e.currentTarget.setPointerCapture(e.pointerId);onSelectOpening?.(null);onSelectWall?.(wall.id);setDrag({wallId:wall.id,startClient:{x:e.clientX,y:e.clientY},original:wall,basePlan:plan,changed:false});}}
+          />;
+        })}
+        {plan.doors.map(o=>{
+          const severity=validationByOpening.get(o.id);
+          const stroke=selectedOpeningId===o.id?"#1d4ed8":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":"#0ea5e9";
+          return <g key={o.id} className={readonly||calibrationMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
+            {!readonly&&!calibrationMode&&<line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="transparent" strokeWidth={18}/>}
+            <line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke={stroke} strokeWidth={selectedOpeningId===o.id?7:severity==="critical"?6:4} strokeLinecap="round" strokeDasharray={severity&&!selectedOpeningId?"9 5":undefined}/>
+          </g>;
+        })}
+        {plan.windows.map(o=>{
+          const severity=validationByOpening.get(o.id);
+          const stroke=selectedOpeningId===o.id?"#1d4ed8":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":"#38bdf8";
+          return <g key={o.id} className={readonly||calibrationMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
+            {!readonly&&!calibrationMode&&<line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke="transparent" strokeWidth={18}/>}
+            <line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke={stroke} strokeWidth={selectedOpeningId===o.id?6:severity==="critical"?5:3} strokeLinecap="round" strokeDasharray={severity&&!selectedOpeningId?"9 5":undefined}/>
+          </g>;
+        })}
         {calibrationPoints.length===2&&<line x1={calibrationPoints[0].x} y1={calibrationPoints[0].y} x2={calibrationPoints[1].x} y2={calibrationPoints[1].y} stroke="#e11d48" strokeWidth={3} strokeDasharray="10 7"/>}
         {calibrationPoints.map((point,index)=><g key={index}><circle cx={point.x} cy={point.y} r={9} fill="#e11d48"/><text x={point.x+14} y={point.y-12} className="calibration-label">{index+1}</text></g>)}
       </svg>
