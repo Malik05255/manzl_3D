@@ -151,6 +151,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const secured=await protectedRow(request,env,id);
     if(secured instanceof Response) return secured;
     if(!secured.source_key) return json({error:"لا يوجد ملف مصدر لإعادة التحليل"},409);
+    if(secured.draft_key) return json({error:"يوجد مسودة تلقائية غير مثبتة. احفظها كنسخة أو تجاهلها قبل إعادة تحليل المصدر."},409);
     if(["queued","analyzing"].includes(secured.status)) return json({error:"التحليل جارٍ بالفعل"},409);
 
     const body: {sourcePage?:number|null}=await request.json<{sourcePage?:number|null}>().catch(()=>({}));
