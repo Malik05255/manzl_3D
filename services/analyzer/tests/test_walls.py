@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.walls import _estimate_thickness,enrich_walls_with_vector,rasterize_wall_mask
+from app.walls import _estimate_thickness,add_vector_wall_candidates,enrich_walls_with_vector,rasterize_wall_mask
 
 
 def test_estimates_filled_horizontal_wall_thickness():
@@ -72,3 +72,39 @@ def test_rasterized_wall_mask_rejects_wrong_base_shape():
     import pytest
     with pytest.raises(ValueError,match="WALL_MASK_SHAPE"):
         rasterize_wall_mask([],200,300,np.zeros((100,100),dtype=np.uint8))
+
+
+def test_parallel_pdf_vectors_can_seed_missing_wall():
+    vectors=[
+        {"a":{"x":100.0,"y":100.0},"b":{"x":500.0,"y":100.0},"widthPx":1.5},
+        {"a":{"x":100.0,"y":112.0},"b":{"x":500.0,"y":112.0},"widthPx":1.5},
+    ]
+    result=add_vector_wall_candidates([],vectors,800,1000)
+    assert len(result)==1
+    wall=result[0]
+    assert wall["id"]=="wall-vector-1"
+    assert wall["provenance"]=="pdf-vector"
+    assert wall["confidence"]>=.95
+    assert wall["a"]["y"]==wall["b"]["y"]==106.0
+    assert 12<=wall["thicknessPx"]<=15
+
+
+def test_single_pdf_vector_line_is_not_promoted_to_wall():
+    vectors=[{"a":{"x":100.0,"y":100.0},"b":{"x":500.0,"y":100.0},"widthPx":1.0}]
+    assert add_vector_wall_candidates([],vectors,800,1000)==[]
+
+
+def test_vector_wall_candidate_does_not_duplicate_detected_wall():
+    detected=[{
+        "id":"wall-1",
+        "a":{"x":100.0,"y":106.0},
+        "b":{"x":500.0,"y":106.0},
+        "thicknessPx":12.0,
+        "confidence":.8,
+    }]
+    vectors=[
+        {"a":{"x":100.0,"y":100.0},"b":{"x":500.0,"y":100.0},"widthPx":1.0},
+        {"a":{"x":100.0,"y":112.0},"b":{"x":500.0,"y":112.0},"widthPx":1.0},
+    ]
+    result=add_vector_wall_candidates(detected,vectors,800,1000)
+    assert [wall["id"] for wall in result]==["wall-1"]
