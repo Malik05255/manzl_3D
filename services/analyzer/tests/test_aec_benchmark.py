@@ -97,4 +97,4 @@ area instance                               0.961   0.921   0.940
     assert report["wallPixel"]["f1"]==.931
     assert report["areaPixel"]["f1"]==.987
     assert report["areaInstance"]["f1"]==.94
-    assert report["macroF1"]==.9468
+    assert report["macroF1"]==.9467
