@@ -1,0 +1,26 @@
+name: Staging E2E
+
+on:
+  workflow_dispatch:
+
+jobs:
+  black-box:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pip install PyMuPDF==1.26.4
+      - run: python services/analyzer/tools/generate_e2e_fixture.py /tmp/manzil-e2e.pdf
+      - name: Run staging journey
+        env:
+          MANZIL_API_URL: ${{ secrets.MANZIL_E2E_API_URL }}
+          MANZIL_E2E_SOURCE: /tmp/manzil-e2e.pdf
+          MANZIL_E2E_TIMEOUT_MS: "240000"
+        run: |
+          test -n "$MANZIL_API_URL" || (echo "Set repository secret MANZIL_E2E_API_URL first" && exit 1)
+          node scripts/e2e_remote.mjs
