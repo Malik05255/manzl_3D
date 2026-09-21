@@ -133,19 +133,30 @@ def test_boundary_coverage_detects_missing_room_sides():
 
 def test_canonicalize_clears_stale_dimension_references():
     from app.models import Dimension
-    plan=plan_with_two_rooms()
-    plan.dimensions=[Dimension(
-        id="dimension-1",
-        sourceLabelId="missing-label",
-        text="4.20 m",
-        center=Point(x=250,y=80),
-        valueM=4.2,
-        unit="m",
-        orientation="horizontal",
-        referenceWallId="missing-wall",
-        confidence=.9,
-        provenance="ocr",
-    )]
+    plan=FloorPlan(
+        id="p",
+        widthPx=800,
+        heightPx=600,
+        metersPerPixel=.01,
+        calibrationConfidence=1,
+        walls=[Wall(id="wall-1",a=Point(x=100,y=100),b=Point(x=500,y=100),thicknessPx=10,confidence=.9)],
+        rooms=[],
+        doors=[],windows=[],labels=[],
+        dimensions=[Dimension(
+            id="dimension-1",
+            sourceLabelId="missing-label",
+            text="4.20 m",
+            center=Point(x=250,y=80),
+            valueM=4.2,
+            unit="m",
+            orientation="horizontal",
+            referenceWallId="missing-wall",
+            confidence=.9,
+            provenance="ocr",
+        )],
+        quality=Quality(overall=.9,walls=.9,rooms=.7,text=.9,dimensions=.9,needsCalibration=False,warnings=[]),
+        source=Source(fileName="x.png",mimeType="image/png",page=1),
+    )
     canonical=canonicalize_plan(plan)
     assert canonical.dimensions[0].referenceWallId is None
     assert canonical.dimensions[0].orientation=="unknown"
