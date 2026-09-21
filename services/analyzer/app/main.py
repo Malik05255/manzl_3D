@@ -5,7 +5,7 @@ import httpx
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,HttpUrl
 from .commands import find_target_room,parse_target_size
-from .document import decode_document_with_page,extract_pdf_text_lines,preprocess
+from .document import decode_document_with_page,extract_pdf_text_lines,extract_pdf_vector_lines,preprocess
 from .edits import build_proposals,build_resize_proposals
 from .models import EditRequest,FloorPlan,ProposalResponse,ResizeRequest,ValidationReport,ValidationRequest
 from .ocr import _merge_labels,classify_text,extract_ocr_labels
@@ -14,7 +14,7 @@ from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale
 from .semantic import normalize_edit_semantics
-from .walls import detect_walls
+from .walls import detect_walls,enrich_walls_with_vector
 from .validation import validate_plan
 
 app=FastAPI(title="Manzil H Analyzer",version="0.1.0")
@@ -104,6 +104,12 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
 
     await progress(req.callback_url,req.project_id,"geometry",58,"استخراج الجدران والهندسة")
     walls,wall_mask=detect_walls(ink)
+    if req.mime_type=="application/pdf":
+        try:
+            vector_lines=extract_pdf_vector_lines(data,source_page)
+            walls=enrich_walls_with_vector(walls,vector_lines)
+        except Exception:
+            pass
     scale,scale_confidence=estimate_scale(labels,walls,w,h)
     doors=detect_doors(image,walls,scale)
     windows=detect_windows(image,walls,scale)
