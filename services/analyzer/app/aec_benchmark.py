@@ -62,8 +62,10 @@ def plan_to_aec_prediction(plan:dict,*,sheet:str,width:int,height:int)->dict:
 
     objects=[]
     for door in plan.get("doors",[]):
+        subtype=door.get("doorSubtype")
+        object_class="Double Swing Door" if subtype=="double_swing" else "Single Swing Door"
         objects.append({
-            "class":"Single Swing Door",
+            "class":object_class,
             "bbox":_opening_bbox(door,sx,sy,padding),
         })
     for window in plan.get("windows",[]):
