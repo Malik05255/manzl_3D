@@ -234,3 +234,29 @@ def absorb_neighbor(plan:FloorPlan,target:Room,neighbor:Room,side:str,delta_px:f
             severity="warning",
         ))
     return True,impacts
+
+
+def merge_neighbor(plan:FloorPlan,target:Room,source:Room,mpp:float)->tuple[bool,list[Impact]]:
+    if not is_rectangular_room(target) or not is_rectangular_room(source):
+        return False,[]
+    tx1,ty1,tx2,ty2=bbox(target)
+    sx1,sy1,sx2,sy2=bbox(source)
+    tol=max(6.0,0.15/mpp)
+
+    candidates=[]
+    if abs(sx1-tx2)<=tol and abs(sy1-ty1)<=tol and abs(sy2-ty2)<=tol:
+        candidates.append(("right",sx2-tx2))
+    if abs(sx2-tx1)<=tol and abs(sy1-ty1)<=tol and abs(sy2-ty2)<=tol:
+        candidates.append(("left",tx1-sx1))
+    if abs(sy1-ty2)<=tol and abs(sx1-tx1)<=tol and abs(sx2-tx2)<=tol:
+        candidates.append(("bottom",sy2-ty2))
+    if abs(sy2-ty1)<=tol and abs(sx1-tx1)<=tol and abs(sx2-tx2)<=tol:
+        candidates.append(("top",ty1-sy1))
+
+    for side,delta in candidates:
+        if delta<=0:
+            continue
+        ok,impacts=absorb_neighbor(plan,target,source,side,delta,mpp)
+        if ok:
+            return True,impacts
+    return False,[]
