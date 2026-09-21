@@ -5,6 +5,19 @@ def bbox(room:Room)->tuple[float,float,float,float]:
     xs=[p.x for p in room.polygon]; ys=[p.y for p in room.polygon]
     return min(xs),min(ys),max(xs),max(ys)
 
+def is_rectangular_room(room:Room,tol:float=3.0)->bool:
+    if len(room.polygon)!=4:
+        return False
+    x1,y1,x2,y2=bbox(room)
+    expected=((x1,y1),(x2,y1),(x2,y2),(x1,y2))
+    remaining=[(point.x,point.y) for point in room.polygon]
+    for ex,ey in expected:
+        match=next((i for i,(x,y) in enumerate(remaining) if abs(x-ex)<=tol and abs(y-ey)<=tol),None)
+        if match is None:
+            return False
+        remaining.pop(match)
+    return True
+
 def set_rect(room:Room,box:tuple[float,float,float,float],mpp:float)->None:
     x1,y1,x2,y2=box
     pts=((x1,y1),(x2,y1),(x2,y2),(x1,y2))

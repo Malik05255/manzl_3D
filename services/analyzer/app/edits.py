@@ -1,7 +1,7 @@
 from __future__ import annotations
 from itertools import product
 from .commands import find_target_room,normalize_arabic,resolve_target_size
-from .edit_geometry import apply_side,bbox
+from .edit_geometry import apply_side,bbox,is_rectangular_room
 from .models import EditRequest,Impact,Proposal,ProposalResponse
 
 SERVICE_ROOM_WORDS=("حمام","دوره مياه","دورة مياه","مطبخ","درج","مصعد","غسيل")
@@ -24,6 +24,13 @@ def build_proposals(req:EditRequest)->ProposalResponse:
     mpp=req.plan.metersPerPixel
     if not mpp or mpp<=0:
         return ProposalResponse(command=req.command,proposals=[],needsClarification="يجب تثبيت مقياس المخطط أولًا قبل تنفيذ تعديل بالمتر.")
+
+    if not is_rectangular_room(target):
+        return ProposalResponse(
+            command=req.command,
+            proposals=[],
+            needsClarification="هذه الغرفة ذات شكل غير مستطيل. لن أختصر هندستها إلى مستطيل تلقائيًا؛ عدّلها يدويًا حتى يدعم المحرك التحريك متعدد الأضلاع.",
+        )
 
     x1,y1,x2,y2=bbox(target)
     current_w=(x2-x1)*mpp
