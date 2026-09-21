@@ -111,6 +111,7 @@ export async function route(request:Request,env:Env):Promise<Response>{
     const id=source[1];
     const secured=await protectedRow(request,env,id);
     if(secured instanceof Response) return secured;
+    if(secured.revision>0) return json({error:"هذا المشروع يحتوي على نسخة محفوظة. أنشئ مشروعًا جديدًا لرفع مخطط مختلف."},409);
 
     const mime=request.headers.get("content-type")?.split(";")[0]??"";
     const allowed=new Set(["application/pdf","image/png","image/jpeg","image/webp"]);
@@ -122,16 +123,23 @@ export async function route(request:Request,env:Env):Promise<Response>{
     if(!request.body) return json({error:"الملف فارغ"},400);
 
     const fileName=cleanName(url.searchParams.get("filename")??"source");
-    const key=`projects/${id}/source/${fileName}`;
+    const key=`projects/${id}/source/${crypto.randomUUID()}-${fileName}`;
     const stored=await env.ASSETS.put(key,request.body,{httpMetadata:{contentType:mime}});
     if(stored.size>maxSize){
       await env.ASSETS.delete(key);
       return json({error:"الحد الأقصى للملف 50MB"},413);
     }
 
+    const previousSourceKey=secured.source_key;
     const now=new Date().toISOString();
-    await env.DB.prepare("UPDATE projects SET source_key=?, status='queued', phase='upload', progress=10, message=?, error=NULL, updated_at=? WHERE id=?")
-      .bind(key,"اكتمل الرفع، بانتظار محرك التحليل",now,id).run();
+    await env.DB.prepare("UPDATE projects SET source_key=?, preview_key=NULL, status='queued', phase='upload', progress=10, message=?, error=NULL, updated_at=? WHERE id=? AND revision=?")
+      .bind(key,"اكتمل الرفع، بانتظار محرك التحليل",now,id,secured.revision).run();
+    const refreshed=await getProjectRow(env,id);
+    if(!refreshed||refreshed.source_key!==key){
+      await env.ASSETS.delete(key).catch(()=>undefined);
+      return json({error:"تغير المشروع أثناء رفع المصدر. أعد المحاولة."},409);
+    }
+    if(previousSourceKey&&previousSourceKey!==key) await env.ASSETS.delete(previousSourceKey).catch(()=>undefined);
     await env.ANALYZE_QUEUE.send({projectId:id,sourceKey:key,fileName,mimeType:mime,expectedRevision:secured.revision});
     return json({ok:true},202);
   }
