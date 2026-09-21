@@ -67,22 +67,25 @@ def resolve_target_size(command:str,current_width:float,current_height:float)->t
         return absolute
 
     text=normalize_arabic(command)
+
+    # Relative instructions must be resolved before named absolute values.
+    # Example: "نقص عرض غرفة النوم 50 سم" must mean -0.50 m, not width=50 m.
+    width_delta=_relative_delta(text,("العرض","عرض"))
+    height_delta=_relative_delta(text,("الطول","طول","العمق","عمق"))
+    if width_delta is not None or height_delta is not None:
+        target_width=current_width+(width_delta or 0)
+        target_height=current_height+(height_delta or 0)
+        if not (_valid_dimension(target_width) and _valid_dimension(target_height)):
+            return None
+        return target_width,target_height
+
     width=_named_value(text,("العرض","عرض"))
     height=_named_value(text,("الطول","طول","العمق","عمق"))
     if width is not None or height is not None:
         result=(width if width is not None else current_width,height if height is not None else current_height)
         return result if _valid_dimension(result[0]) and _valid_dimension(result[1]) else None
 
-    width_delta=_relative_delta(text,("العرض","عرض"))
-    height_delta=_relative_delta(text,("الطول","طول","العمق","عمق"))
-    if width_delta is None and height_delta is None:
-        return None
-
-    target_width=current_width+(width_delta or 0)
-    target_height=current_height+(height_delta or 0)
-    if not (_valid_dimension(target_width) and _valid_dimension(target_height)):
-        return None
-    return target_width,target_height
+    return None
 
 def room_match(command:str,room_name:str)->float:
     cmd=normalize_arabic(command)

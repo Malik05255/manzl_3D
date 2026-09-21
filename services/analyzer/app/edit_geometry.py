@@ -55,35 +55,68 @@ def move_boundary(plan:FloorPlan,side:str,old:float,new:float,span:tuple[float,f
         moved+=1
     return moved
 
-def apply_side(plan:FloorPlan,target:Room,side:str,delta_px:float,mpp:float)->tuple[bool,list[Impact],str|None]:
-    if abs(delta_px)<1: return True,[],None
+def apply_side(plan:FloorPlan,target:Room,side:str,delta_px:float,mpp:float)->tuple[bool,list[Impact],list[str]]:
+    if abs(delta_px)<1:
+        return True,[],[]
+
     tol=max(6.0,0.18/mpp)
     neighbors=adjacent(plan,target,side,tol)
-    if not neighbors: return False,[],None
-    neighbor=neighbors[0]
-    tx1,ty1,tx2,ty2=bbox(target); nx1,ny1,nx2,ny2=bbox(neighbor)
+    if not neighbors:
+        return False,[],[]
+
+    tx1,ty1,tx2,ty2=bbox(target)
     min_px=0.9/mpp
+
     if side=="right":
         new=tx2+delta_px
-        if nx2-new<min_px: return False,[],None
-        set_rect(target,(tx1,ty1,new,ty2),mpp); set_rect(neighbor,(new,ny1,nx2,ny2),mpp)
+        if any(bbox(room)[2]-new<min_px for room in neighbors):
+            return False,[],[]
+        set_rect(target,(tx1,ty1,new,ty2),mpp)
+        for room in neighbors:
+            nx1,ny1,nx2,ny2=bbox(room)
+            set_rect(room,(new,ny1,nx2,ny2),mpp)
         moved=move_boundary(plan,side,tx2,new,(ty1,ty2),tol)
     elif side=="left":
         new=tx1-delta_px
-        if new-nx1<min_px: return False,[],None
-        set_rect(target,(new,ty1,tx2,ty2),mpp); set_rect(neighbor,(nx1,ny1,new,ny2),mpp)
+        if any(new-bbox(room)[0]<min_px for room in neighbors):
+            return False,[],[]
+        set_rect(target,(new,ty1,tx2,ty2),mpp)
+        for room in neighbors:
+            nx1,ny1,nx2,ny2=bbox(room)
+            set_rect(room,(nx1,ny1,new,ny2),mpp)
         moved=move_boundary(plan,side,tx1,new,(ty1,ty2),tol)
     elif side=="bottom":
         new=ty2+delta_px
-        if ny2-new<min_px: return False,[],None
-        set_rect(target,(tx1,ty1,tx2,new),mpp); set_rect(neighbor,(nx1,new,nx2,ny2),mpp)
+        if any(bbox(room)[3]-new<min_px for room in neighbors):
+            return False,[],[]
+        set_rect(target,(tx1,ty1,tx2,new),mpp)
+        for room in neighbors:
+            nx1,ny1,nx2,ny2=bbox(room)
+            set_rect(room,(nx1,new,nx2,ny2),mpp)
         moved=move_boundary(plan,side,ty2,new,(tx1,tx2),tol)
     else:
         new=ty1-delta_px
-        if new-ny1<min_px: return False,[],None
-        set_rect(target,(tx1,new,tx2,ty2),mpp); set_rect(neighbor,(nx1,ny1,nx2,new),mpp)
+        if any(new-bbox(room)[1]<min_px for room in neighbors):
+            return False,[],[]
+        set_rect(target,(tx1,new,tx2,ty2),mpp)
+        for room in neighbors:
+            nx1,ny1,nx2,ny2=bbox(room)
+            set_rect(room,(nx1,ny1,nx2,new),mpp)
         moved=move_boundary(plan,side,ty1,new,(tx1,tx2),tol)
-    amount=abs(delta_px*mpp); verb="تصغير" if delta_px>0 else "تكبير"
-    impacts=[Impact(kind="wall_move",text=f"تحريك الجدار المشترك {amount:.2f} م"),Impact(kind="room_resize",text=f"{verb} {neighbor.name} بمقدار {amount:.2f} م",severity="warning" if delta_px>0 else "info")]
-    if moved: impacts.append(Impact(kind="door_move",text=f"تحريك {moved} عنصر مرتبط بالجدار تلقائيًا",severity="warning"))
-    return True,impacts,neighbor.name
+
+    amount=abs(delta_px*mpp)
+    verb="تصغير" if delta_px>0 else "تكبير"
+    impacts=[Impact(kind="wall_move",text=f"تحريك الجدار المشترك {amount:.2f} م")]
+    for neighbor in neighbors:
+        impacts.append(Impact(
+            kind="room_resize",
+            text=f"{verb} {neighbor.name} بمقدار {amount:.2f} م",
+            severity="warning" if delta_px>0 else "info",
+        ))
+    if moved:
+        impacts.append(Impact(
+            kind="door_move",
+            text=f"تحريك {moved} عنصر مرتبط بالجدار تلقائيًا",
+            severity="warning",
+        ))
+    return True,impacts,[room.name for room in neighbors]

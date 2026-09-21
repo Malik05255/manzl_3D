@@ -106,3 +106,48 @@ def test_minor_room_name_typo_is_understood():
     target=find_target_room("عدل غرفه النؤم إلى 5×4",plan.rooms)
     assert target is not None
     assert target.id=="bed"
+
+
+def test_relative_centimeters_take_precedence_over_absolute_width():
+    assert resolve_target_size("نقص عرض غرفة النوم 50 سم",4.0,4.0) == (3.5,4.0)
+
+
+def test_resize_shared_side_updates_all_adjacent_rooms():
+    plan=sample_plan()
+    plan.rooms=[
+        Room(
+            id="bed",
+            name="غرفة النوم",
+            polygon=[Point(x=100,y=100),Point(x=500,y=100),Point(x=500,y=500),Point(x=100,y=500)],
+            confidence=0.95,
+            areaM2=16,
+        ),
+        Room(
+            id="hall",
+            name="الصالة",
+            polygon=[Point(x=500,y=100),Point(x=900,y=100),Point(x=900,y=300),Point(x=500,y=300)],
+            confidence=0.95,
+            areaM2=8,
+        ),
+        Room(
+            id="bath",
+            name="حمام",
+            polygon=[Point(x=500,y=300),Point(x=900,y=300),Point(x=900,y=500),Point(x=500,y=500)],
+            confidence=0.95,
+            areaM2=8,
+        ),
+    ]
+    response=build_proposals(EditRequest(
+        project_id="project-1",
+        command="عدل غرفة النوم إلى 5×4",
+        plan=plan,
+    ))
+    assert response.proposals
+    preview=response.proposals[0].previewPlan
+    hall=next(room for room in preview.rooms if room.id=="hall")
+    bath=next(room for room in preview.rooms if room.id=="bath")
+    assert round(room_width(hall,0.01),2)==3.0
+    assert round(room_width(bath,0.01),2)==3.0
+    impact_text=" ".join(item.text for item in response.proposals[0].impacts)
+    assert "الصالة" in impact_text
+    assert "حمام" in impact_text

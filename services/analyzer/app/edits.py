@@ -53,17 +53,15 @@ def build_proposals(req:EditRequest)->ProposalResponse:
         valid=True
 
         if x_side:
-            valid,changes,name=apply_side(plan,room,x_side,dx,mpp)
+            valid,changes,names=apply_side(plan,room,x_side,dx,mpp)
             impacts.extend(changes)
-            if name:
-                affected.append(name)
+            affected.extend(names)
 
         if valid and y_side:
             room=next(r for r in plan.rooms if r.id==target.id)
-            valid,changes,name=apply_side(plan,room,y_side,dy,mpp)
+            valid,changes,names=apply_side(plan,room,y_side,dy,mpp)
             impacts.extend(changes)
-            if name:
-                affected.append(name)
+            affected.extend(names)
 
         if not valid:
             continue
