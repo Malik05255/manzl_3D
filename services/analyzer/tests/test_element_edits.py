@@ -174,3 +174,17 @@ def test_reviewed_low_confidence_opening_can_be_edited():
         project_id="p1",command="اجعل عرضه 1 متر",target_opening_id="door-1",plan=plan,
     ))
     assert response.proposals
+
+
+def test_opening_geometry_edit_preserves_review_metadata():
+    plan=sample_plan()
+    plan.doors[0].confidence=.60
+    plan.doors[0].reviewed=True
+    plan.doors[0].provenance="opencv"
+    response=build_proposals(EditRequest(
+        project_id="p1",command="اجعل عرضه 1 متر",target_opening_id="door-1",plan=plan,
+    ))
+    assert response.proposals
+    opening=response.proposals[0].previewPlan.doors[0]
+    assert opening.reviewed is True
+    assert opening.provenance=="opencv"
