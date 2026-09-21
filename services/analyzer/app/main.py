@@ -18,6 +18,7 @@ from .openings import detect_doors,detect_windows,normalize_opening_hosts
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
+from .symbols import extract_symbol_detections
 from .topology import canonicalize_plan,classify_wall_roles,link_room_boundaries
 from .semantic import normalize_edit_semantics
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,rasterize_wall_mask
@@ -104,9 +105,15 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
             return await extract_cloud_ocr_labels(image)
         except Exception:
             return []
-    local_labels,cloud_labels=await asyncio.gather(
+    async def _safe_symbols():
+        try:
+            return await extract_symbol_detections(image)
+        except Exception:
+            return []
+    local_labels,cloud_labels,symbols=await asyncio.gather(
         _safe_local_ocr(),
         _safe_cloud_ocr(),
+        _safe_symbols(),
     )
     used_cloud_ocr=bool(cloud_labels)
     if cloud_labels:
@@ -168,6 +175,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     if used_cloud_ocr: engines.append("google-vision")
     if used_pdf_text: engines.append("pdf-text")
     if used_pdf_vector: engines.append("pdf-vector")
+    if symbols: engines.append("symbol-detector")
     analysis={
         "pipelineVersion":PIPELINE_VERSION,
         "analyzedAt":datetime.now(timezone.utc).isoformat(),
@@ -177,7 +185,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     result=assemble_plan(
         image,req.project_id,req.filename,req.mime_type,labels,walls,rooms,scale,scale_confidence,
         source_page=source_page,source_page_count=source_page_count,doors=doors,windows=windows,
-        dimensions=dimensions,scale_warnings=scale_warnings,analysis=analysis,
+        dimensions=dimensions,symbols=symbols,scale_warnings=scale_warnings,analysis=analysis,
     )
     return FloorPlan.model_validate(result)
 
