@@ -115,3 +115,41 @@ def test_double_swing_door_maps_to_official_aec_class():
     }
     prediction=plan_to_aec_prediction(source,sheet="sheet",width=500,height=400)
     assert prediction["objects"][0]["class"]=="Double Swing Door"
+
+
+def test_door_swing_geometry_expands_object_box():
+    source={
+        "widthPx":500,
+        "heightPx":400,
+        "walls":[],
+        "rooms":[],
+        "doors":[{
+            "id":"d1","kind":"door","doorSubtype":"single_swing",
+            "doorSwingSide":"negative","doorSwingDepthPx":85.0,
+            "a":{"x":100.0,"y":200.0},"b":{"x":200.0,"y":200.0},"confidence":.9,
+        }],
+        "windows":[],
+        "symbols":[],
+    }
+    prediction=plan_to_aec_prediction(source,sheet="sheet",width=500,height=400)
+    x1,y1,x2,y2=prediction["objects"][0]["bbox"]
+    assert x1<100 and x2>200
+    assert y1<120
+    assert y2>200
+
+
+def test_sliding_door_is_not_mislabeled_as_swing_door_in_aec_taxonomy():
+    source={
+        "widthPx":500,
+        "heightPx":400,
+        "walls":[],
+        "rooms":[],
+        "doors":[{
+            "id":"d1","kind":"door","doorSubtype":"sliding",
+            "a":{"x":100.0,"y":200.0},"b":{"x":200.0,"y":200.0},"confidence":1,
+        }],
+        "windows":[],
+        "symbols":[],
+    }
+    prediction=plan_to_aec_prediction(source,sheet="sheet",width=500,height=400)
+    assert prediction["objects"]==[]
