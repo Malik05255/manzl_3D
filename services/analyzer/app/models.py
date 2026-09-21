@@ -48,6 +48,7 @@ class Source(BaseModel):
     fileName: str
     mimeType: str
     page: int = 1
+    pageCount: int | None = None
 
 class FloorPlan(BaseModel):
     schemaVersion: Literal[1] = 1
