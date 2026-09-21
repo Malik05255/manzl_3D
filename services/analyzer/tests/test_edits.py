@@ -467,3 +467,23 @@ def test_reviewed_low_confidence_room_can_be_edited():
         plan=plan,
     ))
     assert response.proposals
+
+
+def test_ai_resize_marks_changed_geometry_provenance():
+    plan=sample_plan()
+    plan.rooms[0].provenance="opencv"
+    plan.rooms[1].provenance="opencv"
+    plan.walls[0].provenance="opencv"
+    response=build_proposals(EditRequest(
+        project_id="project-1",
+        command="عدل غرفة النوم إلى 5×4",
+        plan=plan,
+    ))
+    assert response.proposals
+    preview=response.proposals[0].previewPlan
+    bed=next(room for room in preview.rooms if room.id=="bed")
+    hall=next(room for room in preview.rooms if room.id=="hall")
+    wall=next(item for item in preview.walls if item.id=="w1")
+    assert bed.provenance=="mixed"
+    assert hall.provenance=="mixed"
+    assert wall.provenance=="mixed"
