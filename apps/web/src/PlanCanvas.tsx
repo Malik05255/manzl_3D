@@ -1,6 +1,7 @@
-import { useMemo,useRef,useState } from "react";
+import { useEffect,useMemo,useRef,useState } from "react";
 import type { FloorPlanModel,Point,ValidationFinding,Wall } from "@manzil/contracts";
 import { Minus,Plus,RotateCcw,Ruler } from "lucide-react";
+import { easePreview,interpolatePlan } from "./previewInterpolation";
 
 interface Props{
   plan:FloorPlanModel;
@@ -90,7 +91,7 @@ export function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall)
   }).map(wall=>wall.id));
   movedWallIds.add(original.id);
 
-  const walls=plan.walls.map(wall=>{
+  const walls=renderPlan.walls.map(wall=>{
     if(movedWallIds.has(wall.id)){
       return vertical
         ?{...wall,a:{...wall.a,x:wall.a.x+delta},b:{...wall.b,x:wall.b.x+delta}}
@@ -108,7 +109,7 @@ export function moveWallAndTopology(plan:FloorPlanModel,original:Wall,next:Wall)
     return {...wall,a:movePoint(wall.a),b:movePoint(wall.b)};
   });
 
-  const rooms=plan.rooms.map(room=>{
+  const rooms=renderPlan.rooms.map(room=>{
     const xs=room.polygon.map(p=>p.x); const ys=room.polygon.map(p=>p.y);
     const left=Math.min(...xs),right=Math.max(...xs),top=Math.min(...ys),bottom=Math.max(...ys);
     const shared=vertical?overlap(top,bottom,span1,span2):overlap(left,right,span1,span2);
@@ -145,8 +146,28 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
   const[drag,setDrag]=useState<DragState>(null);
   const[measureMode,setMeasureMode]=useState(false);
   const[measurePoints,setMeasurePoints]=useState<Point[]>([]);
+  const[previewProgress,setPreviewProgress]=useState(1);
   const svgRef=useRef<SVGSVGElement|null>(null);
+  useEffect(()=>{
+    if(!comparisonPlan){setPreviewProgress(1);return;}
+    if(typeof window!=="undefined"&&window.matchMedia?.("(prefers-reduced-motion: reduce)").matches){setPreviewProgress(1);return;}
+    setPreviewProgress(0);
+    let frame=0;
+    const started=performance.now();
+    const duration=620;
+    const tick=(now:number)=>{
+      const progress=Math.min(1,(now-started)/duration);
+      setPreviewProgress(progress);
+      if(progress<1)frame=requestAnimationFrame(tick);
+    };
+    frame=requestAnimationFrame(tick);
+    return()=>cancelAnimationFrame(frame);
+  },[comparisonPlan,plan]);
   const viewBox=useMemo(()=>`0 0 ${Math.max(plan.widthPx,1)} ${Math.max(plan.heightPx,1)}`,[plan.widthPx,plan.heightPx]);
+  const renderPlan=useMemo(
+    ()=>comparisonPlan&&previewProgress<1?interpolatePlan(comparisonPlan,plan,easePreview(previewProgress)):plan,
+    [comparisonPlan,plan,previewProgress]
+  );
   const zoomStageStyle=useMemo(()=>({
     width:`min(${zoom*100}%, ${Math.round(1100*zoom)}px)`,
     aspectRatio:`${Math.max(plan.widthPx,1)} / ${Math.max(plan.heightPx,1)}`,
@@ -250,23 +271,23 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
       <svg ref={svgRef} className="plan-svg" viewBox={viewBox} onPointerDown={handleCanvasPointer}>
         <rect width={plan.widthPx} height={plan.heightPx} fill="#fff"/>
         {backgroundUrl&&<image href={backgroundUrl} x={0} y={0} width={plan.widthPx} height={plan.heightPx} preserveAspectRatio="none" opacity={backgroundOpacity} pointerEvents="none"/>}
-        {comparisonPlan&&comparisonPlan.rooms.map(oldRoom=>{
+        {comparisonPlan&&previewProgress>=1&&comparisonPlan.rooms.map(oldRoom=>{
           const current=plan.rooms.find(room=>room.id===oldRoom.id);
           const oldPoints=oldRoom.polygon.map(p=>`${p.x},${p.y}`).join(" ");
           const currentPoints=current?.polygon.map(p=>`${p.x},${p.y}`).join(" ");
           if(!current||oldPoints===currentPoints)return null;
           return <polygon key={`old-room-${oldRoom.id}`} points={oldPoints} fill="rgba(244,63,94,.045)" stroke="#e11d48" strokeWidth={3} strokeDasharray="12 8" pointerEvents="none"/>;
         })}
-        {comparisonPlan&&comparisonPlan.walls.map(oldWall=>{
+        {comparisonPlan&&previewProgress>=1&&comparisonPlan.walls.map(oldWall=>{
           const current=plan.walls.find(wall=>wall.id===oldWall.id);
           if(!current)return null;
           const changed=Math.abs(current.a.x-oldWall.a.x)>1||Math.abs(current.a.y-oldWall.a.y)>1||Math.abs(current.b.x-oldWall.b.x)>1||Math.abs(current.b.y-oldWall.b.y)>1;
           if(!changed)return null;
           return <line key={`old-wall-${oldWall.id}`} x1={oldWall.a.x} y1={oldWall.a.y} x2={oldWall.b.x} y2={oldWall.b.y} stroke="#e11d48" strokeWidth={Math.max(3,oldWall.thicknessPx)} strokeDasharray="12 8" opacity={.8} pointerEvents="none"/>;
         })}
-        {plan.rooms.map(room=>{
-          const metrics=roomVisualMetrics(room,plan.metersPerPixel);
-          const showMetrics=Boolean(plan.metersPerPixel)&&metrics.widthPx>=70&&metrics.heightPx>=55;
+        {renderPlan.rooms.map(room=>{
+          const metrics=roomVisualMetrics(room,renderPlan.metersPerPixel);
+          const showMetrics=Boolean(renderPlan.metersPerPixel)&&metrics.widthPx>=70&&metrics.heightPx>=55;
           const selected=selectedRoomId===room.id;
           const validationSeverity=validationByRoom.get(room.id);
           return <g key={room.id}>
@@ -295,7 +316,7 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
             </text>}
           </g>;
         })}
-        {plan.walls.map(wall=>{
+        {renderPlan.walls.map(wall=>{
           const severity=validationByWall.get(wall.id);
           const stroke=selectedWallId===wall.id?"#2563eb":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":severity==="info"?"#2563eb":"#0f172a";
           return <line key={wall.id}
@@ -307,7 +328,7 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
             onPointerDown={e=>{if(readonly||calibrationMode||measureMode)return;e.currentTarget.setPointerCapture(e.pointerId);onSelectOpening?.(null);onSelectWall?.(wall.id);setDrag({wallId:wall.id,startClient:{x:e.clientX,y:e.clientY},original:wall,basePlan:plan,changed:false});}}
           />;
         })}
-        {plan.doors.map(o=>{
+        {renderPlan.doors.map(o=>{
           const severity=validationByOpening.get(o.id);
           const stroke=selectedOpeningId===o.id?"#1d4ed8":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":"#0ea5e9";
           return <g key={o.id} className={readonly||calibrationMode||measureMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode||measureMode)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
@@ -315,7 +336,7 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
             <line x1={o.a.x} y1={o.a.y} x2={o.b.x} y2={o.b.y} stroke={stroke} strokeWidth={selectedOpeningId===o.id?7:severity==="critical"?6:4} strokeLinecap="round" strokeDasharray={severity&&!selectedOpeningId?"9 5":undefined}/>
           </g>;
         })}
-        {plan.windows.map(o=>{
+        {renderPlan.windows.map(o=>{
           const severity=validationByOpening.get(o.id);
           const stroke=selectedOpeningId===o.id?"#1d4ed8":severity==="critical"?"#e11d48":severity==="warning"?"#d97706":"#38bdf8";
           return <g key={o.id} className={readonly||calibrationMode||measureMode?undefined:"editable-opening"} onPointerDown={event=>{if(readonly||calibrationMode||measureMode)return;event.stopPropagation();onSelectOpening?.(o.id);}}>
