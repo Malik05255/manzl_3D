@@ -1,7 +1,5 @@
 from __future__ import annotations
 from itertools import product
-from uuid import uuid4
-
 from .commands import find_target_room,parse_target_size
 from .edit_geometry import apply_side,bbox
 from .models import EditRequest,Impact,Proposal,ProposalResponse
@@ -13,7 +11,9 @@ def build_proposals(req:EditRequest)->ProposalResponse:
 
     target=find_target_room(req.command,req.plan.rooms)
     if target is None:
-        return ProposalResponse(command=req.command,proposals=[],needsClarification="لم أستطع تحديد الغرفة المقصودة بثقة. اذكر اسمها كما يظهر في المخطط.")
+        names="، ".join(room.name for room in req.plan.rooms[:10])
+        detail=f" الغرف المقروءة: {names}." if names else ""
+        return ProposalResponse(command=req.command,proposals=[],needsClarification="لم أستطع تحديد الغرفة المقصودة بثقة."+detail)
 
     mpp=req.plan.metersPerPixel
     if not mpp or mpp<=0:
@@ -38,6 +38,7 @@ def build_proposals(req:EditRequest)->ProposalResponse:
             impacts.extend(changes)
             if name: affected.append(name)
         if valid and y_side:
+            room=next(r for r in plan.rooms if r.id==target.id)
             valid,changes,name=apply_side(plan,room,y_side,dy,mpp)
             impacts.extend(changes)
             if name: affected.append(name)
@@ -48,8 +49,9 @@ def build_proposals(req:EditRequest)->ProposalResponse:
         summary=f"تصبح {target.name} {target_w:g}×{target_h:g} م"
         if affected: summary+=f" مع تعديل {' و'.join(affected)}"
         plan.quality.warnings=list(dict.fromkeys([*plan.quality.warnings,"راجع الأبواب ومسارات الحركة بصريًا قبل اعتماد التعديل."]))
+        proposal_id=f"resize:{target.id}:{x_side or 'same'}:{y_side or 'same'}:{target_w:g}x{target_h:g}"
         proposals.append(Proposal(
-            id=str(uuid4()),title=f"التعديل باتجاه {dirs}",summary=summary,
+            id=proposal_id,title=f"التعديل باتجاه {dirs}",summary=summary,
             confidence=max(0.55,min(0.95,req.plan.quality.overall)),
             impacts=[Impact(kind="room_resize",text=f"تغيير {target.name} من {current_w:.2f}×{current_h:.2f} م إلى {target_w:g}×{target_h:g} م"),*impacts],
             warnings=[],previewPlan=plan

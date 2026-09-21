@@ -1,26 +1,39 @@
 from __future__ import annotations
-import asyncio
 import os
 import httpx
-from fastapi import FastAPI,File,Form,Header,HTTPException,UploadFile
-from .document import decode_document
+from fastapi import FastAPI,Header,HTTPException
+from pydantic import BaseModel,HttpUrl
+from .commands import find_target_room,parse_target_size
+from .document import decode_document,preprocess
 from .edits import build_proposals
 from .models import EditRequest,FloorPlan,ProposalResponse
-from .pipeline import analyze_image
+from .ocr import extract_ocr_labels
+from .pipeline import assemble_plan
+from .rooms import detect_rooms
+from .scale import estimate_scale
+from .walls import detect_walls
 
 app=FastAPI(title="Manzil H Analyzer",version="0.1.0")
-MAX_BYTES=50*1024*1024
 
-def verify_internal(value:str|None)->None:
+class AnalyzeRequest(BaseModel):
+    project_id:str
+    source_url:HttpUrl
+    filename:str
+    mime_type:str
+    callback_url:HttpUrl|None=None
+
+def authorize(token:str|None):
     expected=os.getenv("INTERNAL_TOKEN","")
-    if expected and value!=expected:
+    if expected and token!=expected:
         raise HTTPException(status_code=401,detail="unauthorized")
 
-async def report(url:str,token:str,project_id:str,phase:str,progress:int,message:str)->None:
+async def progress(url:HttpUrl|None,project_id:str,phase:str,value:int,message:str):
     if not url: return
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            await client.post(url,headers={"x-manzil-internal":token},json={"project_id":project_id,"status":"analyzing","phase":phase,"progress":progress,"message":message})
+        async with httpx.AsyncClient(timeout=12) as client:
+            await client.post(str(url),headers={"x-manzil-internal":os.getenv("INTERNAL_TOKEN","")},json={
+                "project_id":project_id,"status":"analyzing","phase":phase,"progress":value,"message":message
+            })
     except Exception:
         pass
 
@@ -29,29 +42,35 @@ async def health():
     return {"ok":True}
 
 @app.post("/v1/analyze",response_model=FloorPlan)
-async def analyze(
-    file:UploadFile=File(...),
-    project_id:str=Form(...),
-    filename:str=Form(...),
-    mime_type:str=Form(...),
-    callback_url:str=Form(""),
-    callback_token:str=Form(""),
-    x_manzil_internal:str|None=Header(default=None),
-):
-    verify_internal(x_manzil_internal)
-    data=await file.read()
-    if not data or len(data)>MAX_BYTES:
-        raise HTTPException(status_code=413,detail="invalid file size")
-    await report(callback_url,callback_token,project_id,"preprocess",20,"تهيئة الملف وتصحيح الصورة")
-    image=await asyncio.to_thread(decode_document,data,mime_type)
-    await report(callback_url,callback_token,project_id,"ocr",38,"قراءة النصوص والأبعاد")
-    result=await asyncio.to_thread(analyze_image,image,project_id,filename,mime_type)
-    await report(callback_url,callback_token,project_id,"validation",94,"التحقق من النموذج الهندسي")
+async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=None)):
+    authorize(x_manzil_internal)
+    await progress(req.callback_url,req.project_id,"preprocess",18,"تنزيل المخطط وتهيئته")
+    async with httpx.AsyncClient(timeout=120,follow_redirects=True) as client:
+        response=await client.get(str(req.source_url),headers={"x-manzil-internal":os.getenv("INTERNAL_TOKEN","")})
+        response.raise_for_status()
+        data=response.content
+    if len(data)>50*1024*1024:
+        raise HTTPException(status_code=413,detail="file too large")
+
+    image=decode_document(data,req.mime_type)
+    h,w=image.shape[:2]
+    _,ink=preprocess(image)
+
+    await progress(req.callback_url,req.project_id,"ocr",35,"قراءة النصوص والأبعاد")
+    labels=extract_ocr_labels(image)
+
+    await progress(req.callback_url,req.project_id,"geometry",58,"استخراج الجدران والهندسة")
+    walls,wall_mask=detect_walls(ink)
+    scale,scale_confidence=estimate_scale(labels,walls,w,h)
+
+    await progress(req.callback_url,req.project_id,"rooms",78,"فهم الغرف والعلاقات")
+    rooms=detect_rooms(wall_mask,labels,scale)
+
+    await progress(req.callback_url,req.project_id,"validation",93,"التحقق من جودة النتيجة")
+    result=assemble_plan(image,req.project_id,req.filename,req.mime_type,labels,walls,rooms,scale,scale_confidence)
     return FloorPlan.model_validate(result)
 
 @app.post("/v1/edit/proposals",response_model=ProposalResponse)
 async def proposals(req:EditRequest,x_manzil_internal:str|None=Header(default=None)):
-    verify_internal(x_manzil_internal)
-    if req.project_id!=req.plan.id:
-        raise HTTPException(status_code=400,detail="project mismatch")
+    authorize(x_manzil_internal)
     return build_proposals(req)
