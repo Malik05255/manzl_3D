@@ -1,4 +1,4 @@
-from app.models import FloorPlan,Point,Quality,Room,Source
+from app.models import FloorPlan,Point,Quality,Room,Source,Wall
 from app.validation import validate_plan
 
 
@@ -10,13 +10,13 @@ def base_plan():
         metersPerPixel=0.01,
         calibrationConfidence=1,
         walls=[
-            __import__("app.models",fromlist=["Wall"]).Wall(id="left",a=Point(x=100,y=100),b=Point(x=100,y=500),thicknessPx=10,confidence=.9),
-            __import__("app.models",fromlist=["Wall"]).Wall(id="top",a=Point(x=100,y=100),b=Point(x=500,y=100),thicknessPx=10,confidence=.9),
-            __import__("app.models",fromlist=["Wall"]).Wall(id="bottom-left",a=Point(x=100,y=500),b=Point(x=500,y=500),thicknessPx=10,confidence=.9),
-            __import__("app.models",fromlist=["Wall"]).Wall(id="shared",a=Point(x=500,y=100),b=Point(x=500,y=500),thicknessPx=10,confidence=.9),
-            __import__("app.models",fromlist=["Wall"]).Wall(id="top-right",a=Point(x=500,y=100),b=Point(x=900,y=100),thicknessPx=10,confidence=.9),
-            __import__("app.models",fromlist=["Wall"]).Wall(id="bottom-right",a=Point(x=500,y=500),b=Point(x=900,y=500),thicknessPx=10,confidence=.9),
-            __import__("app.models",fromlist=["Wall"]).Wall(id="right",a=Point(x=900,y=100),b=Point(x=900,y=500),thicknessPx=10,confidence=.9),
+            Wall(id="left",a=Point(x=100,y=100),b=Point(x=100,y=500),thicknessPx=10,confidence=.9),
+            Wall(id="top",a=Point(x=100,y=100),b=Point(x=500,y=100),thicknessPx=10,confidence=.9),
+            Wall(id="bottom-left",a=Point(x=100,y=500),b=Point(x=500,y=500),thicknessPx=10,confidence=.9),
+            Wall(id="shared",a=Point(x=500,y=100),b=Point(x=500,y=500),thicknessPx=10,confidence=.9),
+            Wall(id="top-right",a=Point(x=500,y=100),b=Point(x=900,y=100),thicknessPx=10,confidence=.9),
+            Wall(id="bottom-right",a=Point(x=500,y=500),b=Point(x=900,y=500),thicknessPx=10,confidence=.9),
+            Wall(id="right",a=Point(x=900,y=100),b=Point(x=900,y=500),thicknessPx=10,confidence=.9),
         ],
         rooms=[
             Room(
