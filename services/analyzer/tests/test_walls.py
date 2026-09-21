@@ -391,3 +391,31 @@ def test_thick_wall_near_dimension_label_is_not_quarantined():
     quarantined=quarantine_dimension_aligned_walls(walls,labels,800,1000)
     assert quarantined==set()
     assert walls[0]["confidence"]==.90
+
+
+
+def test_thin_pdf_vector_quarantines_wall_even_when_raster_thickness_is_inflated():
+    walls=[{
+        "id":"inflated-dimension-line",
+        "a":{"x":100.0,"y":100.0},
+        "b":{"x":500.0,"y":100.0},
+        "thicknessPx":20.0,
+        "confidence":.93,
+        "provenance":"mixed",
+    }]
+    labels=[{
+        "text":"4.00 m",
+        "center":{"x":300.0,"y":82.0},
+        "confidence":.99,
+        "kind":"dimension",
+    }]
+    vectors=[{
+        "a":{"x":100.0,"y":100.0},
+        "b":{"x":500.0,"y":100.0},
+        "widthPx":2.4,
+    }]
+    quarantined=quarantine_dimension_aligned_walls(
+        walls,labels,800,1000,vector_lines=vectors,
+    )
+    assert quarantined=={"inflated-dimension-line"}
+    assert walls[0]["confidence"]<=.64
