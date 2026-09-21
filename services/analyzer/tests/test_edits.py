@@ -201,3 +201,32 @@ def test_can_offer_absorbing_aligned_service_room():
     bed=next(room for room in absorb.previewPlan.rooms if room.id=="bed")
     assert round(room_width(bed,0.01),2)==5.0
     assert any(impact.kind=="room_remove" for impact in absorb.impacts)
+
+
+def test_explicit_merge_room_command():
+    plan=sample_plan()
+    plan.rooms=[
+        Room(
+            id="bed",
+            name="غرفة النوم",
+            polygon=[Point(x=100,y=100),Point(x=500,y=100),Point(x=500,y=500),Point(x=100,y=500)],
+            confidence=.95,
+            areaM2=16,
+        ),
+        Room(
+            id="bath",
+            name="حمام",
+            polygon=[Point(x=500,y=100),Point(x=600,y=100),Point(x=600,y=500),Point(x=500,y=500)],
+            confidence=.95,
+            areaM2=4,
+        ),
+    ]
+    response=build_proposals(EditRequest(
+        project_id="project-1",
+        command="احذف حمام وضم مساحته الى غرفة النوم",
+        plan=plan,
+    ))
+    assert response.proposals
+    proposal=response.proposals[0]
+    assert proposal.id=="merge:bath:into:bed"
+    assert not any(room.id=="bath" for room in proposal.previewPlan.rooms)

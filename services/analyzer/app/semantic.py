@@ -106,7 +106,17 @@ def _canonical_from_payload(payload:dict,request:EditRequest)->tuple[str|None,st
     if clarification:
         return None,clarification[:240]
 
-    if str(payload.get("action") or "")!="resize_room":
+    action=str(payload.get("action") or "")
+    if action=="merge_room":
+        source_name=str(payload.get("source_room") or "").strip()
+        target_name=str(payload.get("target_room") or "").strip()
+        source=next((room for room in request.plan.rooms if normalize_arabic(room.name)==normalize_arabic(source_name)),None)
+        target=next((room for room in request.plan.rooms if normalize_arabic(room.name)==normalize_arabic(target_name)),None)
+        if source is None or target is None or source.id==target.id:
+            return None,None
+        return f"ادمج {source.name} مع {target.name}",None
+
+    if action!="resize_room":
         return None,None
 
     target_name=str(payload.get("target_room") or "").strip()
@@ -144,14 +154,16 @@ async def _ask_provider(provider:Provider,request:EditRequest)->tuple[str|None,s
         "rules":[
             "Do not invent a room that is not listed.",
             "Only interpret the requested change; do not redesign the house.",
-            "Convert relative changes into final width_m and height_m using current dimensions.",
+            "Use merge_room only when the user explicitly asks to remove or merge one listed room into another.",
+            "Convert relative resize changes into final width_m and height_m using current dimensions.",
             "If ambiguous, set needs_clarification instead of guessing.",
         ],
         "output_schema":{
-            "action":"resize_room",
+            "action":"resize_room or merge_room",
+            "source_room":"exact room name when action is merge_room",
             "target_room":"exact room name",
-            "width_m":"number",
-            "height_m":"number",
+            "width_m":"number when action is resize_room",
+            "height_m":"number when action is resize_room",
             "needs_clarification":"empty string or short Arabic question",
         },
     }

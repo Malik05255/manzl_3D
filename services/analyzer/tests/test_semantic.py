@@ -75,3 +75,15 @@ def test_provider_configuration_references_secret_env(monkeypatch):
     providers=_load_providers()
     assert len(providers)==1
     assert providers[0].key_env=="FREE_A_KEY"
+
+
+def test_semantic_merge_payload_is_canonicalized():
+    request=sample_request("احذف الصالة وضمها لغرفة النوم")
+    normalized,clarification=_canonical_from_payload({
+        "action":"merge_room",
+        "source_room":"الصالة",
+        "target_room":"غرفة النوم",
+        "needs_clarification":"",
+    },request)
+    assert clarification is None
+    assert normalized=="ادمج الصالة مع غرفة النوم"
