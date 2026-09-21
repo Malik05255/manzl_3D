@@ -1,4 +1,4 @@
-import type { ApplyProposalRequest,EditProposalResponse,FloorPlanModel,SaveRevisionRequest } from "@manzil/contracts";
+import type { ApplyProposalRequest,EditProposalResponse,FloorPlanModel,SaveRevisionRequest,ValidationReport } from "@manzil/contracts";
 import { createProjectAccess,hasProjectAccess } from "./access";
 import { getProjectRow,persistPlan,projectView } from "./db";
 import { cleanName,json } from "./http";
@@ -28,6 +28,19 @@ async function analyzerResizeProposals(env:Env,id:string,roomId:string,widthM:nu
     throw new Error(detail||"تعذر إنشاء المعاينة الهندسية");
   }
   return upstream.json<EditProposalResponse>();
+}
+
+async function analyzerValidation(env:Env,id:string,plan:FloorPlanModel):Promise<ValidationReport>{
+  const upstream=await fetch(`${env.ANALYZER_URL.replace(/\/$/,"")}/v1/validate`,{
+    method:"POST",
+    headers:{"content-type":"application/json","x-manzil-internal":env.INTERNAL_TOKEN},
+    body:JSON.stringify({project_id:id,plan})
+  });
+  if(!upstream.ok){
+    const detail=await upstream.text().catch(()=>"");
+    throw new Error(detail||"تعذر فحص المخطط");
+  }
+  return upstream.json<ValidationReport>();
 }
 
 async function protectedRow(request:Request,env:Env,id:string):Promise<ProjectRow|Response>{
@@ -156,6 +169,17 @@ export async function route(request:Request,env:Env):Promise<Response>{
     await persistPlan(env,id,plan,`استعادة النسخة ${revisionNumber}`);
     const row=await getProjectRow(env,id);
     return json(await projectView(env,row!,true));
+  }
+
+  const validateMatch=path.match(/^\/v1\/projects\/([^/]+)\/validate$/);
+  if(validateMatch&&request.method==="POST"){
+    const id=validateMatch[1];
+    const secured=await protectedRow(request,env,id);
+    if(secured instanceof Response) return secured;
+    const plan=await currentPlan(env,secured);
+    if(!plan) return json({error:"المخطط غير جاهز للفحص"},409);
+    try{return json(await analyzerValidation(env,id,plan));}
+    catch(error){return json({error:error instanceof Error?error.message:"تعذر فحص المخطط"},502);}
   }
 
   const preciseResize=path.match(/^\/v1\/projects\/([^/]+)\/geometry\/resize-proposals$/);
