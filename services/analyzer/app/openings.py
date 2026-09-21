@@ -103,7 +103,7 @@ def _hough_segments(roi:np.ndarray,gap_px:float)->list[tuple[int,int,int,int]]:
         minLineLength=max(7,int(gap_px*0.25)),
         maxLineGap=max(3,int(gap_px*0.10)),
     )
-    return [] if raw is None else [tuple(map(int,item)) for item in raw[:,0]]
+    return [] if raw is None else [tuple(map(int,item)) for item in np.asarray(raw).reshape(-1,4)]
 
 
 def _door_leaf_evidence_details(
