@@ -103,6 +103,8 @@ def detect_rooms(wall_mask:np.ndarray,labels:list[dict],meters_per_pixel:float|N
             "polygon":polygon,
             "confidence":max(0.45,confidence),
             "areaM2":round(area_m2,2) if area_m2 else None,
+            "reviewed":False,
+            "provenance":"opencv",
         })
 
     return rooms
