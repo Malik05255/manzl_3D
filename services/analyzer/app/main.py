@@ -13,6 +13,7 @@ from .openings import detect_doors
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale
+from .semantic import normalize_edit_semantics
 from .walls import detect_walls
 
 app=FastAPI(title="Manzil H Analyzer",version="0.1.0")
@@ -97,4 +98,10 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
 @app.post("/v1/edit/proposals",response_model=ProposalResponse)
 async def proposals(req:EditRequest,x_manzil_internal:str|None=Header(default=None)):
     authorize(x_manzil_internal)
-    return build_proposals(req)
+    normalized,clarification=await normalize_edit_semantics(req)
+    if clarification:
+        return ProposalResponse(command=req.command,proposals=[],needsClarification=clarification)
+    normalized_request=req.model_copy(update={"command":normalized})
+    result=build_proposals(normalized_request)
+    result.command=req.command
+    return result
