@@ -264,6 +264,8 @@ def build_proposals(req:EditRequest)->ProposalResponse:
         return build_merge_proposal(req.plan,source,target,req.command)
 
     target=find_target_room(req.command,req.plan.rooms)
+    if target is None and req.target_room_id:
+        target=next((room for room in req.plan.rooms if room.id==req.target_room_id),None)
     if target is None:
         names="، ".join(room.name for room in req.plan.rooms[:10])
         detail=f" الغرف المقروءة: {names}." if names else ""
