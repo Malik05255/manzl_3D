@@ -1,6 +1,24 @@
 from __future__ import annotations
 from .models import FloorPlan,Impact,Room
 
+def _normalize_name(value:str)->str:
+    return (value.lower().replace("أ","ا").replace("إ","ا").replace("آ","ا")
+        .replace("ة","ه").replace("ى","ي").replace("ـ",""))
+
+def minimum_clear_span_m(room:Room)->float:
+    name=_normalize_name(room.name)
+    if any(word in name for word in ("ممر","corridor","hallway")):
+        return 0.90
+    if any(word in name for word in ("حمام","دوره مياه","دورة مياه","bath","wc")):
+        return 1.20
+    if any(word in name for word in ("مطبخ","kitchen")):
+        return 1.80
+    if any(word in name for word in ("درج","stair","مصعد","elevator")):
+        return 1.20
+    if any(word in name for word in ("غرفه نوم","نوم","bedroom","صاله","معيشه","مجلس","living","majlis")):
+        return 2.40
+    return 1.20
+
 def bbox(room:Room)->tuple[float,float,float,float]:
     xs=[p.x for p in room.polygon]; ys=[p.y for p in room.polygon]
     return min(xs),min(ys),max(xs),max(ys)
@@ -78,11 +96,11 @@ def apply_side(plan:FloorPlan,target:Room,side:str,delta_px:float,mpp:float)->tu
         return False,[],[]
 
     tx1,ty1,tx2,ty2=bbox(target)
-    min_px=0.9/mpp
+    base_min_px=0.9/mpp
 
     if side=="right":
         new=tx2+delta_px
-        if any(bbox(room)[2]-new<min_px for room in neighbors):
+        if any(bbox(room)[2]-new<max(base_min_px,minimum_clear_span_m(room)/mpp) for room in neighbors):
             return False,[],[]
         set_rect(target,(tx1,ty1,new,ty2),mpp)
         for room in neighbors:
@@ -91,7 +109,7 @@ def apply_side(plan:FloorPlan,target:Room,side:str,delta_px:float,mpp:float)->tu
         moved=move_boundary(plan,side,tx2,new,(ty1,ty2),tol)
     elif side=="left":
         new=tx1-delta_px
-        if any(new-bbox(room)[0]<min_px for room in neighbors):
+        if any(new-bbox(room)[0]<max(base_min_px,minimum_clear_span_m(room)/mpp) for room in neighbors):
             return False,[],[]
         set_rect(target,(new,ty1,tx2,ty2),mpp)
         for room in neighbors:
@@ -100,7 +118,7 @@ def apply_side(plan:FloorPlan,target:Room,side:str,delta_px:float,mpp:float)->tu
         moved=move_boundary(plan,side,tx1,new,(ty1,ty2),tol)
     elif side=="bottom":
         new=ty2+delta_px
-        if any(bbox(room)[3]-new<min_px for room in neighbors):
+        if any(bbox(room)[3]-new<max(base_min_px,minimum_clear_span_m(room)/mpp) for room in neighbors):
             return False,[],[]
         set_rect(target,(tx1,ty1,tx2,new),mpp)
         for room in neighbors:
@@ -109,7 +127,7 @@ def apply_side(plan:FloorPlan,target:Room,side:str,delta_px:float,mpp:float)->tu
         moved=move_boundary(plan,side,ty2,new,(tx1,tx2),tol)
     else:
         new=ty1-delta_px
-        if any(new-bbox(room)[1]<min_px for room in neighbors):
+        if any(new-bbox(room)[1]<max(base_min_px,minimum_clear_span_m(room)/mpp) for room in neighbors):
             return False,[],[]
         set_rect(target,(tx1,new,tx2,ty2),mpp)
         for room in neighbors:

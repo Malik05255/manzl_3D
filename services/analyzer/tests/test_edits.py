@@ -151,3 +151,12 @@ def test_resize_shared_side_updates_all_adjacent_rooms():
     impact_text=" ".join(item.text for item in response.proposals[0].impacts)
     assert "الصالة" in impact_text
     assert "حمام" in impact_text
+
+
+def test_bedroom_neighbor_is_not_shrunk_to_unusable_strip():
+    plan=sample_plan()
+    plan.rooms[1].name="غرفة نوم ثانية"
+    request=EditRequest(project_id="project-1",command="عدل غرفة النوم إلى 7×4",plan=plan)
+    response=build_proposals(request)
+    assert not response.proposals
+    assert "لا توجد مساحة" in (response.needsClarification or "")

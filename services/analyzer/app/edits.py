@@ -1,7 +1,7 @@
 from __future__ import annotations
 from itertools import product
 from .commands import find_target_room,normalize_arabic,resolve_target_size
-from .edit_geometry import apply_side,bbox,is_rectangular_room
+from .edit_geometry import apply_side,bbox,is_rectangular_room,minimum_clear_span_m
 from .models import EditRequest,Impact,Proposal,ProposalResponse
 
 SERVICE_ROOM_WORDS=("حمام","دوره مياه","دورة مياه","مطبخ","درج","مصعد","غسيل")
@@ -45,6 +45,11 @@ def build_proposals(req:EditRequest)->ProposalResponse:
         )
 
     target_w,target_h=size
+    recommended_min=minimum_clear_span_m(target)
+    target_size_warning=None
+    if min(target_w,target_h)<recommended_min:
+        target_size_warning=f"المقاس المطلوب يجعل أحد أبعاد {target.name} أقل من {recommended_min:g} م؛ اعتبره تنبيه استخدامي وليس تحقق كود بناء."
+
     dx=(target_w-current_w)/mpp
     dy=(target_h-current_h)/mpp
     x_sides=[None] if abs(target_w-current_w)<=0.03 else ["right","left"]
@@ -94,6 +99,8 @@ def build_proposals(req:EditRequest)->ProposalResponse:
             title=f"التعديل باتجاه {dirs}"
 
         warnings=[]
+        if target_size_warning:
+            warnings.append(target_size_warning)
         if service_rooms:
             warnings.append(f"هذا الخيار يغيّر فراغ خدمة: {' و'.join(service_rooms)}.")
         penalty=0.14*len(service_rooms)+0.04*max(0,len(affected)-1)
