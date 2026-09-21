@@ -1,7 +1,8 @@
 import type { ApplyProposalRequest, EditProposalResponse, FloorPlanModel, ProjectView, SaveRevisionRequest } from "@manzil/contracts";
 
 const API_BASE=(import.meta.env.VITE_API_BASE_URL as string|undefined)?.replace(/\/$/,"")??"http://localhost:8787";
-const tokenKey=(projectId:string)=>`manzil:project-token:${projectId}`;\nconst lastProjectKey="manzil:last-project";
+const tokenKey=(projectId:string)=>`manzil:project-token:${projectId}`;
+const lastProjectKey="manzil:last-project";
 
 function projectIdFromPath(path:string){
   return path.match(/^\/v1\/projects\/([^/]+)/)?.[1]??null;
