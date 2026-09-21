@@ -431,3 +431,27 @@ def test_non_orthogonal_target_still_requires_manual_edit():
     ))
     assert not response.proposals
     assert "غير متعامد" in (response.needsClarification or "")
+
+
+def test_low_confidence_room_requires_confirmation():
+    plan=sample_plan()
+    plan.rooms[0].confidence=.60
+    response=build_proposals(EditRequest(
+        project_id="project-1",
+        command="عدل غرفة النوم إلى 5×4",
+        plan=plan,
+    ))
+    assert not response.proposals
+    assert "منخفضة الثقة" in (response.needsClarification or "")
+
+
+def test_low_confidence_merge_requires_confirmation():
+    plan=sample_plan()
+    plan.rooms[0].confidence=.60
+    response=build_proposals(EditRequest(
+        project_id="project-1",
+        command="ادمج غرفة النوم مع الصالة",
+        plan=plan,
+    ))
+    assert not response.proposals
+    assert "منخفضة الثقة" in (response.needsClarification or "")
