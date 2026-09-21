@@ -50,7 +50,7 @@ def _contains(polygon:list[dict],x:float,y:float)->bool:
     return cv2.pointPolygonTest(contour,(float(x),float(y)),False)>=0
 
 
-def detect_rooms(wall_mask:np.ndarray,labels:list[dict],meters_per_pixel:float|None)->list[dict]:
+def detect_rooms(wall_mask:np.ndarray,labels:list[dict],meters_per_pixel:float|None,min_area_ratio:float=0.004,max_area_ratio:float=0.40)->list[dict]:
     h,w=wall_mask.shape[:2]
     close_size=max(7,min(25,min(h,w)//80))
     barrier=cv2.morphologyEx(
@@ -63,8 +63,8 @@ def detect_rooms(wall_mask:np.ndarray,labels:list[dict],meters_per_pixel:float|N
 
     count,component_map,stats,_=cv2.connectedComponentsWithStats(free,8)
     rooms=[]
-    min_area=h*w*0.004
-    max_area=h*w*0.40
+    min_area=h*w*max(0.0005,min(0.10,min_area_ratio))
+    max_area=h*w*max(min_area_ratio,min(0.98,max_area_ratio))
     room_labels=[label for label in labels if label["kind"]=="room_name"]
 
     for component in range(1,count):
