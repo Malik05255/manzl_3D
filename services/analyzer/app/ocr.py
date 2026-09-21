@@ -34,25 +34,100 @@ def classify_text(text:str)->str:
     if re.search(r"\d+(?:\.\d+)?",low): return "unknown"
     return "note" if len(low)>2 else "unknown"
 
-def extract_ocr_labels(image:np.ndarray)->list[dict]:
-    lang=os.getenv("OCR_LANG","ara+eng")
-    rgb=cv2.cvtColor(image,cv2.COLOR_BGR2RGB) if image.ndim==3 else cv2.cvtColor(image,cv2.COLOR_GRAY2RGB)
-    data=pytesseract.image_to_data(rgb,lang=lang,config="--psm 11",output_type=Output.DICT)
+def _ocr_pass(image:np.ndarray,lang:str,config:str,min_conf:float,prefix:str)->list[dict]:
+    data=pytesseract.image_to_data(image,lang=lang,config=config,output_type=Output.DICT)
     lines=defaultdict(list)
     for i,text in enumerate(data["text"]):
         text=(text or "").strip()
-        try: conf=float(data["conf"][i])
-        except (ValueError,TypeError): conf=-1
-        if not text or conf<25: continue
+        try:
+            conf=float(data["conf"][i])
+        except (ValueError,TypeError):
+            conf=-1
+        if not text or conf<min_conf:
+            continue
         key=(int(data["block_num"][i]),int(data["par_num"][i]),int(data["line_num"][i]))
-        lines[key].append({"text":text,"conf":conf,"x":int(data["left"][i]),"y":int(data["top"][i]),"w":int(data["width"][i]),"h":int(data["height"][i])})
+        lines[key].append({
+            "text":text,
+            "conf":conf,
+            "x":int(data["left"][i]),
+            "y":int(data["top"][i]),
+            "w":int(data["width"][i]),
+            "h":int(data["height"][i]),
+        })
+
     labels=[]
     for idx,words in enumerate(lines.values(),start=1):
         words=order_line_words(words)
-        text=" ".join(w["text"] for w in words).strip()
-        if not text: continue
-        x1=min(w["x"] for w in words); y1=min(w["y"] for w in words)
-        x2=max(w["x"]+w["w"] for w in words); y2=max(w["y"]+w["h"] for w in words)
-        confidence=max(0.0,min(1.0,sum(w["conf"] for w in words)/len(words)/100.0))
-        labels.append({"id":f"label-{idx}","text":text,"center":{"x":(x1+x2)/2.0,"y":(y1+y2)/2.0},"confidence":confidence,"kind":classify_text(text)})
+        text=" ".join(word["text"] for word in words).strip()
+        if not text:
+            continue
+        x1=min(word["x"] for word in words)
+        y1=min(word["y"] for word in words)
+        x2=max(word["x"]+word["w"] for word in words)
+        y2=max(word["y"]+word["h"] for word in words)
+        confidence=max(0.0,min(1.0,sum(word["conf"] for word in words)/len(words)/100.0))
+        labels.append({
+            "id":f"{prefix}-{idx}",
+            "text":text,
+            "center":{"x":(x1+x2)/2.0,"y":(y1+y2)/2.0},
+            "confidence":confidence,
+            "kind":classify_text(text),
+        })
     return labels
+
+
+def _label_distance(a:dict,b:dict)->float:
+    dx=a["center"]["x"]-b["center"]["x"]
+    dy=a["center"]["y"]-b["center"]["y"]
+    return float((dx*dx+dy*dy)**0.5)
+
+
+def _merge_labels(primary:list[dict],secondary:list[dict],distance_px:float)->list[dict]:
+    result=[dict(label) for label in primary]
+    for candidate in secondary:
+        duplicate_index=None
+        for index,existing in enumerate(result):
+            if _label_distance(existing,candidate)>distance_px:
+                continue
+            existing_digits=re.sub(r"\D","",normalize_digits(existing["text"]))
+            candidate_digits=re.sub(r"\D","",normalize_digits(candidate["text"]))
+            same_numeric=bool(existing_digits and candidate_digits and existing_digits==candidate_digits)
+            same_kind=existing["kind"]==candidate["kind"]=="dimension"
+            if same_numeric or same_kind:
+                duplicate_index=index
+                break
+        if duplicate_index is None:
+            result.append(candidate)
+        elif candidate["confidence"]>result[duplicate_index]["confidence"]:
+            result[duplicate_index]=candidate
+
+    for index,label in enumerate(result,start=1):
+        label["id"]=f"label-{index}"
+    return result
+
+
+def extract_ocr_labels(image:np.ndarray)->list[dict]:
+    lang=os.getenv("OCR_LANG","ara+eng")
+    rgb=cv2.cvtColor(image,cv2.COLOR_BGR2RGB) if image.ndim==3 else cv2.cvtColor(image,cv2.COLOR_GRAY2RGB)
+
+    base=_ocr_pass(rgb,lang,"--psm 11",25,"base")
+
+    gray=cv2.cvtColor(image,cv2.COLOR_BGR2GRAY) if image.ndim==3 else image.copy()
+    gray=cv2.createCLAHE(clipLimit=2.0,tileGridSize=(8,8)).apply(gray)
+    numeric=cv2.adaptiveThreshold(
+        gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY,31,9
+    )
+    numeric_config=(
+        "--psm 11 "
+        "-c tessedit_char_whitelist=0123456789٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹.xX×*mMمتر² "
+        "-c preserve_interword_spaces=1"
+    )
+    numeric_labels=_ocr_pass(numeric,lang,numeric_config,30,"dim")
+    numeric_labels=[
+        label for label in numeric_labels
+        if re.search(r"[0-9٠-٩۰-۹]",label["text"])
+        and label["kind"] in ("dimension","unknown","note")
+    ]
+
+    distance=max(12.0,min(image.shape[:2])*0.012)
+    return _merge_labels(base,numeric_labels,distance)
