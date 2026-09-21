@@ -92,7 +92,7 @@ function Editor({initialProject}:{initialProject:ProjectView}){
         <PlanCanvas plan={preview?.previewPlan??plan} readonly={Boolean(preview)} selectedWallId={selectedWall} onSelectWall={setSelectedWall} onPlanChange={setPlan}
           calibrationMode={calibrating} calibrationPoints={calibrationPoints}
           onCalibrationPoint={point=>setCalibrationPoints(points=>points.length<2?[...points,point]:points)}
-          backgroundUrl={sourcePreview} backgroundOpacity={sourceOpacity}/>
+          backgroundUrl={sourcePreview} backgroundOpacity={sourceOpacity} comparisonPlan={preview?plan:null}/>
         {plan.quality.needsCalibration&&!calibrating&&<div className="inline-warning calibration-warning"><span>تعذر تثبيت المقياس تلقائيًا. ثبته مرة واحدة لتفعيل أوامر الأمتار بدقة.</span><button className="ghost" onClick={()=>{setCalibrating(true);setCalibrationPoints([]);}}>معايرة الآن</button></div>}
         {calibrating&&<div className="calibration-bar"><div><strong>معايرة المقياس</strong><span>{calibrationPoints.length<2?`حدد نقطتين على بُعد معروف · ${calibrationPoints.length}/2`:"أدخل المسافة الحقيقية بين النقطتين"}</span></div>{calibrationPoints.length===2&&<input inputMode="decimal" value={knownDistance} onChange={e=>setKnownDistance(e.target.value)} placeholder="مثال: 4.20 م"/>}<button className="ghost" onClick={()=>{setCalibrating(false);setCalibrationPoints([]);setKnownDistance("");}}>إلغاء</button>{calibrationPoints.length===2&&<button className="primary small" onClick={applyCalibration}><Check size={16}/> تثبيت</button>}</div>}
       </section>
