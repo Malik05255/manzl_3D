@@ -16,7 +16,8 @@ export async function consumeAnalysis(batch:MessageBatch<AnalyzeMessage>,env:Env
           source_url:`${apiBase}/internal/source/${encodeURIComponent(job.projectId)}`,
           filename:job.fileName,
           mime_type:job.mimeType,
-          callback_url:`${apiBase}/internal/progress`
+          callback_url:`${apiBase}/internal/progress`,
+          preview_url:`${apiBase}/internal/preview/${encodeURIComponent(job.projectId)}`
         })
       });
       if(!response.ok) throw new Error((await response.text().catch(()=>""))||`ANALYZER_${response.status}`);
