@@ -78,3 +78,10 @@ The endpoint receives `image/png` bytes and returns JSON such as:
 ```
 
 Supported kinds are `sink`, `toilet`, `bathtub`, `shower`, `cooktop`, and `stairs`. Unknown classes, invalid boxes and detections below the threshold are discarded; same-class duplicates are suppressed by IoU NMS. The token never reaches the web client.
+
+
+## GitHub Actions real benchmark
+
+Run the manual workflow **AEC Real Drawing Benchmark** and choose a limit from 1 to 15. It checks out the released benchmark into the ephemeral GitHub runner, runs Manzil H, executes the official scorer, writes the score into the workflow summary, and uploads predictions plus the score as an artifact.
+
+If the repository secrets `SYMBOL_DETECTOR_URL` and `SYMBOL_DETECTOR_TOKEN` are configured, fixture classes are evaluated through the same server-side symbol detector. If they are absent, the workflow intentionally measures the geometry/opening baseline without inventing fixture detections.
