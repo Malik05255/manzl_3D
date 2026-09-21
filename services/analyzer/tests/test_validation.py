@@ -217,6 +217,7 @@ def test_source_dimension_mismatch_is_warning():
     finding=next(item for item in report.findings if item.code=="source_dimension_mismatch")
     assert finding.severity=="warning"
     assert finding.wallIds==["top"]
+    assert finding.dimensionIds==["dimension-1"]
 
 
 def test_matching_source_dimension_does_not_warn():
