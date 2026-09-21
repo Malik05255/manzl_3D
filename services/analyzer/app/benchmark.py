@@ -220,7 +220,14 @@ def evaluate_floor_plan(
     categories={"walls":walls,"rooms":rooms,"openings":openings,"dimensions":dimensions}
     if prediction.get("symbols") or truth.get("symbols"):
         categories["symbols"]=symbols
-    macro_f1=sum(float(item["f1"]) for item in categories.values())/len(categories)
+
+    active_categories={
+        name:item
+        for name,item in categories.items()
+        if int(item.get("predicted",0))>0 or int(item.get("truth",0))>0
+    }
+    macro_source=active_categories or categories
+    macro_f1=sum(float(item["f1"]) for item in macro_source.values())/len(macro_source)
     return {
         **categories,
         "symbols":symbols,
@@ -228,6 +235,7 @@ def evaluate_floor_plan(
         "doors":doors,
         "windows":windows,
         "macroF1":round(macro_f1,4),
+        "macroCategories":sorted(active_categories),
         "settings":{
             "tolerancePx":tolerance_px,
             "roomIoUThreshold":room_iou_threshold,
