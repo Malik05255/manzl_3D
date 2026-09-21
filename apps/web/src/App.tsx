@@ -181,8 +181,11 @@ function Editor({initialProject,onHome}:{initialProject:ProjectView;onHome:()=>v
   },[selectedRoom,selectedOpening,selectedDimension,selectedSymbol,selectedWall,plan.rooms,plan.doors,plan.windows,plan.symbols]);
   const reviewItems=useMemo(()=>{
     const items:Array<{key:string;kind:"room"|"wall"|"opening"|"dimension"|"symbol";id:string;label:string;confidence:number;provenance?:ElementProvenance}>=[];
-    for(const room of plan.rooms)if(!room.reviewed&&room.confidence<.78)items.push({key:`room:${room.id}`,kind:"room",id:room.id,label:room.name||"غرفة غير مسماة",confidence:room.confidence,provenance:room.provenance});
-    for(const wall of plan.walls)if(!wall.reviewed&&wall.confidence<.72)items.push({key:`wall:${wall.id}`,kind:"wall",id:wall.id,label:"جدار يحتاج تأكيد",confidence:wall.confidence,provenance:wall.provenance});
+    for(const room of plan.rooms)if(!room.reviewed&&room.confidence<.78){
+      const generated=/^غرفة\s+\d+$/.test(room.name.trim());
+      items.push({key:`room:${room.id}`,kind:"room",id:room.id,label:generated?"مساحة مستخرجة تحتاج تحقق":room.name||"غرفة غير مسماة",confidence:room.confidence,provenance:room.provenance});
+    }
+    for(const wall of plan.walls)if(!wall.reviewed&&wall.confidence<.72)items.push({key:`wall:${wall.id}`,kind:"wall",id:wall.id,label:wall.provenance==="pdf-vector"?"خط PDF متجهي يحتاج تحقق":"جدار يحتاج تأكيد",confidence:wall.confidence,provenance:wall.provenance});
     for(const opening of [...plan.doors,...plan.windows])if(!opening.reviewed&&opening.confidence<.84)items.push({key:`opening:${opening.id}`,kind:"opening",id:opening.id,label:opening.kind==="door"?"باب يحتاج تأكيد":"نافذة تحتاج تأكيد",confidence:opening.confidence,provenance:opening.provenance});
     for(const dimension of plan.dimensions??[])if(!dimension.reviewed&&dimension.confidence<.90)items.push({key:`dimension:${dimension.id}`,kind:"dimension",id:dimension.id,label:dimension.valueM?`بعد مقروء · ${dimension.valueM.toFixed(2)} م`:`بعد يحتاج تأكيد · ${dimension.text}`,confidence:dimension.confidence,provenance:dimension.provenance});
     for(const symbol of plan.symbols??[])if(!symbol.reviewed&&symbol.confidence<.86)items.push({key:`symbol:${symbol.id}`,kind:"symbol",id:symbol.id,label:`${symbolKindLabel(symbol.kind)} يحتاج تأكيد`,confidence:symbol.confidence,provenance:symbol.provenance});
