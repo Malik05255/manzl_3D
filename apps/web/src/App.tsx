@@ -1,7 +1,7 @@
 import { useEffect,useMemo,useRef,useState } from "react";
 import { ArrowLeft,BrainCircuit,Check,ChevronLeft,Clock3,Cloud,DoorOpen,Download,FileImage,FileText,Hammer,Layers3,LoaderCircle,Redo2,Ruler,Save,ShieldCheck,Sparkles,Square,Trash2,Undo2,UploadCloud,WandSparkles,X } from "lucide-react";
 import type { EditProposal,FloorPlanModel,Opening,Point,ProjectView,RevisionView,ValidationReport } from "@manzil/contracts";
-import { ApiError,applyProposal,askEngineer,clearProjectDraft,createProject,forgetKnownProject,forgetLastProject,getKnownProjects,getLastProjectId,getProject,getProjectPreview,importProjectBackup,inferSourceMime,listRevisions,resizeRoomPrecisely,restoreRevision,saveDraft,saveRevision,uploadSource,validateProject } from "./api";
+import { ApiError,applyProposal,askEngineer,clearProjectDraft,createProject,forgetKnownProject,forgetLastProject,getKnownProjects,getLastProjectId,getProject,getProjectPreview,importProjectBackup,inferSourceMime,listRevisions,resizeRoomPrecisely,restoreRevision,retryAnalysis,saveDraft,saveRevision,uploadSource,validateProject } from "./api";
 import type { KnownProject } from "./api";
 import { PlanCanvas,moveWallAndTopology } from "./PlanCanvas";
 import { exportPlanJson,exportPlanPng,exportPlanSvg } from "./exportPlan";
@@ -96,13 +96,15 @@ function Upload({onStarted,onBack}:{onStarted:(p:ProjectView)=>void;onBack:()=>v
 }
 
 function Processing({projectId,onReady,onHome}:{projectId:string;onReady:(p:ProjectView)=>void;onHome:()=>void}){
-  const[project,setProject]=useState<ProjectView|null>(null);
-  useEffect(()=>{let alive=true;const poll=async()=>{try{const next=await getProject(projectId);if(!alive)return;setProject(next);if(next.status==="ready"&&next.plan){onReady(next);return;}if(next.status==="error")return;}catch{}if(alive)window.setTimeout(poll,1200);};poll();return()=>{alive=false;};},[projectId,onReady]);
+  const[project,setProject]=useState<ProjectView|null>(null);const[retryBusy,setRetryBusy]=useState(false);const[retryNonce,setRetryNonce]=useState(0);const[retryError,setRetryError]=useState<string|null>(null);
+  useEffect(()=>{let alive=true;const poll=async()=>{try{const next=await getProject(projectId);if(!alive)return;setProject(next);if(next.status==="ready"&&next.plan){onReady(next);return;}if(next.status==="error")return;}catch{}if(alive)window.setTimeout(poll,1200);};poll();return()=>{alive=false;};},[projectId,onReady,retryNonce]);
+  const retry=async()=>{setRetryBusy(true);setRetryError(null);try{const next=await retryAnalysis(projectId);setProject(next);setRetryNonce(value=>value+1);}catch(e){setRetryError(e instanceof Error?e.message:"تعذر إعادة التحليل");}finally{setRetryBusy(false);}};
   const progress=Math.max(0,Math.min(100,project?.progress??10));
   return <main className="processing-page"><Brand/><section className="processing-card">
     <div className="progress-ring" style={{"--p":`${progress*3.6}deg`} as React.CSSProperties}><div><strong>{progress}%</strong><span>تحليل حقيقي</span></div></div>
     <h2>{phaseLabels[project?.phase??"upload"]}</h2><p>{project?.message??"نعالج المخطط ونبني نموذجًا هندسيًا قابلًا للتعديل."}</p>
-    {project?.status==="error"&&<div className="error-box processing-error"><span>{project.error??"تعذر تحليل المخطط."}</span><button className="ghost" onClick={onHome}>العودة للرئيسية</button></div>}
+    {project?.status==="error"&&<div className="error-box processing-error"><span>{project.error??"تعذر تحليل المخطط."}</span><div className="processing-error-actions"><button className="ghost" disabled={retryBusy} onClick={()=>void retry()}>{retryBusy?<LoaderCircle className="spin" size={16}/>:<RotateCcw size={16}/>} إعادة التحليل</button><button className="ghost" onClick={onHome}>الرئيسية</button></div></div>}
+    {retryError&&<div className="error-box">{retryError}</div>}
     <div className="stage-list">{["preprocess","ocr","geometry","rooms","validation"].map(p=><span key={p} className={project?.phase===p?"current":""}>{phaseLabels[p]}</span>)}</div>
   </section></main>;
 }
