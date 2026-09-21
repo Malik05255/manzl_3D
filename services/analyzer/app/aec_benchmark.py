@@ -172,6 +172,8 @@ def plan_to_aec_prediction(plan:dict,*,sheet:str,width:int,height:int)->dict:
 def run_dataset(dataset_dir:Path,output_dir:Path,limit:int|None=None)->list[Path]:
     manifest=json.loads((dataset_dir/"manifest.json").read_text(encoding="utf-8"))
     output_dir.mkdir(parents=True,exist_ok=True)
+    canonical_dir=output_dir/"_canonical"
+    canonical_dir.mkdir(parents=True,exist_ok=True)
     written=[]
     sheets=manifest.get("sheets",[])
     if limit is not None:
@@ -183,6 +185,11 @@ def run_dataset(dataset_dir:Path,output_dir:Path,limit:int|None=None)->list[Path
         data=pdf_path.read_bytes()
         plan=analyze_document_bytes_local(
             data,"application/pdf",project_id=sheet,filename=pdf_path.name,
+        )
+        canonical_target=canonical_dir/f"{sheet}.json"
+        canonical_target.write_text(
+            json.dumps(plan,ensure_ascii=False,indent=2),
+            encoding="utf-8",
         )
         prediction=plan_to_aec_prediction(
             plan,sheet=sheet,width=int(item["width"]),height=int(item["height"]),
