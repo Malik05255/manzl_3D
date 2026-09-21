@@ -76,7 +76,11 @@ def analyze_document_bytes_local(
             engines.append("pdf-vector")
 
     symbols=[]
-    if os.getenv("SYMBOL_DETECTOR_URL","").strip():
+    symbol_provider_configured=bool(
+        os.getenv("SYMBOL_ONNX_MODEL","").strip()
+        or os.getenv("SYMBOL_DETECTOR_URL","").strip()
+    )
+    if symbol_provider_configured:
         try:
             symbols=asyncio.run(extract_symbol_detections(image))
         except Exception:
