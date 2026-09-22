@@ -228,3 +228,22 @@ def test_configured_symbol_policy_is_shared_and_sink_specific(monkeypatch):
         ("toilet",.65),
         ("sink",.12),
     ]
+
+
+def test_configured_symbol_policy_allows_fixture_specific_thresholds(monkeypatch):
+    monkeypatch.setenv("SYMBOL_MIN_CONFIDENCE",".55")
+    monkeypatch.setenv("SYMBOL_TOILET_MIN_CONFIDENCE",".08")
+    monkeypatch.setenv("SYMBOL_BATHTUB_MIN_CONFIDENCE",".09")
+    monkeypatch.setenv("SYMBOL_SHOWER_MIN_CONFIDENCE",".10")
+    monkeypatch.setenv("SYMBOL_COOKTOP_MIN_CONFIDENCE",".11")
+    payload=[
+        {"class":"toilet","bbox":[10,10,30,30],"confidence":.08},
+        {"class":"bathtub","bbox":[40,10,70,30],"confidence":.09},
+        {"class":"shower","bbox":[80,10,110,40],"confidence":.10},
+        {"class":"cooktop","bbox":[120,10,150,40],"confidence":.11},
+        {"class":"stairs","bbox":[10,50,50,90],"confidence":.20},
+    ]
+    result=normalize_configured_symbols(payload,200,120)
+    assert {item["kind"] for item in result}=={
+        "toilet","bathtub","shower","cooktop",
+    }
