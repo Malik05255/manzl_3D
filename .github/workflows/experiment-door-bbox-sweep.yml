@@ -1,0 +1,170 @@
+name: Door BBox Sweep
+
+on:
+  push:
+    branches: [exp/door-bbox-sweep]
+    paths:
+      - services/analyzer/app/aec_benchmark.py
+      - services/analyzer/tests/test_aec_benchmark.py
+      - .github/workflows/experiment-door-bbox-sweep.yml
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install scoring dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt pytest shapely
+
+      - name: Run AEC export regression tests
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_aec_benchmark.py
+
+      - name: Download completed AEC canonical artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35740684941
+          pattern: stages-2-4-*
+          path: benchmark-input
+          merge-multiple: true
+
+      - name: Sweep door bbox geometry on all 15 canonical plans
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from app.aec_benchmark import plan_to_aec_prediction, run_official_scorer
+
+          root=Path("../..")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          items={str(item["sheet"]):item for item in manifest["sheets"]}
+
+          candidates=list((root/"benchmark-input").rglob("_canonical"))
+          if not candidates:
+              raise SystemExit("Canonical predictions were not found in downloaded artifact")
+          canonical_dir=candidates[0]
+          sheets=sorted(path.stem for path in canonical_dir.glob("sheet_*.json"))
+          if len(sheets)!=15:
+              raise SystemExit(f"Expected 15 canonical sheets, found {len(sheets)}")
+
+          configs=[
+              ("baseline",.25,1.25,.45),
+              ("a",.45,1.00,.15),
+              ("b",.45,1.10,.25),
+              ("c",.55,1.00,.15),
+              ("d",.55,1.10,.25),
+              ("e",.65,1.00,.15),
+              ("f",.65,1.10,.25),
+              ("g",.75,1.00,.15),
+              ("h",.75,1.10,.25),
+              ("i",.85,1.05,.15),
+              ("j",.85,1.15,.25),
+              ("k",.95,1.10,.15),
+              ("l",.95,1.20,.25),
+              ("m",.65,1.20,.35),
+              ("n",.80,1.20,.35),
+          ]
+
+          rows=[]
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          for name,min_ratio,max_ratio,pad_ratio in configs:
+              os.environ["DOOR_BBOX_MIN_DEPTH_RATIO"]=str(min_ratio)
+              os.environ["DOOR_BBOX_MAX_DEPTH_RATIO"]=str(max_ratio)
+              os.environ["DOOR_BBOX_PAD_RATIO"]=str(pad_ratio)
+              target=root/f"benchmark-output/door-bbox/{name}"
+              target.mkdir(parents=True,exist_ok=True)
+
+              for sheet in sheets:
+                  plan=json.loads((canonical_dir/f"{sheet}.json").read_text())
+                  item=items[sheet]
+                  pred=plan_to_aec_prediction(
+                      plan,
+                      sheet=sheet,
+                      width=int(item["width"]),
+                      height=int(item["height"]),
+                  )
+                  (target/f"{sheet}.json").write_text(
+                      json.dumps(pred,separators=(",",":")),
+                      encoding="utf-8",
+                  )
+
+              code,output,report=run_official_scorer(
+                  scorer,target,dataset,sheet_names=sheets,include_per_sheet=True,
+              )
+              if code!=0 or report is None:
+                  print(output)
+                  raise SystemExit(code or 1)
+
+              single=report.get("classes",{}).get("Single Swing Door",{})
+              double=report.get("classes",{}).get("Double Swing Door",{})
+              row={
+                  "name":name,
+                  "minDepthRatio":min_ratio,
+                  "maxDepthRatio":max_ratio,
+                  "padRatio":pad_ratio,
+                  "single":single,
+                  "double":double,
+                  "objectMicro":report.get("objectMicro",{}),
+                  "macroF1":report.get("macroF1",0),
+              }
+              rows.append(row)
+              print("CONFIG",json.dumps(row,sort_keys=True))
+
+          rows.sort(
+              key=lambda row:(
+                  float(row["single"].get("f1",0))
+                  +float(row["double"].get("f1",0)),
+                  float(row["objectMicro"].get("f1",0)),
+              ),
+              reverse=True,
+          )
+          out=root/"benchmark-output/door-bbox/door-bbox-sweep.json"
+          out.parent.mkdir(parents=True,exist_ok=True)
+          out.write_text(json.dumps(rows,indent=2),encoding="utf-8")
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
+              summary.write("## Door bbox sweep — AEC-15\n\n")
+              summary.write("| Config | Min depth | Max depth | Pad | Single F1 | Double F1 | Object F1 | macroF1 |\n")
+              summary.write("|---|---:|---:|---:|---:|---:|---:|---:|\n")
+              for row in rows:
+                  summary.write(
+                      f"| {row['name']} | {row['minDepthRatio']:.2f} | "
+                      f"{row['maxDepthRatio']:.2f} | {row['padRatio']:.2f} | "
+                      f"{float(row['single'].get('f1',0)):.3f} | "
+                      f"{float(row['double'].get('f1',0)):.3f} | "
+                      f"{float(row['objectMicro'].get('f1',0)):.3f} | "
+                      f"{float(row['macroF1']):.3f} |\n"
+                  )
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: door-bbox-sweep-${{ github.sha }}
+          path: benchmark-output/door-bbox/door-bbox-sweep.json
+          retention-days: 5
