@@ -13,7 +13,7 @@ from .document import decode_document_with_page,extract_pdf_text_lines,extract_p
 from .dimensions import extract_dimension_evidence
 from .edits import build_proposals,build_resize_proposals
 from .models import CanonicalizeRequest,EditRequest,FloorPlan,ProposalResponse,ResizeRequest,ValidationReport,ValidationRequest
-from .ocr import _merge_labels,classify_text,extract_ocr_labels
+from .ocr import _merge_labels,classify_text,extract_ocr_dimension_labels,extract_ocr_labels,native_pdf_text_is_sufficient
 from .openings import detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
@@ -94,10 +94,39 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     await upload_preview(req.preview_url,image)
     _,ink=preprocess(image)
 
+    native_labels=[]
+    used_pdf_text=False
+    if req.mime_type=="application/pdf":
+        try:
+            native_lines=extract_pdf_text_lines(data,source_page)
+            native_labels=[
+                {
+                    "id":f"pdf-text-{index}",
+                    "text":item["text"],
+                    "center":item["center"],
+                    "confidence":0.995,
+                    "kind":classify_text(item["text"]),
+                    "reviewed":False,
+                    "provenance":"pdf-text",
+                }
+                for index,item in enumerate(native_lines,start=1)
+            ]
+            used_pdf_text=bool(native_labels)
+        except Exception:
+            native_labels=[]
+
+    fastpath_enabled=os.getenv("PDF_NATIVE_TEXT_FASTPATH","1").strip().lower() not in {"0","false","off","no"}
+    use_native_fastpath=(
+        req.mime_type=="application/pdf"
+        and fastpath_enabled
+        and native_pdf_text_is_sufficient(native_labels)
+    )
+
     await progress(req.callback_url,req.project_id,"ocr",35,"قراءة النصوص والأبعاد")
     async def _safe_local_ocr():
         try:
-            return await asyncio.to_thread(extract_ocr_labels,image)
+            worker=extract_ocr_dimension_labels if use_native_fastpath else extract_ocr_labels
+            return await asyncio.to_thread(worker,image)
         except Exception:
             return []
     async def _safe_cloud_ocr():
@@ -132,29 +161,9 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
         labels=_merge_labels(local_labels,cloud_labels,distance)
     else:
         labels=local_labels
-    used_pdf_text=False
-    used_pdf_vector=False
-    if req.mime_type=="application/pdf":
-        try:
-            native_lines=extract_pdf_text_lines(data,source_page)
-            native_labels=[
-                {
-                    "id":f"pdf-text-{index}",
-                    "text":item["text"],
-                    "center":item["center"],
-                    "confidence":0.995,
-                    "kind":classify_text(item["text"]),
-                    "reviewed":False,
-                    "provenance":"pdf-text",
-                }
-                for index,item in enumerate(native_lines,start=1)
-            ]
-            if native_labels:
-                used_pdf_text=True
-                distance=max(12.0,min(image.shape[:2])*0.012)
-                labels=_merge_labels(labels,native_labels,distance)
-        except Exception:
-            pass
+    if native_labels:
+        distance=max(12.0,min(image.shape[:2])*0.012)
+        labels=_merge_labels(labels,native_labels,distance)
 
     await progress(req.callback_url,req.project_id,"geometry",58,"استخراج الجدران والهندسة")
     walls,wall_mask=detect_walls(ink)
@@ -208,7 +217,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
 
     await progress(req.callback_url,req.project_id,"validation",93,"التحقق من جودة النتيجة")
     engines=["opencv","canonical-wall-barrier"]
-    if local_labels: engines.append("tesseract")
+    if local_labels: engines.append("tesseract-dimensions" if use_native_fastpath else "tesseract")
     if used_cloud_ocr: engines.append("google-vision")
     if used_pdf_text: engines.append("pdf-text")
     if used_pdf_vector: engines.append("pdf-vector")
