@@ -1,8 +1,8 @@
-name: Synthetic Object Detector Fast
+name: Synthetic Object Detector Small Scale
 
 on:
   push:
-    branches: [exp/synthetic-object-detector-fast]
+    branches: [exp/synthetic-object-detector-smallscale]
     paths:
       - services/analyzer/tools/generate_synthetic_symbol_dataset.py
       - .github/workflows/experiment-synthetic-object-detector.yml
