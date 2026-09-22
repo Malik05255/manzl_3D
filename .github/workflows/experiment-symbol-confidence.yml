@@ -1,0 +1,129 @@
+name: Symbol Confidence Experiment
+
+on:
+  push:
+    branches: [exp/symbol-confidence]
+    paths:
+      - services/analyzer/app/symbols.py
+      - services/analyzer/tests/test_symbols.py
+      - .github/workflows/experiment-symbol-confidence.yml
+  workflow_dispatch:
+
+jobs:
+  sheet-15:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt pytest shapely
+          pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
+      - name: Run symbol unit tests
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_symbols.py
+      - name: Export FloorCAD ONNX
+        run: |
+          python - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          from huggingface_hub import hf_hub_download
+          from ultralytics import YOLO
+
+          source=hf_hub_download(
+              "mudasir13cs/floorcad-yolov8n-detect",
+              "floorcad-yolov8n-detect.pt",
+          )
+          model=YOLO(source)
+          exported=model.export(format="onnx",imgsz=640,opset=12,simplify=False,dynamic=False)
+          target=Path("benchmark-model")
+          target.mkdir(exist_ok=True)
+          shutil.copy2(exported,target/"floorcad.onnx")
+          classes=[str(model.names[index]) for index in sorted(model.names)]
+          (target/"classes.json").write_text(json.dumps(classes),encoding="utf-8")
+          PY
+      - name: Configure calibrated fixture threshold
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          classes=json.loads(Path("benchmark-model/classes.json").read_text())
+          with Path(os.environ["GITHUB_ENV"]).open("a") as env:
+              env.write("SYMBOL_ONNX_MODEL="+str(Path("benchmark-model/floorcad.onnx").resolve())+"\n")
+              env.write("SYMBOL_ONNX_CLASSES="+json.dumps(classes,separators=(",",":"))+"\n")
+              env.write("SYMBOL_ONNX_RAW_MIN_CONFIDENCE=0.30\n")
+              env.write("SYMBOL_MIN_CONFIDENCE=0.35\n")
+              env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
+          PY
+      - name: Analyze sheet 15
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p ../../benchmark-output/symbol-confidence
+          python -m app.aec_benchmark \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --output ../../benchmark-output/symbol-confidence \
+            --offset 14 \
+            --limit 1
+      - name: Score sheet 15
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from app.aec_benchmark import run_official_scorer
+
+          root=Path("../..")
+          pred=root/"benchmark-output/symbol-confidence"
+          dataset=root/"external/aec-geometric-bench/dataset"
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          code,output,report=run_official_scorer(
+              scorer,pred,dataset,sheet_names=["sheet_15"],include_per_sheet=True,
+          )
+          (pred/"score.txt").write_text(output,encoding="utf-8")
+          if report is not None:
+              (pred/"report.json").write_text(
+                  json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8"
+              )
+              with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+                  out.write("## Symbol confidence experiment — sheet_15\n\n")
+                  for name in ("Sink","Toilet","Bathtub","Shower","Cooktops","Window"):
+                      item=report.get("classes",{}).get(name,{})
+                      out.write(
+                          f"- {name}: TP {item.get('tp',0)} FP {item.get('fp',0)} "
+                          f"FN {item.get('fn',0)} P {item.get('precision',0):.3f} "
+                          f"R {item.get('recall',0):.3f} F1 {item.get('f1',0):.3f}\n"
+                      )
+          print(output)
+          raise SystemExit(code)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: symbol-confidence-sheet15-${{ github.sha }}
+          path: |
+            benchmark-output/symbol-confidence/sheet_15.json
+            benchmark-output/symbol-confidence/_canonical/sheet_15.json
+            benchmark-output/symbol-confidence/_timings/sheet_15.json
+            benchmark-output/symbol-confidence/score.txt
+            benchmark-output/symbol-confidence/report.json
+          if-no-files-found: warn
+          retention-days: 7
