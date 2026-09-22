@@ -200,6 +200,14 @@ def normalize_symbol_response(payload:object,width:int,height:int,min_confidence
 _ONNX_CACHE:dict[tuple[str,int],object]={}
 
 
+def _env_confidence(name:str,default:float,minimum:float=.10)->float:
+    try:
+        value=float(os.getenv(name,str(default)) or str(default))
+    except ValueError:
+        value=default
+    return max(minimum,min(.99,value))
+
+
 def _local_class_names()->list[str]:
     raw=os.getenv("SYMBOL_ONNX_CLASSES","").strip()
     if not raw:
@@ -470,8 +478,7 @@ def extract_local_onnx_detections(image:np.ndarray)->list[dict]:
         return []
     input_size=int(os.getenv("SYMBOL_ONNX_INPUT_SIZE","640") or "640")
     input_size=max(128,min(2048,input_size))
-    confidence=float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78")
-    confidence=max(.50,min(.99,confidence))
+    confidence=_env_confidence("SYMBOL_ONNX_RAW_MIN_CONFIDENCE",.30,.10)
 
     key=(model_path,input_size)
     net=_ONNX_CACHE.get(key)
