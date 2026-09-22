@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import subprocess
 import sys
@@ -117,13 +118,22 @@ def _door_bbox(door:dict,sx:float,sy:float,padding_px:float)->list[float]:
     nx=-dy/length; ny=dx/length
     sign=1.0 if side=="positive" else -1.0
     # Clamp noisy Hough depth to a plausible door-symbol envelope.
-    depth=max(length*.25,min(depth,length*1.25))
+    try:
+        min_depth_ratio=float(os.getenv("DOOR_BBOX_MIN_DEPTH_RATIO",".25") or ".25")
+        max_depth_ratio=float(os.getenv("DOOR_BBOX_MAX_DEPTH_RATIO","1.25") or "1.25")
+        pad_ratio=float(os.getenv("DOOR_BBOX_PAD_RATIO",".45") or ".45")
+    except ValueError:
+        min_depth_ratio,max_depth_ratio,pad_ratio=.25,1.25,.45
+    min_depth_ratio=max(.05,min(1.50,min_depth_ratio))
+    max_depth_ratio=max(min_depth_ratio,min(1.80,max_depth_ratio))
+    pad_ratio=max(.05,min(.80,pad_ratio))
+    depth=max(length*min_depth_ratio,min(depth,length*max_depth_ratio))
     points=[
         (ax,ay),(bx,by),
         (ax+nx*depth*sign,ay+ny*depth*sign),
         (bx+nx*depth*sign,by+ny*depth*sign),
     ]
-    pad=max(2.0,padding_px*.45)
+    pad=max(1.0,padding_px*pad_ratio)
     x1=min(point[0] for point in points)-pad
     y1=min(point[1] for point in points)-pad
     x2=max(point[0] for point in points)+pad
