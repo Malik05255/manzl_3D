@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 
+import app.openings as openings_module
 from app.openings import _arc_roi_limit,_door_arc_evidence_details,_door_subtype_from_evidence,detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
 
 
@@ -590,3 +591,62 @@ def test_vector_window_rejects_parallel_group_far_from_wall():
     ]
     windows=detect_windows(image,walls,None,vector_lines=vectors)
     assert windows==[]
+
+
+def test_vector_leaf_rescues_scaled_door_when_raster_leaf_is_missing(monkeypatch):
+    image=np.full((400,600,3),255,dtype=np.uint8)
+    walls=[
+        wall("left",40,200,220,200),
+        wall("right",270,200,560,200),
+    ]
+    vectors=[
+        {
+            "a":{"x":220.0,"y":200.0},
+            "b":{"x":258.0,"y":162.0},
+            "widthPx":1.2,
+        },
+    ]
+    monkeypatch.setattr(
+        openings_module,
+        "_door_leaf_evidence_details",
+        lambda *args,**kwargs:(0,set(),"unknown",0.0),
+    )
+    monkeypatch.setattr(
+        openings_module,
+        "_door_arc_evidence_details",
+        lambda *args,**kwargs:(0,set(),"unknown",0.0),
+    )
+    doors=detect_doors(
+        image,walls,.02,vector_lines=vectors,
+    )
+    assert len(doors)==1
+    assert doors[0]["provenance"]=="pdf-vector"
+    assert doors[0]["doorSubtype"]=="single_swing"
+
+
+def test_vector_leaf_rejects_line_parallel_to_host_wall(monkeypatch):
+    image=np.full((400,600,3),255,dtype=np.uint8)
+    walls=[
+        wall("left",40,200,220,200),
+        wall("right",270,200,560,200),
+    ]
+    vectors=[
+        {
+            "a":{"x":220.0,"y":200.0},
+            "b":{"x":265.0,"y":200.0},
+            "widthPx":1.2,
+        },
+    ]
+    monkeypatch.setattr(
+        openings_module,
+        "_door_leaf_evidence_details",
+        lambda *args,**kwargs:(0,set(),"unknown",0.0),
+    )
+    monkeypatch.setattr(
+        openings_module,
+        "_door_arc_evidence_details",
+        lambda *args,**kwargs:(0,set(),"unknown",0.0),
+    )
+    assert detect_doors(
+        image,walls,.02,vector_lines=vectors,
+    )==[]
