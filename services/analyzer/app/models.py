@@ -59,7 +59,7 @@ class Opening(BaseModel):
 
 class PlanSymbol(BaseModel):
     id: str
-    kind: Literal["sink","toilet","bathtub","shower","cooktop","stairs"]
+    kind: Literal["sink","toilet","bathtub","shower","cooktop","stairs","elevator"]
     a: Point
     b: Point
     confidence: float = Field(ge=0, le=1)
