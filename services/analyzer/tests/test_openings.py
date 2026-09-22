@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.openings import _door_arc_evidence_details,detect_doors,detect_windows,normalize_opening_hosts,resolve_opening_conflicts
+from app.openings import _door_arc_evidence_details,detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
 
 
 def wall(wall_id,x1,y1,x2,y2):
@@ -327,3 +327,84 @@ def test_different_length_centered_openings_are_not_forced_same_gap():
     }]
     _,kept_windows=resolve_opening_conflicts(doors,windows)
     assert kept_windows==windows
+
+
+
+def test_ai_single_door_box_projects_onto_nearest_wall():
+    walls=[wall("host",20,120,300,120)]
+    doors,windows=fuse_ai_opening_detections(
+        walls,[],[],
+        [{
+            "class":"single_door",
+            "bbox":[105,75,175,145],
+            "confidence":.91,
+        }],
+        min_confidence=.55,
+    )
+    assert windows==[]
+    assert len(doors)==1
+    door=doors[0]
+    assert door["wallId"]=="host"
+    assert door["doorSubtype"]=="single_swing"
+    assert door["provenance"]=="ai"
+    assert abs(door["a"]["y"]-120)<1
+    assert abs(door["b"]["y"]-120)<1
+    assert door["doorSwingDepthPx"] is not None
+    assert door["doorSwingDepthPx"]>20
+
+
+def test_ai_sliding_door_preserves_subtype_without_fake_swing_depth():
+    walls=[wall("host",20,120,300,120)]
+    doors,_=fuse_ai_opening_detections(
+        walls,[],[],
+        [{"class":"sliding_door","bbox":[100,100,180,140],"confidence":.89}],
+    )
+    assert len(doors)==1
+    assert doors[0]["doorSubtype"]=="sliding"
+    assert doors[0]["doorSwingDepthPx"] is None
+
+
+def test_ai_window_box_projects_onto_wall():
+    walls=[wall("host",20,120,300,120)]
+    doors,windows=fuse_ai_opening_detections(
+        walls,[],[],
+        [{"class":"bay_window","bbox":[190,108,255,132],"confidence":.88}],
+    )
+    assert doors==[]
+    assert len(windows)==1
+    assert windows[0]["wallId"]=="host"
+    assert windows[0]["provenance"]=="ai"
+
+
+def test_ai_opening_without_nearby_wall_is_rejected():
+    walls=[wall("host",20,120,300,120)]
+    doors,windows=fuse_ai_opening_detections(
+        walls,[],[],
+        [{"class":"single_door","bbox":[110,260,180,320],"confidence":.95}],
+    )
+    assert doors==[]
+    assert windows==[]
+
+
+def test_ai_opening_does_not_duplicate_geometry_detection():
+    walls=[wall("host",20,120,300,120)]
+    geometry=[{
+        "id":"door-1",
+        "kind":"door",
+        "doorSubtype":"single_swing",
+        "doorSwingSide":"negative",
+        "doorSwingDepthPx":60.0,
+        "wallId":"host",
+        "a":{"x":110.0,"y":120.0},
+        "b":{"x":170.0,"y":120.0},
+        "confidence":.90,
+        "reviewed":False,
+        "provenance":"opencv",
+    }]
+    doors,_=fuse_ai_opening_detections(
+        walls,geometry,[],
+        [{"class":"single_door","bbox":[106,80,174,146],"confidence":.96}],
+    )
+    assert len(doors)==1
+    assert doors[0]["id"]=="door-1"
+    assert doors[0]["provenance"]=="opencv"
