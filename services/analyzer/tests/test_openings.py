@@ -87,6 +87,29 @@ def test_detects_window_embedded_in_continuous_wall():
     assert 235<=max(windows[0]["a"]["x"],windows[0]["b"]["x"])<=255
 
 
+def test_detects_embedded_window_on_continuous_slanted_wall():
+    image=np.full((420,520,3),255,dtype=np.uint8)
+    cv2.line(image,(60,90),(450,360),(0,0,0),5)
+
+    # Two short glazing strokes parallel to the slanted host wall.
+    cv2.line(image,(175,160),(285,236),(0,0,0),2)
+    cv2.line(image,(166,173),(276,249),(0,0,0),2)
+
+    windows=detect_windows(
+        image,
+        [wall("host",60,90,450,360)],
+        meters_per_pixel=.02,
+    )
+
+    assert len(windows)==1
+    assert windows[0]["wallId"]=="host"
+    assert windows[0]["confidence"]>=.80
+    dx=windows[0]["b"]["x"]-windows[0]["a"]["x"]
+    dy=windows[0]["b"]["y"]-windows[0]["a"]["y"]
+    assert abs(dx)>80
+    assert abs(dy)>50
+
+
 def test_continuous_wall_edges_alone_are_not_embedded_window():
     image=np.full((280,420,3),255,dtype=np.uint8)
     cv2.line(image,(25,136),(395,136),(0,0,0),2)
