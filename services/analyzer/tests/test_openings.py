@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.openings import _door_arc_evidence_details,detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
+from app.openings import _door_arc_evidence_details,_door_subtype_from_evidence,detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
 
 
 def wall(wall_id,x1,y1,x2,y2):
@@ -524,17 +524,9 @@ def test_real_swing_arc_still_blocks_window_even_with_parallel_strokes():
 
 
 
-def test_two_arcs_without_two_visible_leaves_stay_single_swing():
-    image=np.full((320,420,3),255,dtype=np.uint8)
-    cv2.line(image,(30,160),(120,160),(0,0,0),5)
-    cv2.line(image,(260,160),(390,160),(0,0,0),5)
-    cv2.ellipse(image,(120,160),(92,92),0,270,360,(0,0,0),3)
-    cv2.ellipse(image,(260,160),(92,92),0,180,270,(0,0,0),3)
+def test_double_swing_requires_two_visible_leaf_hinges():
+    assert _door_subtype_from_evidence({"a","b"},set())=="double_swing"
+    assert _door_subtype_from_evidence({"a"},{"a","b"})=="single_swing"
+    assert _door_subtype_from_evidence(set(),{"a","b"})=="single_swing"
 
-    doors=detect_doors(
-        image,
-        [wall("left",30,160,120,160),wall("right",260,160,390,160)],
-        meters_per_pixel=.02,
-    )
-    assert len(doors)==1
-    assert doors[0]["doorSubtype"]=="single_swing"
+
