@@ -1,0 +1,258 @@
+name: Synthetic Full Low Confidence Probe
+
+on:
+  push:
+    branches: [exp/synthetic-full-lowconf-probe]
+    paths:
+      - .github/workflows/experiment-synthetic-full-lowconf-probe.yml
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        threshold: ["0.003", "0.010", "0.030", "0.050"]
+        shard: [4, 13, 14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35771807959
+          name: synthetic-object-model-ce173f1610d70efb74b1c49c1c72ed137d04e57a
+          path: synthetic-model-artifact
+
+      - name: Probe full model raw detections
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+          SHARD: ${{ matrix.shard }}
+          THRESHOLD: ${{ matrix.threshold }}
+        run: |
+          python - <<'PY'
+          import json, os, xml.etree.ElementTree as ET
+          from collections import defaultdict
+          from pathlib import Path
+
+          from app.document import decode_document_with_page
+          from app.symbols import _extract_onnx_detections
+
+          root=Path("../..")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          model=root/"synthetic-model-artifact/synthetic-model/synthetic-objects.onnx"
+          classes=json.loads(
+              (root/"synthetic-model-artifact/synthetic-model/classes.json").read_text()
+          )
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          item=manifest["sheets"][int(os.environ["SHARD"])]
+          sheet=str(item["sheet"])
+          threshold=float(os.environ["THRESHOLD"])
+
+          annotations=ET.parse(dataset/"annotations_15_scoring_ready.xml").getroot()
+          image_node=next(
+              node for node in annotations.findall("image")
+              if Path(str(node.get("name"))).stem==sheet
+          )
+          image,_=decode_document_with_page(
+              (dataset/str(item["pdf"])).read_bytes(),
+              "application/pdf",
+          )
+          h,w=image.shape[:2]
+          sx=w/float(item["width"])
+          sy=h/float(item["height"])
+
+          class_map={
+              "single_swing_door":"Single Swing Door",
+              "double_swing_door":"Double Swing Door",
+              "toilet":"Toilet",
+              "bathtub":"Bathtub",
+              "shower":"Shower",
+              "cooktop":"Cooktops",
+              "sink":"Sink",
+          }
+
+          gt=defaultdict(list)
+          for box in image_node.findall("box"):
+              label=str(box.get("label") or "")
+              if label not in set(class_map.values()):
+                  continue
+              gt[label].append([
+                  float(box.get("xtl"))*sx,
+                  float(box.get("ytl"))*sy,
+                  float(box.get("xbr"))*sx,
+                  float(box.get("ybr"))*sy,
+              ])
+
+          def iou(a,b):
+              ax1,ay1,ax2,ay2=map(float,a)
+              bx1,by1,bx2,by2=map(float,b)
+              iw=max(0.0,min(ax2,bx2)-max(ax1,bx1))
+              ih=max(0.0,min(ay2,by2)-max(ay1,by1))
+              inter=iw*ih
+              if inter<=0:
+                  return 0.0
+              aa=max(0.0,ax2-ax1)*max(0.0,ay2-ay1)
+              bb=max(0.0,bx2-bx1)*max(0.0,by2-by1)
+              return inter/max(1e-9,aa+bb-inter)
+
+          detections=_extract_onnx_detections(
+              image,
+              model_path=str(model),
+              class_names=classes,
+              input_size=640,
+              confidence=threshold,
+              tile_trigger=640,
+              tile_size=640,
+              tile_overlap=.25,
+              nms_iou=.45,
+          )
+
+          result={
+              "sheet":sheet,
+              "threshold":threshold,
+              "rawCount":len(detections),
+              "classes":{},
+          }
+          for source,target in class_map.items():
+              preds=[d for d in detections if str(d.get("class"))==source]
+              truths=list(gt[target])
+              pairs=[]
+              best_ious=[]
+              for pi,pred in enumerate(preds):
+                  best=0.0
+                  for gi,truth in enumerate(truths):
+                      score=iou(pred["bbox"],truth)
+                      best=max(best,score)
+                      if score>=.50:
+                          pairs.append((score,pi,gi))
+                  best_ious.append(best)
+              pairs.sort(reverse=True)
+              usedp=set(); usedg=set(); tp=0
+              for score,pi,gi in pairs:
+                  if pi in usedp or gi in usedg:
+                      continue
+                  usedp.add(pi); usedg.add(gi); tp+=1
+              fp=len(preds)-tp
+              fn=len(truths)-tp
+              p=tp/(tp+fp) if tp+fp else 0.0
+              r=tp/(tp+fn) if tp+fn else 0.0
+              f1=2*p*r/(p+r) if p+r else 0.0
+              result["classes"][source]={
+                  "target":target,
+                  "pred":len(preds),
+                  "gt":len(truths),
+                  "tp":tp,
+                  "fp":fp,
+                  "fn":fn,
+                  "precision":round(p,4),
+                  "recall":round(r,4),
+                  "f1":round(f1,4),
+                  "iou25":sum(1 for x in best_ious if x>=.25),
+                  "iou50":sum(1 for x in best_ious if x>=.50),
+                  "bestIoU":round(max(best_ious,default=0.0),4),
+                  "maxConfidence":round(
+                      max((float(d.get("confidence",0)) for d in preds),default=0.0),
+                      6,
+                  ),
+              }
+
+          target=root/f"benchmark-output/full-lowconf/{sheet}-{threshold:.3f}.json"
+          target.parent.mkdir(parents=True,exist_ok=True)
+          target.write_text(json.dumps(result,indent=2),encoding="utf-8")
+          print("RESULT",json.dumps(result,sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-full-lowconf-${{ matrix.shard }}-${{ matrix.threshold }}-${{ github.sha }}
+          path: benchmark-output/full-lowconf/*.json
+          retention-days: 4
+
+  aggregate:
+    if: always()
+    needs: probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: synthetic-full-lowconf-*-${{ github.sha }}
+          path: reports
+          merge-multiple: true
+      - name: Aggregate thresholds
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          reports=[json.loads(p.read_text()) for p in sorted(Path("reports").glob("*.json"))]
+          if not reports:
+              raise SystemExit("No reports")
+          classes=[
+              "single_swing_door","double_swing_door","toilet",
+              "bathtub","shower","cooktop","sink",
+          ]
+          thresholds=sorted({float(r["threshold"]) for r in reports})
+          output={}
+          for threshold in thresholds:
+              subset=[r for r in reports if abs(float(r["threshold"])-threshold)<1e-9]
+              row={}
+              for cls in classes:
+                  tp=sum(r["classes"][cls]["tp"] for r in subset)
+                  fp=sum(r["classes"][cls]["fp"] for r in subset)
+                  fn=sum(r["classes"][cls]["fn"] for r in subset)
+                  p=tp/(tp+fp) if tp+fp else 0.0
+                  rec=tp/(tp+fn) if tp+fn else 0.0
+                  f1=2*p*rec/(p+rec) if p+rec else 0.0
+                  row[cls]={
+                      "tp":tp,"fp":fp,"fn":fn,
+                      "precision":round(p,4),
+                      "recall":round(rec,4),
+                      "f1":round(f1,4),
+                      "bestIoU":max((r["classes"][cls]["bestIoU"] for r in subset),default=0.0),
+                      "maxConfidence":max((r["classes"][cls]["maxConfidence"] for r in subset),default=0.0),
+                  }
+              output[f"{threshold:.3f}"]=row
+              print("THRESHOLD",threshold,json.dumps(row,sort_keys=True))
+          Path("synthetic-full-lowconf-report.json").write_text(
+              json.dumps(output,indent=2),
+              encoding="utf-8",
+          )
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Full synthetic detector low-confidence probe\n\n")
+              out.write("| Threshold | Class | TP | FP | FN | F1 | Best IoU | Max conf |\n")
+              out.write("|---:|---|---:|---:|---:|---:|---:|---:|\n")
+              for threshold in sorted(output,key=float):
+                  for cls in classes:
+                      x=output[threshold][cls]
+                      out.write(
+                          f"| {threshold} | {cls} | {x['tp']} | {x['fp']} | {x['fn']} | "
+                          f"{x['f1']:.3f} | {x['bestIoU']:.3f} | {x['maxConfidence']:.4f} |\n"
+                      )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-full-lowconf-report-${{ github.sha }}
+          path: synthetic-full-lowconf-report.json
+          retention-days: 5
