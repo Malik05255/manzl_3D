@@ -265,7 +265,16 @@ def _write_sample(
     for _ in range(object_count):
         class_id = rng.randrange(len(CLASSES))
         base = DRAWERS[class_id](rng)
-        target_long = rng.randint(max(28, size // 11), max(48, size // 4))
+        if rng.random() < .75:
+            target_long = rng.randint(
+                max(12, size // 26),
+                max(28, size // 8),
+            )
+        else:
+            target_long = rng.randint(
+                max(24, size // 12),
+                max(44, size // 5),
+            )
         patch = _augment_patch(base, rng, target_long)
         placed = _place(image, patch, rng, occupied)
         if placed is None:
