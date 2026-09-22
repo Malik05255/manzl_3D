@@ -1,0 +1,194 @@
+name: Dual Merge Score
+
+on:
+  push:
+    branches: [exp/dual-merge-score]
+    paths:
+      - .github/workflows/experiment-dual-merge-score.yml
+  workflow_dispatch:
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/analyzer/requirements.txt shapely
+
+      - name: Download baseline sheet 05
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35762303613
+          name: aec-shard-4-64e7743e9794a9b74eb122f469bba3dd3d48d6a5
+          path: merge-input/base/05
+      - name: Download baseline sheet 10
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35762303613
+          name: aec-shard-9-64e7743e9794a9b74eb122f469bba3dd3d48d6a5
+          path: merge-input/base/10
+      - name: Download baseline sheet 14
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35762303613
+          name: aec-shard-13-64e7743e9794a9b74eb122f469bba3dd3d48d6a5
+          path: merge-input/base/14
+      - name: Download baseline sheet 15
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35762303613
+          name: aec-shard-14-64e7743e9794a9b74eb122f469bba3dd3d48d6a5
+          path: merge-input/base/15
+
+      - name: Download synthetic sheet 05
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35771807959
+          name: synthetic-object-sheet-4-ce173f1610d70efb74b1c49c1c72ed137d04e57a
+          path: merge-input/synth/05
+      - name: Download synthetic sheet 10
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35771807959
+          name: synthetic-object-sheet-9-ce173f1610d70efb74b1c49c1c72ed137d04e57a
+          path: merge-input/synth/10
+      - name: Download synthetic sheet 14
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35771807959
+          name: synthetic-object-sheet-13-ce173f1610d70efb74b1c49c1c72ed137d04e57a
+          path: merge-input/synth/14
+      - name: Download synthetic sheet 15
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35771807959
+          name: synthetic-object-sheet-14-ce173f1610d70efb74b1c49c1c72ed137d04e57a
+          path: merge-input/synth/15
+
+      - name: Merge baseline with synthetic fixture classes
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          base=Path("merge-input/base")
+          synth=Path("merge-input/synth")
+          out=Path("benchmark-output/dual-merge")
+          out.mkdir(parents=True,exist_ok=True)
+
+          fixtures={"Toilet","Bathtub","Shower","Cooktops"}
+          mapping={
+              "05":"sheet_05",
+              "10":"sheet_10",
+              "14":"sheet_14",
+              "15":"sheet_15",
+          }
+
+          for key,sheet in mapping.items():
+              base_payload=json.loads((base/key/f"{sheet}.json").read_text())
+              synth_payload=json.loads((synth/key/f"{sheet}.json").read_text())
+              primary=[
+                  obj for obj in base_payload.get("objects",[])
+                  if obj.get("class") not in fixtures
+              ]
+              secondary=[
+                  obj for obj in synth_payload.get("objects",[])
+                  if obj.get("class") in fixtures
+              ]
+              merged=dict(base_payload)
+              merged["objects"]=[*primary,*secondary]
+              (out/f"{sheet}.json").write_text(
+                  json.dumps(merged,separators=(",",":")),
+                  encoding="utf-8",
+              )
+              print(
+                  sheet,
+                  "primary",len(primary),
+                  "secondary fixtures",len(secondary),
+                  "total",len(merged["objects"]),
+              )
+          PY
+
+      - name: Score merged dual detector
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from app.aec_benchmark import run_official_scorer
+
+          root=Path("../..")
+          pred=root/"benchmark-output/dual-merge"
+          dataset=root/"external/aec-geometric-bench/dataset"
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          sheets=["sheet_05","sheet_10","sheet_14","sheet_15"]
+
+          code,output,report=run_official_scorer(
+              scorer,pred,dataset,sheet_names=sheets,include_per_sheet=True,
+          )
+          (pred/"score.txt").write_text(output,encoding="utf-8")
+          if report is not None:
+              (pred/"report.json").write_text(
+                  json.dumps(report,ensure_ascii=False,indent=2),
+                  encoding="utf-8",
+              )
+              with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+                  out.write("## Dual merge score — 4 sheets\n\n")
+                  out.write("| Class | TP | FP | FN | F1 |\n|---|---:|---:|---:|---:|\n")
+                  for cls in (
+                      "Single Swing Door","Double Swing Door","Window","Sink",
+                      "Toilet","Bathtub","Shower","Cooktops",
+                  ):
+                      item=report.get("classes",{}).get(cls,{})
+                      out.write(
+                          f"| {cls} | {item.get('tp',0)} | {item.get('fp',0)} | "
+                          f"{item.get('fn',0)} | {float(item.get('f1',0)):.3f} |\n"
+                      )
+                  out.write(
+                      f"\nObject micro F1: {float(report.get('objectMicro',{}).get('f1',0)):.3f}\n"
+                  )
+                  out.write(
+                      f"macroF1: {float(report.get('macroF1',0)):.3f}\n"
+                  )
+          print(output)
+          raise SystemExit(code)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dual-merge-score-${{ github.sha }}
+          path: |
+            benchmark-output/dual-merge/*.json
+            benchmark-output/dual-merge/score.txt
+          if-no-files-found: warn
+          retention-days: 7
