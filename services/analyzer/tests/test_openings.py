@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.openings import _arc_roi_limit,_door_arc_evidence_details,_door_subtype_from_evidence,detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
+from app.openings import _arc_roi_limit,_door_arc_evidence_details,_door_subtype_from_evidence,detect_doors,filter_implausible_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
 
 
 def wall(wall_id,x1,y1,x2,y2):
@@ -590,3 +590,41 @@ def test_vector_window_rejects_parallel_group_far_from_wall():
     ]
     windows=detect_windows(image,walls,None,vector_lines=vectors)
     assert windows==[]
+
+
+def test_filter_implausible_doors_rejects_oversized_swing_envelope():
+    doors=[
+        {
+            "id":"good","kind":"door","doorSubtype":"single_swing",
+            "doorSwingSide":"positive","doorSwingDepthPx":75.0,
+            "a":{"x":100.0,"y":200.0},"b":{"x":180.0,"y":200.0},
+            "confidence":.9,
+        },
+        {
+            "id":"huge","kind":"door","doorSubtype":"single_swing",
+            "doorSwingSide":"positive","doorSwingDepthPx":500.0,
+            "a":{"x":300.0,"y":200.0},"b":{"x":600.0,"y":200.0},
+            "confidence":.9,
+        },
+    ]
+    result=filter_implausible_doors(doors,2000,2000,max_envelope_ratio=.045)
+    assert [item["id"] for item in result]==["good"]
+
+
+def test_filter_implausible_doors_uses_opening_span_without_swing_depth():
+    doors=[
+        {
+            "id":"good","kind":"door","doorSubtype":"single_swing",
+            "doorSwingSide":"unknown","doorSwingDepthPx":None,
+            "a":{"x":100.0,"y":200.0},"b":{"x":170.0,"y":200.0},
+            "confidence":.9,
+        },
+        {
+            "id":"wide","kind":"door","doorSubtype":"single_swing",
+            "doorSwingSide":"unknown","doorSwingDepthPx":None,
+            "a":{"x":300.0,"y":200.0},"b":{"x":430.0,"y":200.0},
+            "confidence":.9,
+        },
+    ]
+    result=filter_implausible_doors(doors,2000,2000,max_envelope_ratio=.045)
+    assert [item["id"] for item in result]==["good"]
