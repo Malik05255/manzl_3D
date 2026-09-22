@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 
+import app.openings as openings_module
 from app.openings import _arc_roi_limit,_door_arc_evidence_details,_door_subtype_from_evidence,detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
 
 
@@ -547,3 +548,53 @@ def test_arc_roi_limit_supports_override_and_disable(monkeypatch):
 def test_arc_roi_limit_rejects_invalid_value(monkeypatch):
     monkeypatch.setenv("OPENING_ARC_MAX_ROI","invalid")
     assert _arc_roi_limit()==640.0
+
+
+def test_window_gap_fallback_accepts_small_gap_without_glazing(monkeypatch):
+    image=np.full((400,600,3),255,dtype=np.uint8)
+    cv2.line(image,(40,200),(220,200),(0,0,0),5)
+    cv2.line(image,(280,200),(560,200),(0,0,0),5)
+
+    monkeypatch.setattr(openings_module,"_door_leaf_evidence",lambda *args,**kwargs:0)
+    monkeypatch.setattr(openings_module,"_parallel_window_evidence",lambda *args,**kwargs:0)
+    monkeypatch.setattr(openings_module,"_door_arc_evidence",lambda *args,**kwargs:0)
+
+    windows=detect_windows(
+        image,
+        [wall("left",40,200,220,200),wall("right",280,200,560,200)],
+        meters_per_pixel=None,
+    )
+    assert len(windows)==1
+    assert windows[0]["confidence"]>=.80
+
+
+def test_window_gap_fallback_rejects_door_leaf_evidence(monkeypatch):
+    image=np.full((400,600,3),255,dtype=np.uint8)
+    cv2.line(image,(40,200),(220,200),(0,0,0),5)
+    cv2.line(image,(280,200),(560,200),(0,0,0),5)
+
+    monkeypatch.setattr(openings_module,"_door_leaf_evidence",lambda *args,**kwargs:1)
+    monkeypatch.setattr(openings_module,"_parallel_window_evidence",lambda *args,**kwargs:0)
+
+    windows=detect_windows(
+        image,
+        [wall("left",40,200,220,200),wall("right",280,200,560,200)],
+        meters_per_pixel=None,
+    )
+    assert windows==[]
+
+
+def test_window_gap_fallback_rejects_large_unscaled_gap(monkeypatch):
+    image=np.full((400,1000,3),255,dtype=np.uint8)
+    cv2.line(image,(40,200),(220,200),(0,0,0),5)
+    cv2.line(image,(520,200),(960,200),(0,0,0),5)
+
+    monkeypatch.setattr(openings_module,"_door_leaf_evidence",lambda *args,**kwargs:0)
+    monkeypatch.setattr(openings_module,"_parallel_window_evidence",lambda *args,**kwargs:0)
+
+    windows=detect_windows(
+        image,
+        [wall("left",40,200,220,200),wall("right",520,200,960,200)],
+        meters_per_pixel=None,
+    )
+    assert windows==[]
