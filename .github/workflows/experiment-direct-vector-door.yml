@@ -1,0 +1,180 @@
+name: Direct Vector Door Experiment
+
+on:
+  push:
+    branches: [exp/direct-vector-door]
+    paths:
+      - services/analyzer/app/openings.py
+      - services/analyzer/app/local_analysis.py
+      - services/analyzer/tests/test_openings.py
+      - .github/workflows/experiment-direct-vector-door.yml
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 10, 11, 14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt pytest shapely
+          pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
+      - name: Run opening tests
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_openings.py
+      - name: Export FloorCAD ONNX
+        run: |
+          python - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          from huggingface_hub import hf_hub_download
+          from ultralytics import YOLO
+          source=hf_hub_download("mudasir13cs/floorcad-yolov8n-detect","floorcad-yolov8n-detect.pt")
+          model=YOLO(source)
+          exported=model.export(format="onnx",imgsz=640,opset=12,simplify=False,dynamic=False)
+          target=Path("benchmark-model")
+          target.mkdir(exist_ok=True)
+          shutil.copy2(exported,target/"floorcad.onnx")
+          classes=[str(model.names[index]) for index in sorted(model.names)]
+          (target/"classes.json").write_text(json.dumps(classes),encoding="utf-8")
+          PY
+      - name: Configure detector
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          classes=json.loads(Path("benchmark-model/classes.json").read_text())
+          with Path(os.environ["GITHUB_ENV"]).open("a") as env:
+              env.write("SYMBOL_ONNX_MODEL="+str(Path("benchmark-model/floorcad.onnx").resolve())+"\n")
+              env.write("SYMBOL_ONNX_CLASSES="+json.dumps(classes,separators=(",",":"))+"\n")
+              env.write("SYMBOL_ONNX_RAW_MIN_CONFIDENCE=0.10\n")
+              env.write("SYMBOL_MIN_CONFIDENCE=0.55\n")
+              env.write("SYMBOL_SINK_MIN_CONFIDENCE=0.10\n")
+              env.write("OPENING_ONNX_MIN_CONFIDENCE=0.35\n")
+              env.write("OPENING_ARC_MAX_ROI=640\n")
+              env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
+          PY
+      - name: Analyze representative sheet
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p "../../benchmark-output/direct-vector-door-${{ matrix.shard }}"
+          python -m app.aec_benchmark \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --output "../../benchmark-output/direct-vector-door-${{ matrix.shard }}" \
+            --offset "${{ matrix.shard }}" \
+            --limit 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: direct-vector-door-sheet-${{ matrix.shard }}-${{ github.sha }}
+          path: |
+            benchmark-output/direct-vector-door-${{ matrix.shard }}/*.json
+            benchmark-output/direct-vector-door-${{ matrix.shard }}/_canonical/*.json
+            benchmark-output/direct-vector-door-${{ matrix.shard }}/_timings/*.json
+          if-no-files-found: error
+          retention-days: 3
+
+  score:
+    if: always()
+    needs: benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/analyzer/requirements.txt shapely
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: direct-vector-door-sheet-*-${{ github.sha }}
+          path: benchmark-output/vector-door/predictions
+          merge-multiple: true
+      - name: Score direct vector door experiment
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from app.aec_benchmark import run_official_scorer
+
+          root=Path("../..")
+          pred=root/"benchmark-output/vector-door/predictions"
+          dataset=root/"external/aec-geometric-bench/dataset"
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          sheets=sorted(p.stem for p in pred.glob("sheet_*.json"))
+          if not sheets:
+              raise SystemExit("No direct vector-door predictions")
+          code,output,report=run_official_scorer(
+              scorer,pred,dataset,sheet_names=sheets,include_per_sheet=True,
+          )
+          target=root/"benchmark-output/vector-door"
+          target.mkdir(exist_ok=True)
+          (target/"score.txt").write_text(output,encoding="utf-8")
+          if report is not None:
+              (target/"report.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
+              single=report.get("classes",{}).get("Single Swing Door",{})
+              double=report.get("classes",{}).get("Double Swing Door",{})
+              with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+                  out.write("## Direct PDF-vector door experiment\n\n")
+                  out.write(
+                      f"- Single: TP {single.get('tp',0)} FP {single.get('fp',0)} "
+                      f"FN {single.get('fn',0)} F1 {float(single.get('f1',0)):.3f}\n"
+                  )
+                  out.write(
+                      f"- Double: TP {double.get('tp',0)} FP {double.get('fp',0)} "
+                      f"FN {double.get('fn',0)} F1 {float(double.get('f1',0)):.3f}\n"
+                  )
+                  out.write(f"- Object micro F1: {float(report.get('objectMicro',{}).get('f1',0)):.3f}\n")
+                  out.write(f"- macroF1: {float(report.get('macroF1',0)):.3f}\n")
+                  out.write("\n| Sheet | Single TP | FP | FN | Double TP | FP | FN | macroF1 |\n")
+                  out.write("|---|---:|---:|---:|---:|---:|---:|---:|\n")
+                  for sheet in sheets:
+                      item=report.get("sheets",{}).get(sheet,{})
+                      one=item.get("classes",{}).get("Single Swing Door",{})
+                      two=item.get("classes",{}).get("Double Swing Door",{})
+                      out.write(
+                          f"| {sheet} | {one.get('tp',0)} | {one.get('fp',0)} | {one.get('fn',0)} | "
+                          f"{two.get('tp',0)} | {two.get('fp',0)} | {two.get('fn',0)} | "
+                          f"{float(item.get('macroF1',0)):.3f} |\n"
+                      )
+          print(output)
+          raise SystemExit(code)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: direct-vector-door-score-${{ github.sha }}
+          path: |
+            benchmark-output/vector-door/score.txt
+            benchmark-output/vector-door/report.json
+          if-no-files-found: warn
+          retention-days: 5
