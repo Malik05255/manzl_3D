@@ -1,6 +1,6 @@
 import numpy as np
 
-from app.symbols import _env_confidence,_decode_yolo_output,_dedupe_raw_detections,_prepare_yolo_rows,_tile_windows,normalize_symbol_response
+from app.symbols import _env_confidence,_decode_yolo_output,_dedupe_raw_detections,_merge_symbol_results,_normalize_roboflow_fixture_response,_prepare_yolo_rows,_tile_windows,normalize_symbol_response
 
 
 def test_normalizes_supported_symbol_classes_and_boxes():
@@ -188,3 +188,67 @@ def test_raw_onnx_threshold_can_be_lower_than_fixture_threshold(monkeypatch):
 
     monkeypatch.setenv("SYMBOL_ONNX_RAW_MIN_CONFIDENCE","0.01")
     assert _env_confidence("SYMBOL_ONNX_RAW_MIN_CONFIDENCE",.30,.10)==.10
+
+
+def test_normalizes_roboflow_center_boxes_to_fixture_symbols():
+    result=_normalize_roboflow_fixture_response({
+        "predictions":[
+            {
+                "x":120.0,"y":90.0,"width":60.0,"height":40.0,
+                "confidence":.91,"class":"sink",
+            },
+            {
+                "x":260.0,"y":140.0,"width":80.0,"height":100.0,
+                "confidence":.88,"class":"toilet",
+            },
+            {
+                "x":420.0,"y":180.0,"width":140.0,"height":70.0,
+                "confidence":.93,"class":"stove",
+            },
+            {
+                "x":500.0,"y":300.0,"width":100.0,"height":80.0,
+                "confidence":.99,"class":"chair",
+            },
+        ]
+    },640,480,.35)
+    by_kind={item["kind"]:item for item in result}
+    assert set(by_kind)=={"sink","toilet","cooktop"}
+    assert by_kind["sink"]["a"]=={"x":90.0,"y":70.0}
+    assert by_kind["sink"]["b"]=={"x":150.0,"y":110.0}
+    assert by_kind["cooktop"]["a"]=={"x":350.0,"y":145.0}
+
+
+def test_roboflow_normalizer_respects_confidence_threshold():
+    result=_normalize_roboflow_fixture_response({
+        "predictions":[
+            {
+                "x":100,"y":100,"width":50,"height":50,
+                "confidence":.20,"class":"bathtub",
+            },
+            {
+                "x":200,"y":200,"width":60,"height":60,
+                "confidence":.80,"class":"shower",
+            },
+        ]
+    },400,400,.35)
+    assert [item["kind"] for item in result]==["shower"]
+
+
+def test_merge_symbol_results_keeps_remote_fixture_and_local_vertical():
+    remote=[
+        {
+            "id":"symbol-1","kind":"toilet",
+            "a":{"x":10.0,"y":10.0},"b":{"x":60.0,"y":70.0},
+            "confidence":.91,"reviewed":False,"provenance":"ai",
+        }
+    ]
+    local=[
+        {
+            "id":"symbol-2","kind":"stairs",
+            "a":{"x":100.0,"y":100.0},"b":{"x":180.0,"y":200.0},
+            "confidence":.86,"reviewed":False,"provenance":"ai",
+        }
+    ]
+    merged=_merge_symbol_results(remote,local)
+    assert {item["kind"] for item in merged}=={"toilet","stairs"}
+    assert [item["id"] for item in merged]==["symbol-1","symbol-2"]
