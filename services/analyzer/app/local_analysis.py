@@ -13,7 +13,7 @@ from .document import (
     preprocess,
 )
 from .dimensions import extract_dimension_evidence
-from .ocr import _merge_labels,classify_text,extract_ocr_labels
+from .ocr import _merge_labels,classify_text,extract_ocr_dimension_labels,extract_ocr_labels,native_pdf_text_is_sufficient
 from .openings import detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
@@ -42,16 +42,9 @@ def analyze_document_bytes_local(
     h,w=image.shape[:2]
     _,ink=preprocess(image)
 
-    try:
-        labels=extract_ocr_labels(image)
-        used_local_ocr=True
-    except Exception:
-        labels=[]
-        used_local_ocr=False
     vector_lines=[]
+    native_labels=[]
     engines=["opencv","canonical-wall-barrier"]
-    if used_local_ocr:
-        engines.append("tesseract")
 
     if mime_type=="application/pdf":
         native_lines=extract_pdf_text_lines(data,page)
@@ -67,13 +60,34 @@ def analyze_document_bytes_local(
             }
             for index,item in enumerate(native_lines,start=1)
         ]
-        if native_labels:
-            distance=max(12.0,min(image.shape[:2])*0.012)
-            labels=_merge_labels(labels,native_labels,distance)
-            engines.append("pdf-text")
         vector_lines=extract_pdf_vector_lines(data,page)
+        if native_labels:
+            engines.append("pdf-text")
         if vector_lines:
             engines.append("pdf-vector")
+
+    fastpath_enabled=os.getenv("PDF_NATIVE_TEXT_FASTPATH","1").strip().lower() not in {"0","false","off","no"}
+    use_native_fastpath=(
+        mime_type=="application/pdf"
+        and fastpath_enabled
+        and native_pdf_text_is_sufficient(native_labels)
+    )
+    try:
+        labels=(
+            extract_ocr_dimension_labels(image)
+            if use_native_fastpath
+            else extract_ocr_labels(image)
+        )
+        used_local_ocr=True
+    except Exception:
+        labels=[]
+        used_local_ocr=False
+    if used_local_ocr:
+        engines.append("tesseract-dimensions" if use_native_fastpath else "tesseract")
+
+    if native_labels:
+        distance=max(12.0,min(image.shape[:2])*0.012)
+        labels=_merge_labels(labels,native_labels,distance)
 
     symbols=[]
     ai_detections=[]
