@@ -1,0 +1,184 @@
+name: Door Size Filter Diagnostics
+
+on:
+  push:
+    branches: [exp/door-size-filter-diagnostics]
+    paths:
+      - .github/workflows/experiment-door-size-filter.yml
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [4, 9, 14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely
+          pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
+      - name: Export FloorCAD ONNX
+        run: |
+          python - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          from huggingface_hub import hf_hub_download
+          from ultralytics import YOLO
+          source=hf_hub_download("mudasir13cs/floorcad-yolov8n-detect","floorcad-yolov8n-detect.pt")
+          model=YOLO(source)
+          exported=model.export(format="onnx",imgsz=640,opset=12,simplify=False,dynamic=False)
+          target=Path("benchmark-model"); target.mkdir(exist_ok=True)
+          shutil.copy2(exported,target/"floorcad.onnx")
+          classes=[str(model.names[index]) for index in sorted(model.names)]
+          (target/"classes.json").write_text(json.dumps(classes),encoding="utf-8")
+          PY
+      - name: Configure detector
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          classes=json.loads(Path("benchmark-model/classes.json").read_text())
+          with Path(os.environ["GITHUB_ENV"]).open("a") as env:
+              env.write("SYMBOL_ONNX_MODEL="+str(Path("benchmark-model/floorcad.onnx").resolve())+"\n")
+              env.write("SYMBOL_ONNX_CLASSES="+json.dumps(classes,separators=(",",":"))+"\n")
+              env.write("SYMBOL_MIN_CONFIDENCE=0.55\n")
+              env.write("OPENING_ONNX_MIN_CONFIDENCE=0.35\n")
+              env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
+          PY
+      - name: Run representative sheet
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p "../../benchmark-output/door-${{ matrix.shard }}"
+          python -m app.aec_benchmark \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --output "../../benchmark-output/door-${{ matrix.shard }}" \
+            --offset "${{ matrix.shard }}" \
+            --limit 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: door-sheet-${{ matrix.shard }}-${{ github.sha }}
+          path: benchmark-output/door-${{ matrix.shard }}/*.json
+          if-no-files-found: error
+          retention-days: 3
+
+  score:
+    if: always()
+    needs: benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/analyzer/requirements.txt shapely
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: door-sheet-*-${{ github.sha }}
+          path: benchmark-output/door/base
+          merge-multiple: true
+      - name: Sweep door size thresholds
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json, os, shutil
+          from pathlib import Path
+          from app.aec_benchmark import run_official_scorer
+
+          root=Path("../..")
+          base=root/"benchmark-output/door/base"
+          dataset=root/"external/aec-geometric-bench/dataset"
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+
+          thresholds=[0.025,0.035,0.045,0.055,0.070]
+          rows=[]
+          sheets=sorted(p.stem for p in base.glob("sheet_*.json"))
+
+          for threshold in thresholds:
+              target=root/f"benchmark-output/door/filter-{threshold:.3f}"
+              target.mkdir(parents=True,exist_ok=True)
+              for source in base.glob("sheet_*.json"):
+                  payload=json.loads(source.read_text())
+                  width=max(
+                      [float(obj["bbox"][2]) for obj in payload.get("objects",[])]+[1.0]
+                  )
+                  # Sheet dimensions are embedded in the official GT manifest;
+                  # derive the relevant normalization from prediction extrema
+                  # only for this diagnostic sweep by using the known manifest.
+                  manifest=json.loads((dataset/"manifest.json").read_text())
+                  item=next(x for x in manifest["sheets"] if x["sheet"]==source.stem)
+                  denom=float(min(item["width"],item["height"]))
+                  filtered=[]
+                  for obj in payload.get("objects",[]):
+                      if obj.get("class") not in {"Single Swing Door","Double Swing Door"}:
+                          filtered.append(obj); continue
+                      x1,y1,x2,y2=map(float,obj["bbox"])
+                      ratio=max(x2-x1,y2-y1)/max(1.0,denom)
+                      if ratio<=threshold:
+                          filtered.append(obj)
+                  payload["objects"]=filtered
+                  (target/source.name).write_text(json.dumps(payload),encoding="utf-8")
+
+              code,output,report=run_official_scorer(
+                  scorer,target,dataset,sheet_names=sheets,include_per_sheet=True,
+              )
+              if code!=0 or report is None:
+                  raise SystemExit(code or 1)
+              single=report.get("classes",{}).get("Single Swing Door",{})
+              double=report.get("classes",{}).get("Double Swing Door",{})
+              rows.append({
+                  "threshold":threshold,
+                  "single":single,
+                  "double":double,
+                  "objectMicro":report.get("objectMicro",{}),
+                  "macroF1":report.get("macroF1",0),
+              })
+
+          out=root/"benchmark-output/door/door-filter-report.json"
+          out.write_text(json.dumps(rows,indent=2),encoding="utf-8")
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
+              summary.write("## Door size filter sweep\n\n")
+              summary.write("| Max ratio | Single TP | FP | FN | F1 | Double TP | FP | FN | F1 | Object F1 |\n")
+              summary.write("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+              for row in rows:
+                  s=row["single"]; d=row["double"]
+                  summary.write(
+                      f"| {row['threshold']:.3f} | {s.get('tp',0)} | {s.get('fp',0)} | "
+                      f"{s.get('fn',0)} | {float(s.get('f1',0)):.3f} | "
+                      f"{d.get('tp',0)} | {d.get('fp',0)} | {d.get('fn',0)} | "
+                      f"{float(d.get('f1',0)):.3f} | "
+                      f"{float(row['objectMicro'].get('f1',0)):.3f} |\n"
+                  )
+              print(json.dumps(rows))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: door-size-filter-report-${{ github.sha }}
+          path: benchmark-output/door/door-filter-report.json
+          retention-days: 5
