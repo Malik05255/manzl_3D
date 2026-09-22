@@ -189,7 +189,7 @@ def _door_leaf_evidence(
     evidence,_,_,_=_door_leaf_evidence_details(image,a,b,gap_px,wall_angle_deg)
     return evidence
 
-def _arc_roi_limit(default:float=480.0)->float:
+def _arc_roi_limit(default:float=640.0)->float:
     try:
         value=float(os.getenv("OPENING_ARC_MAX_ROI",str(default)) or str(default))
     except ValueError:
