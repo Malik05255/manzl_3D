@@ -1,0 +1,219 @@
+name: Dual Detector AEC15
+
+on:
+  push:
+    branches: [exp/dual-aec15]
+    paths:
+      - .github/workflows/experiment-dual-aec15.yml
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix:
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+
+      - name: Install analyzer dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt pytest shapely
+
+      - name: Download proven FloorCAD primary
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35762303613
+          name: floorcad-onnx-64e7743e9794a9b74eb122f469bba3dd3d48d6a5
+          path: primary-artifact
+
+      - name: Download trained secondary
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35771807959
+          name: synthetic-object-model-ce173f1610d70efb74b1c49c1c72ed137d04e57a
+          path: secondary-artifact
+
+      - name: Configure primary + selected secondary classes
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          primary_model=list(Path("primary-artifact").rglob("*.onnx"))[0]
+          secondary_model=list(Path("secondary-artifact").rglob("*.onnx"))[0]
+          secondary_classes_file=list(Path("secondary-artifact").rglob("classes.json"))[0]
+
+          primary_classes=[
+              "bath","bath_tub","bay_window","bed","bedside_cupboard",
+              "blind_window","chair","class_31","class_32","class_34",
+              "class_35","double_door","elevator","escalator","gas_stove",
+              "half_height_cabinet","high_cabinet","opening_symbol","parking",
+              "railing","refrigerator","single_door","sink","sliding_door",
+              "sofa","squat_toilet","stair","table","toilet","tv_cabinet",
+              "urinal","wall","wardrobe","washing_machine","window",
+          ]
+          secondary_classes=json.loads(secondary_classes_file.read_text())
+
+          with Path(os.environ["GITHUB_ENV"]).open("a") as env:
+              env.write("SYMBOL_ONNX_MODEL="+str(primary_model.resolve())+"\n")
+              env.write("SYMBOL_ONNX_CLASSES="+json.dumps(primary_classes,separators=(",",":"))+"\n")
+              env.write("SYMBOL_ONNX_RAW_MIN_CONFIDENCE=0.10\n")
+              env.write("SYMBOL_MIN_CONFIDENCE=0.55\n")
+              env.write("SYMBOL_SINK_MIN_CONFIDENCE=0.10\n")
+              env.write("OPENING_ONNX_MIN_CONFIDENCE=0.35\n")
+
+              env.write("SYMBOL_SECONDARY_ONNX_MODEL="+str(secondary_model.resolve())+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_CLASSES="+json.dumps(secondary_classes,separators=(",",":"))+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_ALLOWED_CLASSES=bathtub,shower,cooktop\n")
+              env.write("SYMBOL_SECONDARY_ONNX_RAW_MIN_CONFIDENCE=0.10\n")
+              env.write("SYMBOL_SECONDARY_ONNX_TILE_TRIGGER=1800\n")
+              env.write("SYMBOL_SECONDARY_ONNX_TILE_SIZE=1600\n")
+              env.write("SYMBOL_SECONDARY_ONNX_TILE_OVERLAP=0.18\n")
+              env.write("SYMBOL_SECONDARY_ONNX_NMS_IOU=0.45\n")
+              env.write("SYMBOL_BATHTUB_MIN_CONFIDENCE=0.50\n")
+              env.write("SYMBOL_SHOWER_MIN_CONFIDENCE=0.50\n")
+              env.write("SYMBOL_COOKTOP_MIN_CONFIDENCE=0.50\n")
+              env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
+
+          print("secondary classes",secondary_classes)
+          PY
+
+      - name: Run one AEC sheet
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p "../../benchmark-output/dual-aec15-${{ matrix.shard }}"
+          python -m app.aec_benchmark             --dataset ../../external/aec-geometric-bench/dataset             --output "../../benchmark-output/dual-aec15-${{ matrix.shard }}"             --offset "${{ matrix.shard }}"             --limit 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dual-aec15-shard-${{ matrix.shard }}-${{ github.sha }}
+          path: |
+            benchmark-output/dual-aec15-${{ matrix.shard }}/*.json
+            benchmark-output/dual-aec15-${{ matrix.shard }}/_canonical/*.json
+            benchmark-output/dual-aec15-${{ matrix.shard }}/_timings/*.json
+          if-no-files-found: error
+          retention-days: 4
+
+  score:
+    if: always()
+    needs: benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/analyzer/requirements.txt shapely
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dual-aec15-shard-*-${{ github.sha }}
+          path: benchmark-output/dual-aec15/predictions
+          merge-multiple: true
+
+      - name: Score complete dual AEC15
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from app.aec_benchmark import run_official_scorer
+
+          root=Path("../..")
+          pred=root/"benchmark-output/dual-aec15/predictions"
+          dataset=root/"external/aec-geometric-bench/dataset"
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          sheets=[str(item["sheet"]) for item in manifest["sheets"]]
+          found=sorted(p.stem for p in pred.glob("sheet_*.json"))
+          missing=sorted(set(sheets)-set(found))
+          if missing:
+              raise SystemExit("Missing sheets: "+",".join(missing))
+
+          code,output,report=run_official_scorer(
+              scorer,pred,dataset,sheet_names=sheets,include_per_sheet=True,
+          )
+          target=root/"benchmark-output/dual-aec15"
+          target.mkdir(exist_ok=True)
+          (target/"score.txt").write_text(output,encoding="utf-8")
+          if report is not None:
+              report["complete"]=True
+              report["expectedSheets"]=len(sheets)
+              report["missingSheets"]=[]
+              (target/"report.json").write_text(
+                  json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8"
+              )
+              with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+                  out.write("## Dual detector — AEC-15 complete\n\n")
+                  out.write("| Class | TP | FP | FN | F1 |\n|---|---:|---:|---:|---:|\n")
+                  for cls in (
+                      "Single Swing Door","Double Swing Door","Window","Sink",
+                      "Toilet","Bathtub","Shower","Cooktops",
+                  ):
+                      item=report.get("classes",{}).get(cls,{})
+                      out.write(
+                          f"| {cls} | {item.get('tp',0)} | {item.get('fp',0)} | "
+                          f"{item.get('fn',0)} | {float(item.get('f1',0)):.3f} |\n"
+                      )
+                  out.write(
+                      f"\nObject micro F1: {float(report.get('objectMicro',{}).get('f1',0)):.3f}\n"
+                  )
+                  out.write(
+                      f"macroF1: {float(report.get('macroF1',0)):.3f}\n"
+                  )
+                  out.write(
+                      f"wall F1: {float(report.get('wallPixel',{}).get('f1',0)):.3f}\n"
+                  )
+                  out.write(
+                      f"area pixel F1: {float(report.get('areaPixel',{}).get('f1',0)):.3f}\n"
+                  )
+                  out.write(
+                      f"area instance F1: {float(report.get('areaInstance',{}).get('f1',0)):.3f}\n"
+                  )
+          print(output)
+          raise SystemExit(code)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dual-aec15-score-${{ github.sha }}
+          path: |
+            benchmark-output/dual-aec15/score.txt
+            benchmark-output/dual-aec15/report.json
+          if-no-files-found: warn
+          retention-days: 10
