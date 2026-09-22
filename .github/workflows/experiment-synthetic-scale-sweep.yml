@@ -1,0 +1,146 @@
+name: Synthetic Scale Sweep
+
+on:
+  push:
+    branches: [exp/synthetic-scale-sweep]
+    paths:
+      - .github/workflows/experiment-synthetic-scale-sweep.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        tile: [800, 960]
+        confidence: ["0.05", "0.10"]
+    env:
+      SYMBOL_SECONDARY_ONNX_INPUT_SIZE: "640"
+      SYMBOL_SECONDARY_ONNX_TILE_TRIGGER: "700"
+      SYMBOL_SECONDARY_ONNX_TILE_SIZE: ${{ matrix.tile }}
+      SYMBOL_SECONDARY_ONNX_TILE_OVERLAP: ".22"
+      SYMBOL_SECONDARY_ONNX_RAW_MIN_CONFIDENCE: ${{ matrix.confidence }}
+      SYMBOL_MIN_CONFIDENCE: ".25"
+      SYMBOL_SINK_MIN_CONFIDENCE: ".10"
+      OPENING_ONNX_MIN_CONFIDENCE: ${{ matrix.confidence }}
+      PDF_NATIVE_TEXT_FASTPATH: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt pytest shapely
+
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35772651346
+          name: synthetic-object-model-3110e7f36bdee04e45278c7d2da5046fc8e83058
+          path: synthetic-model
+
+      - name: Configure trained detector
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          classes=json.loads(Path("synthetic-model/synthetic-model/classes.json").read_text())
+          with Path(os.environ["GITHUB_ENV"]).open("a") as env:
+              env.write(
+                  "SYMBOL_SECONDARY_ONNX_MODEL="
+                  +str(Path("synthetic-model/synthetic-model/synthetic-objects.onnx").resolve())
+                  +"\n"
+              )
+              env.write(
+                  "SYMBOL_SECONDARY_ONNX_CLASSES="
+                  +json.dumps(classes,separators=(",",":"))
+                  +"\n"
+              )
+          print("CLASSES",classes)
+          PY
+
+      - name: Run and score sheet 05
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          OUT="../../benchmark-output/scale-${{ matrix.tile }}-${{ matrix.confidence }}"
+          mkdir -p "$OUT"
+          python -m app.aec_benchmark             --dataset ../../external/aec-geometric-bench/dataset             --output "$OUT"             --offset 4             --limit 1
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from app.aec_benchmark import run_official_scorer
+
+          root=Path("../..")
+          tile=os.environ["SYMBOL_SECONDARY_ONNX_TILE_SIZE"]
+          conf=os.environ["SYMBOL_SECONDARY_ONNX_RAW_MIN_CONFIDENCE"]
+          pred=root/f"benchmark-output/scale-{tile}-{conf}"
+          dataset=root/"external/aec-geometric-bench/dataset"
+          code,output,report=run_official_scorer(
+              root/"external/aec-geometric-bench/scoring/score.py",
+              pred,
+              dataset,
+              sheet_names=["sheet_05"],
+              include_per_sheet=True,
+          )
+          (pred/"report.json").write_text(
+              json.dumps(report or {},indent=2),
+              encoding="utf-8",
+          )
+          canonical=json.loads((pred/"_canonical/sheet_05.json").read_text())
+          counts=canonical.get("analysis",{}).get("detectorClassCounts",{})
+          print("DETECTOR_COUNTS",json.dumps(counts,sort_keys=True))
+          print(output)
+          if report:
+              sheet=report.get("sheets",{}).get("sheet_05",{})
+              with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+                  out.write(
+                      f"## tile {tile} / confidence {conf}\n\n"
+                  )
+                  out.write(f"- detector counts: `{json.dumps(counts,sort_keys=True)}`\n")
+                  for cls in (
+                      "Single Swing Door","Double Swing Door","Sink",
+                      "Toilet","Bathtub","Shower","Cooktops",
+                  ):
+                      item=sheet.get("classes",{}).get(cls,{})
+                      out.write(
+                          f"- {cls}: TP {item.get('tp',0)} FP {item.get('fp',0)} "
+                          f"FN {item.get('fn',0)} F1 {float(item.get('f1',0)):.3f}\n"
+                      )
+          raise SystemExit(code)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synthetic-scale-${{ matrix.tile }}-${{ matrix.confidence }}-${{ github.sha }}
+          path: |
+            benchmark-output/scale-${{ matrix.tile }}-${{ matrix.confidence }}/sheet_05.json
+            benchmark-output/scale-${{ matrix.tile }}-${{ matrix.confidence }}/_canonical/sheet_05.json
+            benchmark-output/scale-${{ matrix.tile }}-${{ matrix.confidence }}/_timings/sheet_05.json
+            benchmark-output/scale-${{ matrix.tile }}-${{ matrix.confidence }}/report.json
+          if-no-files-found: warn
+          retention-days: 4
