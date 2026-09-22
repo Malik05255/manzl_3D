@@ -221,8 +221,8 @@ def _env_confidence(name:str,default:float,minimum:float=.10)->float:
     return max(minimum,min(.99,value))
 
 
-def _local_class_names()->list[str]:
-    raw=os.getenv("SYMBOL_ONNX_CLASSES","").strip()
+def _env_class_names(name:str)->list[str]:
+    raw=os.getenv(name,"").strip()
     if not raw:
         return []
     if raw.startswith("["):
@@ -233,6 +233,10 @@ def _local_class_names()->list[str]:
         except Exception:
             return []
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _local_class_names()->list[str]:
+    return _env_class_names("SYMBOL_ONNX_CLASSES")
 
 
 def _letterbox(image:np.ndarray,size:int)->tuple[np.ndarray,float,float,float]:
@@ -319,9 +323,11 @@ def _decode_yolo_output(
         class_ids.append(class_id)
     if not boxes:
         return []
+    if nms_iou is None:
+        nms_iou=float(os.getenv("SYMBOL_ONNX_NMS_IOU",".45") or ".45")
+    nms_iou=max(.05,min(.95,float(nms_iou)))
     indexes=cv2.dnn.NMSBoxes(
-        boxes,confidences,confidence_threshold,
-        float(os.getenv("SYMBOL_ONNX_NMS_IOU",".45") or ".45"),
+        boxes,confidences,confidence_threshold,nms_iou,
     )
     if indexes is None or len(indexes)==0:
         return []
@@ -350,6 +356,7 @@ def _decode_yolo_payload(
     scale:float,
     pad_x:float,
     pad_y:float,
+    nms_iou:float|None=None,
 )->list[dict]:
     """Return NMS-filtered raw YOLO boxes without dropping non-symbol classes."""
     rows=_prepare_yolo_rows(output,len(class_names))
@@ -462,6 +469,7 @@ def _run_onnx_payload(
     class_names:list[str],
     input_size:int,
     confidence:float,
+    nms_iou:float|None=None,
 )->list[dict]:
     boxed,scale,pad_x,pad_y=_letterbox(image,input_size)
     blob=cv2.dnn.blobFromImage(
@@ -481,6 +489,7 @@ def _run_onnx_payload(
         scale=scale,
         pad_x=pad_x,
         pad_y=pad_y,
+        nms_iou=nms_iou,
     )
 
 
@@ -537,6 +546,42 @@ def extract_local_onnx_detections(image:np.ndarray)->list[dict]:
     return _dedupe_raw_detections(
         detections,
         float(os.getenv("SYMBOL_ONNX_NMS_IOU",".45") or ".45"),
+    )
+
+
+def extract_opening_onnx_detections(image:np.ndarray)->list[dict]:
+    """Run the dedicated MIT opening detector as a full-page ONNX model.
+
+    The model was benchmarked at 1280px without tiling. Keeping that inference
+    contract avoids duplicate tile detections and preserves its trained global
+    floor-plan context.
+    """
+    model_path=os.getenv("OPENING_ONNX_MODEL","").strip()
+    class_names=_env_class_names("OPENING_ONNX_CLASSES")
+    if not model_path or not class_names or not os.path.exists(model_path):
+        return []
+
+    input_size=int(os.getenv("OPENING_ONNX_INPUT_SIZE","1280") or "1280")
+    input_size=max(320,min(2048,input_size))
+    confidence=_env_confidence("OPENING_ONNX_RAW_MIN_CONFIDENCE",.05,.01)
+    try:
+        nms_iou=float(os.getenv("OPENING_ONNX_NMS_IOU",".45") or ".45")
+    except ValueError:
+        nms_iou=.45
+
+    key=(model_path,input_size)
+    net=_ONNX_CACHE.get(key)
+    if net is None:
+        net=cv2.dnn.readNetFromONNX(model_path)
+        _ONNX_CACHE[key]=net
+
+    return _run_onnx_payload(
+        image,
+        net=net,
+        class_names=class_names,
+        input_size=input_size,
+        confidence=confidence,
+        nms_iou=nms_iou,
     )
 
 
