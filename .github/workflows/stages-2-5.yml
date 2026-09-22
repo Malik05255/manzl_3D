@@ -9,7 +9,7 @@ on:
 
 concurrency:
   group: stages-2-5-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   benchmark-symbols:
@@ -147,7 +147,7 @@ jobs:
           retention-days: 14
 
   staging-e2e:
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'feat/cloud-floorplan-editor'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.head_ref == 'feat/cloud-floorplan-editor'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
