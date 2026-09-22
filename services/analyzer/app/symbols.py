@@ -287,6 +287,7 @@ def _decode_yolo_output(
     scale:float,
     pad_x:float,
     pad_y:float,
+    nms_iou:float|None=None,
 )->list[dict]:
     rows=_prepare_yolo_rows(output,len(class_names))
     if rows.size==0:
