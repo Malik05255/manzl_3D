@@ -463,7 +463,15 @@ def detect_doors(
             b=_point_from_frame(ss,offset,ux,uy)
 
             leaf_evidence,leaf_hinges,leaf_side,leaf_depth=_door_leaf_evidence_details(image,a,b,gap,wall_angle)
-            arc_evidence,arc_hinges,arc_side,arc_depth=_door_arc_evidence_details(image,a,b,gap)
+            leaf_only_confidence=min(
+                0.95,
+                0.69+0.065*leaf_evidence+(0.05 if meters_per_pixel else 0.0),
+            )
+            needs_arc=leaf_evidence<1 or leaf_only_confidence<0.76
+            if needs_arc:
+                arc_evidence,arc_hinges,arc_side,arc_depth=_door_arc_evidence_details(image,a,b,gap)
+            else:
+                arc_evidence,arc_hinges,arc_side,arc_depth=0,set(),"unknown",0.0
             if leaf_evidence<1 and arc_evidence<1:
                 continue
 
