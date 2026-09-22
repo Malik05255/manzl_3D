@@ -154,7 +154,10 @@ per job. This prevents one unusually expensive drawing from consuming the time
 budget of two neighboring sheets and makes runtime failures attributable to one
 specific drawing. The fifteen shard artifacts are merged and scored once with
 the official scorer, so the aggregate and per-sheet metrics still represent the
-complete 15-sheet set.
+complete 15-sheet set. If an isolated sheet job fails or times out, the scoring
+job still evaluates every available sheet, records `missingSheets` and
+`complete=false` in `report.json`, uploads the partial diagnostics, and then
+fails the workflow so an incomplete run cannot be mistaken for a full score.
 
 The analyzer also prefers embedded PDF text when it contains enough useful room
 or dimension labels. In that case Tesseract is limited to numeric and rotated
