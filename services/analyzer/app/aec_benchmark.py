@@ -172,7 +172,10 @@ def plan_to_aec_prediction(plan:dict,*,sheet:str,width:int,height:int)->dict:
     walls=[
         polygon
         for wall in plan.get("walls",[])
-        if float(wall.get("confidence",0.0))>=.70
+        if (
+            wall.get("confidence") is None
+            or float(wall.get("confidence",1.0))>=.70
+        )
         and len(polygon:=_wall_polygon(wall,sx,sy))>=3
     ]
     return {"sheet":sheet,"objects":objects,"areas":areas,"walls":walls}
