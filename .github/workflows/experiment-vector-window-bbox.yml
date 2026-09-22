@@ -1,8 +1,8 @@
-name: Vector Window BBox Experiment
+name: Vector Window BBox Clamp Experiment
 
 on:
   push:
-    branches: [exp/vector-window-bbox]
+    branches: [exp/vector-window-bbox-clamp]
     paths:
       - services/analyzer/app/openings.py
       - services/analyzer/app/local_analysis.py
@@ -145,7 +145,7 @@ jobs:
               )
               window=report.get("classes",{}).get("Window",{})
               with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
-                  out.write("## PDF-vector window detector + native bbox\n\n")
+                  out.write("## PDF-vector window detector + clamped native bbox\n\n")
                   out.write(
                       f"- Window aggregate: TP {window.get('tp',0)} / FP {window.get('fp',0)} / "
                       f"FN {window.get('fn',0)} / P {window.get('precision',0):.3f} / "
