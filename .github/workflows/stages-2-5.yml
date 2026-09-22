@@ -255,6 +255,31 @@ jobs:
               report["expectedSheets"]=expected
               report["missingSheets"]=missing
               report["complete"]=not missing and len(selected)==len(expected)
+              timing_dir=predictions/"_timings"
+              performance={}
+              if timing_dir.exists():
+                  for timing_file in sorted(timing_dir.glob("*.json")):
+                      try:
+                          timing=json.loads(timing_file.read_text(encoding="utf-8"))
+                      except Exception:
+                          continue
+                      sheet=str(timing.get("sheet") or timing_file.stem)
+                      performance[sheet]=timing
+              report["performance"]=performance
+              if performance:
+                  totals=[float(item.get("totalSeconds",0)) for item in performance.values()]
+                  analyses=[float(item.get("analysisSeconds",0)) for item in performance.values()]
+                  report["performanceSummary"]={
+                      "sheetCount":len(performance),
+                      "totalSeconds":round(sum(totals),4),
+                      "meanTotalSeconds":round(sum(totals)/len(totals),4),
+                      "maxTotalSeconds":round(max(totals),4),
+                      "meanAnalysisSeconds":round(sum(analyses)/len(analyses),4),
+                      "slowestSheet":max(
+                          performance,
+                          key=lambda name:float(performance[name].get("totalSeconds",0)),
+                      ),
+                  }
               (target/"report.json").write_text(
                   json.dumps(report,ensure_ascii=False,indent=2),
                   encoding="utf-8",
