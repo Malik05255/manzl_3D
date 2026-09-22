@@ -30,7 +30,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
           python -m pip install --upgrade pip
-          pip install -r services/analyzer/requirements.txt pytest
+          pip install -r services/analyzer/requirements.txt pytest shapely
           pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
       - name: Run opening regression tests
         working-directory: services/analyzer
@@ -84,18 +84,43 @@ jobs:
           python - <<'PY'
           import json, os
           from pathlib import Path
-          timing=json.loads(Path("../../benchmark-output/opening-performance/_timings/sheet_15.json").read_text())
+          from app.aec_benchmark import run_official_scorer
+
+          root=Path("../..")
+          pred=root/"benchmark-output/opening-performance"
+          timing=json.loads((pred/"_timings/sheet_15.json").read_text())
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          dataset=root/"external/aec-geometric-bench/dataset"
+          code,output,report=run_official_scorer(
+              scorer,pred,dataset,sheet_names=["sheet_15"],include_per_sheet=True,
+          )
           print("OPENING_PERF_TOTAL_SECONDS",timing.get("totalSeconds"))
           print("OPENING_PERF_ANALYSIS_SECONDS",timing.get("analysisSeconds"))
+          print(output)
+          if report is not None:
+              (pred/"report.json").write_text(
+                  json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8"
+              )
           with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
-              out.write("## Opening performance — sheet_15\n\n")
+              out.write("## Opening performance V2 — sheet_15\n\n")
               out.write(f"- analysis: {float(timing.get('analysisSeconds',0)):.2f}s\n")
               out.write(f"- total: {float(timing.get('totalSeconds',0)):.2f}s\n")
-              out.write(f"- baseline total: 1367.04s\n")
               baseline=1367.0405
               current=float(timing.get("totalSeconds",0))
               if current>0:
-                  out.write(f"- speedup: {baseline/current:.2f}x\n")
+                  out.write(f"- speedup vs baseline: {baseline/current:.2f}x\n")
+              if report:
+                  sheet=report.get("sheets",{}).get("sheet_15",{})
+                  out.write(f"- macroF1: {float(sheet.get('macroF1',0)):.4f}\n")
+                  out.write(f"- wall F1: {float(sheet.get('wallPixel',{}).get('f1',0)):.3f}\n")
+                  out.write(f"- area pixel F1: {float(sheet.get('areaPixel',{}).get('f1',0)):.3f}\n")
+                  for cls in ("Single Swing Door","Double Swing Door","Window"):
+                      item=sheet.get("classes",{}).get(cls,{})
+                      out.write(
+                          f"- {cls}: TP {item.get('tp',0)} FP {item.get('fp',0)} "
+                          f"FN {item.get('fn',0)} F1 {float(item.get('f1',0)):.3f}\n"
+                      )
+          raise SystemExit(code)
           PY
       - uses: actions/upload-artifact@v4
         if: always()
@@ -105,5 +130,6 @@ jobs:
             benchmark-output/opening-performance/sheet_15.json
             benchmark-output/opening-performance/_canonical/sheet_15.json
             benchmark-output/opening-performance/_timings/sheet_15.json
+            benchmark-output/opening-performance/report.json
           if-no-files-found: warn
           retention-days: 5
