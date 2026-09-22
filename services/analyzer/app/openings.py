@@ -571,18 +571,63 @@ def resolve_opening_conflicts(
     doors:list[dict],
     windows:list[dict],
 )->tuple[list[dict],list[dict]]:
-    """Prevent the same architectural gap from becoming both door and window.
+    """Resolve door/window collisions using geometry plus detector confidence.
 
-    A detected door already carries leaf/arc swing evidence, so it is stronger
-    semantic evidence than parallel glazing-like strokes from the same ROI.
+    Geometry remains the default source of truth, but a strong AI window may
+    correct a weaker OpenCV door classification on the same hosted opening.
+    This is important for casement/sliding-window symbols that can look like a
+    double-swing door to line/arc heuristics.
     """
     if not doors or not windows:
         return doors,windows
-    kept_windows=[
-        window for window in windows
-        if not any(_same_opening_gap(door,window) for door in doors)
+
+    rejected_doors:set[str]=set()
+    rejected_windows:set[str]=set()
+    for door in doors:
+        for window in windows:
+            if not _same_opening_gap(door,window):
+                continue
+            door_conf=float(door.get("confidence",0.0))
+            window_conf=float(window.get("confidence",0.0))
+            door_ai=str(door.get("provenance",""))=="ai"
+            window_ai=str(window.get("provenance",""))=="ai"
+
+            if window_ai and not door_ai:
+                subtype=str(door.get("doorSubtype") or "unknown")
+                swing_depth=float(door.get("doorSwingDepthPx") or 0.0)
+                # A strong geometric swing still wins close calls. A detector
+                # window can override when the geometric door is materially
+                # weaker or lacks a convincing swing envelope.
+                margin=.14 if subtype in {"single_swing","double_swing"} and swing_depth>12 else .04
+                if window_conf>=door_conf+margin:
+                    rejected_doors.add(str(door.get("id","")))
+                    continue
+
+            if door_ai and not window_ai:
+                if door_conf>=window_conf+.08:
+                    rejected_windows.add(str(window.get("id","")))
+                    continue
+
+            # Same provenance or inconclusive mixed evidence: retain the higher
+            # confidence interpretation. Ties keep the geometric door behavior.
+            if window_conf>door_conf+.06:
+                rejected_doors.add(str(door.get("id","")))
+            else:
+                rejected_windows.add(str(window.get("id","")))
+
+    kept_doors=[
+        item for item in doors
+        if str(item.get("id","")) not in rejected_doors
     ]
-    return doors,kept_windows
+    kept_windows=[
+        item for item in windows
+        if str(item.get("id","")) not in rejected_windows
+        and not any(
+            _same_opening_gap(door,item)
+            for door in kept_doors
+        )
+    ]
+    return kept_doors,kept_windows
 
 
 def _endpoint_distance(wall:dict,point:dict)->float:
