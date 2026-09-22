@@ -1,6 +1,6 @@
 import numpy as np
 
-from app.symbols import _env_confidence,_decode_yolo_output,_dedupe_raw_detections,_prepare_yolo_rows,_tile_windows,normalize_symbol_response
+from app.symbols import normalize_configured_symbols,_env_confidence,_decode_yolo_output,_dedupe_raw_detections,_prepare_yolo_rows,_tile_windows,normalize_symbol_response
 
 
 def test_normalizes_supported_symbol_classes_and_boxes():
@@ -213,3 +213,18 @@ def test_normalize_symbol_response_keeps_global_threshold_without_override():
     result=normalize_symbol_response(payload,200,100,.55)
     assert len(result)==1
     assert result[0]["confidence"]==.6
+
+
+def test_configured_symbol_policy_is_shared_and_sink_specific(monkeypatch):
+    monkeypatch.setenv("SYMBOL_MIN_CONFIDENCE","0.60")
+    monkeypatch.setenv("SYMBOL_SINK_MIN_CONFIDENCE","0.10")
+    payload=[
+        {"class":"sink","bbox":[10,10,60,60],"confidence":.12},
+        {"class":"toilet","bbox":[80,10,130,60],"confidence":.12},
+        {"class":"toilet","bbox":[140,10,190,60],"confidence":.65},
+    ]
+    result=normalize_configured_symbols(payload,220,100)
+    assert [(item["kind"],item["confidence"]) for item in result]==[
+        ("toilet",.65),
+        ("sink",.12),
+    ]
