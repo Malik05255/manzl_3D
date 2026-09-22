@@ -83,7 +83,8 @@ def _window_bbox(window:dict,sx:float,sy:float,padding_px:float)->list[float]:
     # that span and add only a tiny longitudinal tolerance for scorer/raster
     # quantization rather than reusing median wall thickness.
     longitudinal_pad=max(1.0,min(4.0,padding_px*.12))
-    half=max(2.0,depth/2.0)
+    half=max(2.0,depth/2.0,padding_px*.48)
+    half=min(half,padding_px*.72)
     points=[
         (ax-ux*longitudinal_pad+nx*half,ay-uy*longitudinal_pad+ny*half),
         (bx+ux*longitudinal_pad+nx*half,by+uy*longitudinal_pad+ny*half),
