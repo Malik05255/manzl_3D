@@ -625,6 +625,174 @@ def _point_line_metrics(point:dict,wall:dict)->tuple[float,float]:
     return math.hypot(px-cx,py-cy),t
 
 
+_AI_OPENING_CLASSES={
+    "door":("door","unknown"),
+    "door2":("door","unknown"),
+    "single door":("door","single_swing"),
+    "single swing door":("door","single_swing"),
+    "double door":("door","double_swing"),
+    "double swing door":("door","double_swing"),
+    "sliding door":("door","sliding"),
+    "window":("window",None),
+    "bay window":("window",None),
+    "blind window":("window",None),
+}
+
+
+def _normalize_ai_opening_class(value:object)->tuple[str,str|None]|None:
+    text=str(value or "").strip().lower().replace("_"," ").replace("-"," ")
+    text=" ".join(text.split())
+    return _AI_OPENING_CLASSES.get(text)
+
+
+def _raw_detection_box(item:dict)->tuple[float,float,float,float]|None:
+    value=item.get("bbox",item.get("box"))
+    if not isinstance(value,(list,tuple)) or len(value)!=4:
+        return None
+    try:
+        x1,y1,x2,y2=map(float,value)
+    except (TypeError,ValueError):
+        return None
+    x1,x2=min(x1,x2),max(x1,x2)
+    y1,y2=min(y1,y2),max(y1,y2)
+    if x2-x1<4 or y2-y1<4:
+        return None
+    return x1,y1,x2,y2
+
+
+def _opening_duplicate(candidate:dict,existing:list[dict])->bool:
+    clen,*_=_segment_geometry(candidate)
+    ccx=(float(candidate["a"]["x"])+float(candidate["b"]["x"]))/2
+    ccy=(float(candidate["a"]["y"])+float(candidate["b"]["y"]))/2
+    for item in existing:
+        if _same_opening_gap(candidate,item):
+            return True
+        ilen,*_=_segment_geometry(item)
+        icx=(float(item["a"]["x"])+float(item["b"]["x"]))/2
+        icy=(float(item["a"]["y"])+float(item["b"]["y"]))/2
+        if math.hypot(ccx-icx,ccy-icy)<=max(10.0,min(clen,ilen)*.30):
+            return True
+    return False
+
+
+def fuse_ai_opening_detections(
+    walls:list[dict],
+    doors:list[dict],
+    windows:list[dict],
+    detections:list[dict],
+    *,
+    min_confidence:float=.55,
+)->tuple[list[dict],list[dict]]:
+    """Add ONNX door/window detections only when they can be hosted by a wall.
+
+    Geometry-derived openings keep priority. AI boxes are projected onto the
+    nearest canonical wall and are used only as recall fallback.
+    """
+    result_doors=[dict(item) for item in doors]
+    result_windows=[dict(item) for item in windows]
+    if not walls or not detections:
+        return result_doors,result_windows
+
+    for raw in sorted(
+        detections,
+        key=lambda item:float(item.get("confidence",0.0)),
+        reverse=True,
+    ):
+        mapped=_normalize_ai_opening_class(
+            raw.get("class",raw.get("label",raw.get("name")))
+        )
+        if mapped is None:
+            continue
+        kind,subtype=mapped
+        try:
+            confidence=float(raw.get("confidence",raw.get("score",0.0)))
+        except (TypeError,ValueError):
+            continue
+        if confidence<min_confidence or confidence>1.0:
+            continue
+        box=_raw_detection_box(raw)
+        if box is None:
+            continue
+        x1,y1,x2,y2=box
+        cx=(x1+x2)/2
+        cy=(y1+y2)/2
+        box_span=max(x2-x1,y2-y1)
+
+        best=None
+        for wall in walls:
+            length,ux,uy,nx,ny=_segment_geometry(wall)
+            if length<=1e-9:
+                continue
+            distance,t=_point_line_metrics({"x":cx,"y":cy},wall)
+            tolerance=max(
+                12.0,
+                float(wall.get("thicknessPx",4.0))*4.0,
+                min(80.0,box_span*.65),
+            )
+            if distance>tolerance or t<-.12 or t>1.12:
+                continue
+            score=distance/max(1.0,tolerance)
+            if best is None or score<best[0]:
+                best=(score,wall,length,ux,uy,nx,ny)
+        if best is None:
+            continue
+
+        _,wall,length,ux,uy,nx,ny=best
+        offset=_line_offset(wall,nx,ny)
+        wall_start,wall_end=_projection_interval(wall,ux,uy)
+        corners=((x1,y1),(x2,y1),(x2,y2),(x1,y2))
+        projections=[x*ux+y*uy for x,y in corners]
+        start=max(wall_start,min(projections))
+        end=min(wall_end,max(projections))
+        if end-start<4:
+            continue
+        # Prevent a coarse detector box from becoming an implausibly huge
+        # opening relative to its host wall.
+        if end-start>length*.72:
+            center=(start+end)/2
+            half=length*.36
+            start=max(wall_start,center-half)
+            end=min(wall_end,center+half)
+
+        a=_point_from_frame(start,offset,ux,uy)
+        b=_point_from_frame(end,offset,ux,uy)
+        candidate={
+            "id":"",
+            "kind":kind,
+            "wallId":str(wall["id"]),
+            "a":a,
+            "b":b,
+            "confidence":round(confidence,3),
+            "reviewed":False,
+            "provenance":"ai",
+        }
+        if kind=="door":
+            normal_depth=max(
+                abs(x*nx+y*ny-offset)
+                for x,y in corners
+            )
+            candidate.update({
+                "doorSubtype":subtype or "unknown",
+                "doorSwingSide":"unknown",
+                "doorSwingDepthPx":(
+                    round(normal_depth,2)
+                    if subtype in {"single_swing","double_swing"} and normal_depth>0
+                    else None
+                ),
+            })
+            if _opening_duplicate(candidate,result_doors):
+                continue
+            candidate["id"]=f"door-ai-{len(result_doors)+1}"
+            result_doors.append(candidate)
+        else:
+            if _opening_duplicate(candidate,result_windows):
+                continue
+            candidate["id"]=f"window-ai-{len(result_windows)+1}"
+            result_windows.append(candidate)
+
+    return resolve_opening_conflicts(result_doors,result_windows)
+
+
 def normalize_opening_hosts(
     walls:list[dict],
     doors:list[dict],
