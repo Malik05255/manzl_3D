@@ -146,12 +146,9 @@ def _restore_rotated_labels(labels:list[dict],original_h:int,original_w:int,dire
     return restored
 
 
-def extract_ocr_labels(image:np.ndarray)->list[dict]:
+def extract_ocr_dimension_labels(image:np.ndarray)->list[dict]:
+    """Run only numeric/rotated OCR passes for dimension evidence."""
     lang=os.getenv("OCR_LANG","ara+eng")
-    rgb=cv2.cvtColor(image,cv2.COLOR_BGR2RGB) if image.ndim==3 else cv2.cvtColor(image,cv2.COLOR_GRAY2RGB)
-
-    base=_ocr_pass(rgb,lang,"--psm 11",25,"base")
-
     gray=cv2.cvtColor(image,cv2.COLOR_BGR2GRAY) if image.ndim==3 else image.copy()
     gray=cv2.createCLAHE(clipLimit=2.0,tileGridSize=(8,8)).apply(gray)
     numeric=cv2.adaptiveThreshold(
@@ -175,7 +172,10 @@ def extract_ocr_labels(image:np.ndarray)->list[dict]:
         counterclockwise=cv2.rotate(numeric,cv2.ROTATE_90_COUNTERCLOCKWISE)
         cw=_ocr_pass(clockwise,lang,numeric_config,32,"dim-cw")
         ccw=_ocr_pass(counterclockwise,lang,numeric_config,32,"dim-ccw")
-        rotated_labels=_restore_rotated_labels(cw,image.shape[0],image.shape[1],"cw")+_restore_rotated_labels(ccw,image.shape[0],image.shape[1],"ccw")
+        rotated_labels=(
+            _restore_rotated_labels(cw,image.shape[0],image.shape[1],"cw")
+            +_restore_rotated_labels(ccw,image.shape[0],image.shape[1],"ccw")
+        )
         rotated_labels=[
             label for label in rotated_labels
             if re.search(r"[0-9٠-٩۰-۹]",label["text"])
@@ -183,4 +183,23 @@ def extract_ocr_labels(image:np.ndarray)->list[dict]:
         ]
 
     distance=max(12.0,min(image.shape[:2])*0.012)
-    return _merge_labels(base,numeric_labels+rotated_labels,distance)
+    return _merge_labels(numeric_labels,rotated_labels,distance)
+
+
+def native_pdf_text_is_sufficient(labels:list[dict])->bool:
+    """Return true when native PDF text is rich enough to skip full-page OCR."""
+    if len(labels)<24:
+        return False
+    room_count=sum(str(item.get("kind",""))=="room_name" for item in labels)
+    dimension_count=sum(str(item.get("kind",""))=="dimension" for item in labels)
+    useful=room_count+dimension_count
+    return useful>=2 and (room_count>=2 or dimension_count>=2)
+
+
+def extract_ocr_labels(image:np.ndarray)->list[dict]:
+    lang=os.getenv("OCR_LANG","ara+eng")
+    rgb=cv2.cvtColor(image,cv2.COLOR_BGR2RGB) if image.ndim==3 else cv2.cvtColor(image,cv2.COLOR_GRAY2RGB)
+    base=_ocr_pass(rgb,lang,"--psm 11",25,"base")
+    dimensions=extract_ocr_dimension_labels(image)
+    distance=max(12.0,min(image.shape[:2])*0.012)
+    return _merge_labels(base,dimensions,distance)
