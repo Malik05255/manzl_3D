@@ -1,0 +1,188 @@
+name: Embedded Window Experiment
+
+on:
+  push:
+    branches: [exp/embedded-window-detection]
+    paths:
+      - services/analyzer/app/openings.py
+      - services/analyzer/tests/test_openings.py
+      - .github/workflows/experiment-window-benchmark.yml
+  workflow_dispatch:
+
+jobs:
+  prepare-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - name: Install analyzer and ONNX export dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt
+          pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
+      - name: Export FloorCAD checkpoint
+        env:
+          HF_REPO: mudasir13cs/floorcad-yolov8n-detect
+          HF_FILE: floorcad-yolov8n-detect.pt
+        run: |
+          python - <<'PY'
+          import json, os, shutil
+          from pathlib import Path
+          from huggingface_hub import hf_hub_download
+          from ultralytics import YOLO
+
+          source=hf_hub_download(os.environ["HF_REPO"],os.environ["HF_FILE"])
+          model=YOLO(source)
+          exported=model.export(format="onnx",imgsz=640,opset=12,simplify=False,dynamic=False)
+          target_dir=Path("benchmark-model")
+          target_dir.mkdir(exist_ok=True)
+          shutil.copy2(exported,target_dir/"floorcad-symbols.onnx")
+          classes=[str(model.names[index]) for index in sorted(model.names)]
+          (target_dir/"symbol-model-info.json").write_text(
+              json.dumps({"classes":classes},indent=2),encoding="utf-8"
+          )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: experiment-floorcad-${{ github.sha }}
+          path: benchmark-model/*
+          retention-days: 2
+
+  benchmark:
+    needs: prepare-model
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [4, 12, 13]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely
+      - uses: actions/download-artifact@v4
+        with:
+          name: experiment-floorcad-${{ github.sha }}
+          path: benchmark-model
+      - name: Configure production detector
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          info=json.loads(Path("benchmark-model/symbol-model-info.json").read_text())
+          with Path(os.environ["GITHUB_ENV"]).open("a",encoding="utf-8") as env:
+              env.write("SYMBOL_ONNX_MODEL="+str(Path("benchmark-model/floorcad-symbols.onnx").resolve())+"\n")
+              env.write("SYMBOL_ONNX_CLASSES="+json.dumps(info["classes"],separators=(",",":"))+"\n")
+              env.write("SYMBOL_MIN_CONFIDENCE=0.55\n")
+              env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
+          PY
+      - name: Run representative AEC sheet
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p "../../benchmark-output/window-${{ matrix.shard }}"
+          python -m app.aec_benchmark \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --output "../../benchmark-output/window-${{ matrix.shard }}" \
+            --offset "${{ matrix.shard }}" \
+            --limit 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: window-sheet-${{ matrix.shard }}-${{ github.sha }}
+          path: |
+            benchmark-output/window-${{ matrix.shard }}/*.json
+            benchmark-output/window-${{ matrix.shard }}/_canonical/*.json
+            benchmark-output/window-${{ matrix.shard }}/_timings/*.json
+          if-no-files-found: error
+          retention-days: 2
+
+  score:
+    if: always()
+    needs: benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/analyzer/requirements.txt shapely
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: window-sheet-*-${{ github.sha }}
+          path: benchmark-output/window-experiment/predictions
+          merge-multiple: true
+      - name: Score representative sheets
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from app.aec_benchmark import run_official_scorer
+
+          root=Path("../..")
+          predictions=root/"benchmark-output/window-experiment/predictions"
+          dataset=root/"external/aec-geometric-bench/dataset"
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          sheets=sorted(path.stem for path in predictions.glob("sheet_*.json"))
+          if not sheets:
+              raise SystemExit("No experiment predictions produced")
+          code,output,report=run_official_scorer(
+              scorer,predictions,dataset,sheet_names=sheets,include_per_sheet=True,
+          )
+          target=root/"benchmark-output/window-experiment"
+          target.mkdir(parents=True,exist_ok=True)
+          (target/"score.txt").write_text(output,encoding="utf-8")
+          if report is not None:
+              report["selectedSheets"]=sheets
+              (target/"report.json").write_text(
+                  json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8"
+              )
+              window=report.get("classes",{}).get("Window",{})
+              with Path(__import__("os").environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+                  out.write("## Embedded-window experiment\n\n")
+                  out.write(f"- sheets: {', '.join(sheets)}\n")
+                  out.write(
+                      f"- Window: TP {window.get('tp',0)} / FP {window.get('fp',0)} / "
+                      f"FN {window.get('fn',0)} / P {window.get('precision',0):.3f} / "
+                      f"R {window.get('recall',0):.3f} / F1 {window.get('f1',0):.3f}\n"
+                  )
+          print(output)
+          raise SystemExit(code)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: window-experiment-score-${{ github.sha }}
+          path: |
+            benchmark-output/window-experiment/score.txt
+            benchmark-output/window-experiment/report.json
+          if-no-files-found: warn
+          retention-days: 7
