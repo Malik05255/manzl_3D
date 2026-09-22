@@ -1,0 +1,181 @@
+name: Door Raw Diagnostics
+
+on:
+  push:
+    branches: [exp/door-raw-diagnostics]
+    paths:
+      - .github/workflows/experiment-door-raw-diagnostics.yml
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt
+          pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
+      - name: Export FloorCAD ONNX
+        run: |
+          python - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          from huggingface_hub import hf_hub_download
+          from ultralytics import YOLO
+
+          source=hf_hub_download(
+              "mudasir13cs/floorcad-yolov8n-detect",
+              "floorcad-yolov8n-detect.pt",
+          )
+          model=YOLO(source)
+          exported=model.export(format="onnx",imgsz=640,opset=12,simplify=False,dynamic=False)
+          target=Path("benchmark-model")
+          target.mkdir(exist_ok=True)
+          shutil.copy2(exported,target/"floorcad.onnx")
+          classes=[str(model.names[index]) for index in sorted(model.names)]
+          (target/"classes.json").write_text(json.dumps(classes),encoding="utf-8")
+          PY
+      - name: Measure raw door IoU by threshold
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+          SYMBOL_ONNX_MODEL: ../../benchmark-model/floorcad.onnx
+          SYMBOL_ONNX_RAW_MIN_CONFIDENCE: "0.10"
+        run: |
+          python - <<'PY'
+          import json, os, xml.etree.ElementTree as ET
+          from collections import defaultdict
+          from pathlib import Path
+
+          from app.document import decode_document_with_page
+          from app.symbols import extract_local_onnx_detections
+
+          root=Path("../..")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          classes=json.loads((root/"benchmark-model/classes.json").read_text())
+          os.environ["SYMBOL_ONNX_CLASSES"]=json.dumps(classes,separators=(",",":"))
+
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          xml=ET.parse(dataset/"annotations_15_scoring_ready.xml").getroot()
+          images={Path(str(node.get("name"))).stem:node for node in xml.findall("image")}
+          targets=["Single Swing Door","Double Swing Door"]
+          aliases={
+              "single door":"Single Swing Door",
+              "single_door":"Single Swing Door",
+              "double door":"Double Swing Door",
+              "double_door":"Double Swing Door",
+          }
+          thresholds=[.10,.15,.20,.25,.30,.35,.40,.45,.50,.55]
+
+          def norm(v):
+              return " ".join(str(v or "").strip().lower().replace("_"," ").replace("-"," ").split())
+
+          def iou(a,b):
+              ax1,ay1,ax2,ay2=a; bx1,by1,bx2,by2=b
+              iw=max(0.0,min(ax2,bx2)-max(ax1,bx1))
+              ih=max(0.0,min(ay2,by2)-max(ay1,by1))
+              inter=iw*ih
+              if inter<=0:return 0.0
+              aa=max(0.0,ax2-ax1)*max(0.0,ay2-ay1)
+              bb=max(0.0,bx2-bx1)*max(0.0,by2-by1)
+              return inter/max(1e-9,aa+bb-inter)
+
+          detections={}
+          gt_by={}
+          for item in manifest["sheets"]:
+              sheet=str(item["sheet"])
+              data=(dataset/str(item["pdf"])).read_bytes()
+              image,_=decode_document_with_page(data,"application/pdf")
+              h,w=image.shape[:2]
+              sx=w/float(item["width"]); sy=h/float(item["height"])
+              gt=defaultdict(list)
+              for box in images[sheet].findall("box"):
+                  label=str(box.get("label") or "")
+                  if label not in targets:continue
+                  gt[label].append([
+                      float(box.get("xtl"))*sx,float(box.get("ytl"))*sy,
+                      float(box.get("xbr"))*sx,float(box.get("ybr"))*sy,
+                  ])
+              gt_by[sheet]=gt
+
+              rows=[]
+              for det in extract_local_onnx_detections(image):
+                  cls=aliases.get(norm(det.get("class")))
+                  if not cls:continue
+                  rows.append({
+                      "class":cls,
+                      "bbox":list(map(float,det["bbox"])),
+                      "confidence":float(det.get("confidence",0.0)),
+                  })
+              detections[sheet]=rows
+              print(sheet,"doors",len(rows),"gt",{
+                  cls:len(gt[cls]) for cls in targets
+              })
+
+          report={}
+          for threshold in thresholds:
+              classes_report={}
+              for cls in targets:
+                  tp=fp=fn=0
+                  for item in manifest["sheets"]:
+                      sheet=str(item["sheet"])
+                      truth=list(gt_by[sheet][cls])
+                      preds=[
+                          d for d in detections[sheet]
+                          if d["class"]==cls and d["confidence"]>=threshold
+                      ]
+                      pairs=[]
+                      for pi,pred in enumerate(preds):
+                          for gi,box in enumerate(truth):
+                              score=iou(pred["bbox"],box)
+                              if score>=.50:pairs.append((score,pi,gi))
+                      pairs.sort(reverse=True)
+                      usedp=set(); usedg=set()
+                      matched=0
+                      for score,pi,gi in pairs:
+                          if pi in usedp or gi in usedg:continue
+                          usedp.add(pi); usedg.add(gi); matched+=1
+                      tp+=matched; fp+=len(preds)-matched; fn+=len(truth)-matched
+                  p=tp/(tp+fp) if tp+fp else 0.0
+                  r=tp/(tp+fn) if tp+fn else 0.0
+                  f=2*p*r/(p+r) if p+r else 0.0
+                  classes_report[cls]={
+                      "tp":tp,"fp":fp,"fn":fn,
+                      "precision":round(p,4),"recall":round(r,4),"f1":round(f,4),
+                  }
+              report[f"{threshold:.2f}"]=classes_report
+              print("THRESHOLD",threshold,json.dumps(classes_report,sort_keys=True))
+
+          target=root/"benchmark-output/door-raw-diagnostics.json"
+          target.parent.mkdir(exist_ok=True)
+          target.write_text(json.dumps(report,indent=2),encoding="utf-8")
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Raw FloorCAD door diagnostics\n\n")
+              out.write("| Threshold | Single F1 | Double F1 |\n|---:|---:|---:|\n")
+              for threshold in thresholds:
+                  row=report[f"{threshold:.2f}"]
+                  out.write(
+                      f"| {threshold:.2f} | {row['Single Swing Door']['f1']:.3f} | "
+                      f"{row['Double Swing Door']['f1']:.3f} |\n"
+                  )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: door-raw-diagnostics-${{ github.sha }}
+          path: benchmark-output/door-raw-diagnostics.json
+          retention-days: 5
