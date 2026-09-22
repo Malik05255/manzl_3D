@@ -26,7 +26,7 @@ def _thick_core(mask: np.ndarray, min_half_thickness: float) -> np.ndarray:
 def _outlined_wall_bands(ink: np.ndarray) -> np.ndarray:
     h, w = ink.shape[:2]
     short = max(1, min(h, w))
-    pair_gap = max(5, min(24, int(round(short * 0.012))))
+    pair_gap = max(7, min(30, int(round(short * 0.025))))
     run = max(28, min(120, int(round(short * 0.055))))
 
     # Parallel thin outlines are common in architectural drawings. Close only
