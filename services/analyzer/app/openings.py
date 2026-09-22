@@ -505,6 +505,52 @@ def detect_doors(
     return result
 
 
+def _global_window_segments(
+    image:np.ndarray,
+    min_span:float,
+)->list[tuple[float,float,float,float]]:
+    """Extract candidate short linework once for the whole page.
+
+    Running Hough independently for every wall is prohibitively expensive on
+    large AEC sheets. Downsample only for line discovery, then map the detected
+    segments back to source coordinates.
+    """
+    h,w=image.shape[:2]
+    max_dimension=max(h,w)
+    scale=min(1.0,3200.0/max(1.0,float(max_dimension)))
+    if scale<.999:
+        small=cv2.resize(
+            image,
+            (max(1,int(round(w*scale))),max(1,int(round(h*scale)))),
+            interpolation=cv2.INTER_AREA,
+        )
+    else:
+        small=image
+
+    gray=cv2.cvtColor(small,cv2.COLOR_BGR2GRAY)
+    edges=cv2.Canny(gray,55,155)
+    scaled_min=max(6.0,min_span*scale*.45)
+    raw=cv2.HoughLinesP(
+        edges,
+        1,
+        np.pi/360,
+        threshold=max(8,int(round(scaled_min*.80))),
+        minLineLength=max(7,int(round(scaled_min))),
+        maxLineGap=max(3,int(round(min_span*scale*.10))),
+    )
+    if raw is None:
+        return []
+
+    inverse=1.0/max(scale,1e-9)
+    return [
+        (
+            float(x1)*inverse,float(y1)*inverse,
+            float(x2)*inverse,float(y2)*inverse,
+        )
+        for x1,y1,x2,y2 in np.asarray(raw).reshape(-1,4)
+    ]
+
+
 def _embedded_window_candidates(
     image:np.ndarray,
     walls:list[dict],
@@ -513,12 +559,13 @@ def _embedded_window_candidates(
     """Detect glazing drawn inside a continuous host wall.
 
     Some CAD plans keep the wall centerline continuous through windows instead
-    of splitting it into two wall fragments. The gap-based detector cannot see
-    those openings, so this pass looks for two short, parallel glazing strokes
-    centred on a materially longer wall. Long wall-edge lines are rejected.
+    of splitting it into two wall fragments. Candidate linework is discovered
+    once globally and then projected into each host wall's local frame.
     """
     min_span,max_span,_=_window_gap_limits(image,meters_per_pixel)
-    h,w=image.shape[:2]
+    segments=_global_window_segments(image,min_span)
+    if not segments:
+        return []
     candidates=[]
 
     for wall in walls:
@@ -530,34 +577,25 @@ def _embedded_window_candidates(
         wall_start,wall_end=_projection_interval(wall,ux,uy)
         thickness=max(2.0,float(wall.get("thicknessPx",4.0) or 4.0))
         corridor=max(10.0,thickness*2.8,min_span*.16)
-
-        ax,ay=_point(wall["a"])
-        bx,by=_point(wall["b"])
-        pad=int(math.ceil(corridor+8.0))
-        x1=max(0,int(math.floor(min(ax,bx)-pad)))
-        x2=min(w,int(math.ceil(max(ax,bx)+pad)))
-        y1=max(0,int(math.floor(min(ay,by)-pad)))
-        y2=min(h,int(math.ceil(max(ay,by)+pad)))
-        roi=image[y1:y2,x1:x2]
-        if roi.size==0:
-            continue
+        wall_angle=math.degrees(math.atan2(uy,ux))%180.0
 
         strokes=[]
-        probe=max(min_span,min(max_span,length*.55))
-        for rx1,ry1,rx2,ry2 in _hough_segments(roi,probe):
-            gx1=float(x1+rx1); gy1=float(y1+ry1)
-            gx2=float(x1+rx2); gy2=float(y1+ry2)
+        for gx1,gy1,gx2,gy2 in segments:
             dx=gx2-gx1
             dy=gy2-gy1
             stroke_length=math.hypot(dx,dy)
             if stroke_length<min_span*.60 or stroke_length>max_span*1.18:
                 continue
-            # Wall edges normally span most of the host. They are not glazing.
             if stroke_length>length*.68:
                 continue
             angle=math.degrees(math.atan2(dy,dx))%180.0
-            wall_angle=math.degrees(math.atan2(uy,ux))%180.0
             if _angle_delta_degrees(angle,wall_angle)>7.0:
+                continue
+
+            mx=(gx1+gx2)/2
+            my=(gy1+gy2)/2
+            offset=mx*nx+my*ny
+            if abs(offset-wall_offset)>corridor:
                 continue
 
             first=gx1*ux+gy1*uy
@@ -568,12 +606,6 @@ def _embedded_window_candidates(
             if span<min_span*.58 or span>max_span*1.12:
                 continue
             if start<=wall_start+min_span*.10 or end>=wall_end-min_span*.10:
-                continue
-
-            mx=(gx1+gx2)/2
-            my=(gy1+gy2)/2
-            offset=mx*nx+my*ny
-            if abs(offset-wall_offset)>corridor:
                 continue
             strokes.append((start,end,offset,stroke_length))
 
@@ -604,8 +636,6 @@ def _embedded_window_candidates(
                 if abs(((lo+ro)/2)-wall_offset)>max(5.0,thickness*1.35):
                     continue
 
-                # Two glazing strokes should describe approximately the same
-                # opening interval instead of two unrelated parallel marks.
                 edge_delta=max(abs(ls-rs),abs(le-re))
                 if edge_delta>max(10.0,span*.22):
                     continue
