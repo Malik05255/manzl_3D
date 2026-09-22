@@ -5,6 +5,12 @@ on:
     branches: [exp/vector-openings]
     paths:
       - services/analyzer/tools/vector_opening_probe.py
+      - services/analyzer/app/document.py
+      - services/analyzer/app/openings.py
+      - services/analyzer/app/local_analysis.py
+      - services/analyzer/app/aec_benchmark.py
+      - services/analyzer/tests/test_document.py
+      - services/analyzer/tests/test_openings.py
       - .github/workflows/experiment-vector-openings.yml
   workflow_dispatch:
 
