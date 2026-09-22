@@ -1,0 +1,103 @@
+name: Fast Score Full Synthetic Detector
+
+on:
+  push:
+    branches: [exp/full-synthetic-score-fast]
+    paths:
+      - .github/workflows/experiment-full-synthetic-score-fast.yml
+  workflow_dispatch:
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install scorer dependencies only
+        run: pip install "numpy<3" "pillow<12" "shapely<3"
+
+      - name: Download completed synthetic predictions
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35771807959
+          pattern: synthetic-object-sheet-*
+          path: predictions
+          merge-multiple: true
+
+      - name: Score representative sheets only
+        run: |
+          python - <<'PY'
+          import os, shutil, subprocess
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          root=Path(".")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          predictions=root/"predictions"
+          target=root/"score-subset"
+          target.mkdir(exist_ok=True)
+
+          wanted={"sheet_05","sheet_10","sheet_14","sheet_15"}
+          for source in predictions.glob("sheet_*.json"):
+              if source.stem in wanted:
+                  shutil.copy2(source,target/source.name)
+
+          tree=ET.parse(dataset/"annotations_15_scoring_ready.xml")
+          root_node=tree.getroot()
+          for image in list(root_node.findall("image")):
+              if Path(str(image.get("name"))).stem not in wanted:
+                  root_node.remove(image)
+          subset=root/"gt-subset"
+          subset.mkdir(exist_ok=True)
+          tree.write(
+              subset/"annotations_15_scoring_ready.xml",
+              encoding="utf-8",
+              xml_declaration=True,
+          )
+
+          proc=subprocess.run(
+              [
+                  "python",str(scorer),
+                  "--pred",str(target),
+                  "--gt",str(subset),
+                  "--name","synthetic-full",
+              ],
+              text=True,
+              capture_output=True,
+              check=False,
+          )
+          print(proc.stdout)
+          print(proc.stderr)
+          Path("synthetic-full-score.txt").write_text(
+              proc.stdout+proc.stderr,
+              encoding="utf-8",
+          )
+          if proc.returncode:
+              raise SystemExit(proc.returncode)
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Full synthetic detector — official AEC score (4 sheets)\n\n")
+              for line in proc.stdout.splitlines():
+                  out.write("- "+line+"\n")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: full-synthetic-fast-score-${{ github.sha }}
+          path: synthetic-full-score.txt
+          retention-days: 5
