@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.openings import _door_arc_evidence_details,_door_subtype_from_evidence,detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
+from app.openings import _door_arc_evidence_details,_door_subtype_from_evidence,detect_doors,detect_openings,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
 
 
 def wall(wall_id,x1,y1,x2,y2):
@@ -530,3 +530,30 @@ def test_double_swing_requires_two_visible_leaf_hinges():
     assert _door_subtype_from_evidence(set(),{"a","b"})=="single_swing"
 
 
+
+
+def test_shared_opening_pass_matches_separate_detectors():
+    image=np.full((320,440,3),255,dtype=np.uint8)
+    cv2.line(image,(30,160),(120,160),(0,0,0),5)
+    cv2.line(image,(190,160),(260,160),(0,0,0),5)
+    cv2.line(image,(340,160),(410,160),(0,0,0),5)
+
+    # First gap: a hinged door leaf.
+    cv2.line(image,(120,160),(180,105),(0,0,0),4)
+    # Second gap: two glazing strokes.
+    cv2.line(image,(262,153),(338,153),(0,0,0),2)
+    cv2.line(image,(262,167),(338,167),(0,0,0),2)
+
+    walls=[
+        wall("w1",30,160,120,160),
+        wall("w2",190,160,260,160),
+        wall("w3",340,160,410,160),
+    ]
+    separate_doors=detect_doors(image,walls,meters_per_pixel=.02)
+    separate_windows=detect_windows(image,walls,meters_per_pixel=.02)
+    shared_doors,shared_windows=detect_openings(
+        image,walls,meters_per_pixel=.02,
+    )
+
+    assert shared_doors==separate_doors
+    assert shared_windows==separate_windows
