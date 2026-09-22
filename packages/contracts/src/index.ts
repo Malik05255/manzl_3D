@@ -13,6 +13,10 @@ export interface Opening {
   doorSubtype?: DoorSubtype;
   doorSwingSide?: "positive" | "negative" | "unknown";
   doorSwingDepthPx?: number | null;
+  detectorBBox?: [number, number, number, number];
+  detectorConfidence?: number;
+  detectorClass?: string;
+  detectorSource?: string;
   wallId?: string | null;
   a: Point;
   b: Point;
@@ -204,6 +208,15 @@ function fpOpening(value:unknown):value is Opening{
     &&(value.doorSwingSide===undefined||["positive","negative","unknown"].includes(String(value.doorSwingSide)))
     &&(value.doorSwingDepthPx===undefined||value.doorSwingDepthPx===null||(fpFinite(value.doorSwingDepthPx)&&value.doorSwingDepthPx>=0&&value.doorSwingDepthPx<=30000))
     &&(value.kind==="door"||(value.doorSubtype===undefined&&value.doorSwingSide===undefined&&(value.doorSwingDepthPx===undefined||value.doorSwingDepthPx===null)))
+    &&(value.detectorBBox===undefined||(
+      Array.isArray(value.detectorBBox)&&value.detectorBBox.length===4
+      &&value.detectorBBox.every(item=>fpFinite(item)&&item>=0&&item<=30000)
+      &&value.detectorBBox[2]>value.detectorBBox[0]
+      &&value.detectorBBox[3]>value.detectorBBox[1]
+    ))
+    &&(value.detectorConfidence===undefined||fpConfidence(value.detectorConfidence))
+    &&(value.detectorClass===undefined||(typeof value.detectorClass==="string"&&value.detectorClass.length<=100))
+    &&(value.detectorSource===undefined||(typeof value.detectorSource==="string"&&value.detectorSource.length<=100))
     &&(value.wallId===undefined||value.wallId===null||typeof value.wallId==="string")
     &&fpPoint(value.a)&&fpPoint(value.b)
     &&fpConfidence(value.confidence)
