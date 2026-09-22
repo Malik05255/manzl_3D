@@ -221,8 +221,8 @@ def _env_confidence(name:str,default:float,minimum:float=.10)->float:
     return max(minimum,min(.99,value))
 
 
-def _local_class_names()->list[str]:
-    raw=os.getenv("SYMBOL_ONNX_CLASSES","").strip()
+def _class_names_from_env(name:str)->list[str]:
+    raw=os.getenv(name,"").strip()
     if not raw:
         return []
     if raw.startswith("["):
@@ -233,6 +233,10 @@ def _local_class_names()->list[str]:
         except Exception:
             return []
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _local_class_names()->list[str]:
+    return _class_names_from_env("SYMBOL_ONNX_CLASSES")
 
 
 def _letterbox(image:np.ndarray,size:int)->tuple[np.ndarray,float,float,float]:
@@ -484,14 +488,16 @@ def _run_onnx_payload(
     )
 
 
-def extract_local_onnx_detections(image:np.ndarray)->list[dict]:
-    model_path=os.getenv("SYMBOL_ONNX_MODEL","").strip()
-    class_names=_local_class_names()
+def _extract_onnx_detections(
+    image:np.ndarray,
+    *,
+    model_path:str,
+    class_names:list[str],
+    input_size:int,
+    confidence:float,
+)->list[dict]:
     if not model_path or not class_names:
         return []
-    input_size=int(os.getenv("SYMBOL_ONNX_INPUT_SIZE","640") or "640")
-    input_size=max(128,min(2048,input_size))
-    confidence=_env_confidence("SYMBOL_ONNX_RAW_MIN_CONFIDENCE",.10,.05)
 
     key=(model_path,input_size)
     net=_ONNX_CACHE.get(key)
@@ -534,6 +540,62 @@ def extract_local_onnx_detections(image:np.ndarray)->list[dict]:
                 bx1+x1,by1+y1,bx2+x1,by2+y1,
             ]
             detections.append(shifted)
+    return _dedupe_raw_detections(
+        detections,
+        float(os.getenv("SYMBOL_ONNX_NMS_IOU",".45") or ".45"),
+    )
+
+
+def extract_local_onnx_detections(image:np.ndarray)->list[dict]:
+    model_path=os.getenv("SYMBOL_ONNX_MODEL","").strip()
+    class_names=_local_class_names()
+    if not model_path or not class_names:
+        return []
+    input_size=int(os.getenv("SYMBOL_ONNX_INPUT_SIZE","640") or "640")
+    input_size=max(128,min(2048,input_size))
+    confidence=_env_confidence("SYMBOL_ONNX_RAW_MIN_CONFIDENCE",.10,.05)
+    return _extract_onnx_detections(
+        image,
+        model_path=model_path,
+        class_names=class_names,
+        input_size=input_size,
+        confidence=confidence,
+    )
+
+
+def extract_secondary_onnx_detections(image:np.ndarray)->list[dict]:
+    model_path=os.getenv("SYMBOL_SECONDARY_ONNX_MODEL","").strip()
+    class_names=_class_names_from_env("SYMBOL_SECONDARY_ONNX_CLASSES")
+    if not model_path or not class_names:
+        return []
+    input_size=int(
+        os.getenv(
+            "SYMBOL_SECONDARY_ONNX_INPUT_SIZE",
+            os.getenv("SYMBOL_ONNX_INPUT_SIZE","640"),
+        )
+        or "640"
+    )
+    input_size=max(128,min(2048,input_size))
+    confidence=_env_confidence(
+        "SYMBOL_SECONDARY_ONNX_RAW_MIN_CONFIDENCE",
+        .15,
+        .05,
+    )
+    return _extract_onnx_detections(
+        image,
+        model_path=model_path,
+        class_names=class_names,
+        input_size=input_size,
+        confidence=confidence,
+    )
+
+
+def extract_configured_onnx_detections(image:np.ndarray)->list[dict]:
+    detections=[]
+    detections.extend(extract_local_onnx_detections(image))
+    detections.extend(extract_secondary_onnx_detections(image))
+    if not detections:
+        return []
     return _dedupe_raw_detections(
         detections,
         float(os.getenv("SYMBOL_ONNX_NMS_IOU",".45") or ".45"),
