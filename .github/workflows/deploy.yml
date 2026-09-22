@@ -57,14 +57,21 @@ jobs:
       - name: Resolve public URLs and resource names
         run: |
           set -euo pipefail
-          SUBDOMAIN_JSON="$(curl --fail --show-error --silent \
+          SUBDOMAIN_JSON="$(curl --show-error --silent \
             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")"
-          SUBDOMAIN="$(printf '%s' "$SUBDOMAIN_JSON" | python -c 'import json,sys; print((json.load(sys.stdin).get("result") or {}).get("subdomain") or "")')"
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" || true)"
+          SUBDOMAIN="$(printf '%s' "$SUBDOMAIN_JSON" | python -c 'import json,sys; data=json.load(sys.stdin) if sys.stdin.readable() else {}; print((data.get("result") or {}).get("subdomain") or "")' 2>/dev/null || true)"
           if [ -z "$SUBDOMAIN" ]; then
-            echo "Cloudflare Workers subdomain is not configured for this account." >&2
-            exit 1
+            PREFERRED_SUBDOMAIN="manzil-${CLOUDFLARE_ACCOUNT_ID:0:8}"
+            echo "No workers.dev subdomain found; creating $PREFERRED_SUBDOMAIN"
+            SUBDOMAIN_JSON="$(curl --fail --show-error --silent -X PUT \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data "{\"subdomain\":\"$PREFERRED_SUBDOMAIN\"}")"
+            SUBDOMAIN="$(printf '%s' "$SUBDOMAIN_JSON" | python -c 'import json,sys; print((json.load(sys.stdin).get("result") or {}).get("subdomain") or "")')"
           fi
+          test -n "$SUBDOMAIN"
           D1_DATABASE_NAME="${D1_DATABASE_NAME_INPUT:-manzil-h}"
           R2_BUCKET="${R2_BUCKET_INPUT:-manzil-h-assets}"
           ANALYZE_QUEUE="${ANALYZE_QUEUE_INPUT:-manzil-h-analysis}"
