@@ -1,9 +1,6 @@
 name: Staging E2E
 
 on:
-  push:
-    branches:
-      - feat/cloud-floorplan-editor
   workflow_dispatch:
 
 jobs:
@@ -20,8 +17,9 @@ jobs:
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "### Staging E2E skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Staging E2E configuration error" >> "$GITHUB_STEP_SUMMARY"
             echo "Repository secret MANZIL_E2E_API_URL is not configured." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
       - uses: actions/checkout@v4
         if: steps.staging.outputs.available == 'true'

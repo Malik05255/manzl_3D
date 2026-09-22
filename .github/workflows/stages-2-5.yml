@@ -385,15 +385,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - run: pip install PyMuPDF==1.26.4
-      - run: python services/analyzer/tools/generate_e2e_fixture.py /tmp/manzil-e2e.pdf
       - name: Resolve deployed staging endpoint
         id: staging
         env:
@@ -403,11 +394,29 @@ jobs:
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "### Staging E2E not executed" >> "$GITHUB_STEP_SUMMARY"
             echo "Repository secret MANZIL_E2E_API_URL is not configured." >> "$GITHUB_STEP_SUMMARY"
+            if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+              echo "Manual validation requires a deployed staging endpoint." >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
             exit 0
           fi
           echo "configured=true" >> "$GITHUB_OUTPUT"
           curl -fsS "$MANZIL_API_URL/health"
           curl -fsS "$MANZIL_API_URL/ready"
+      - uses: actions/checkout@v4
+        if: steps.staging.outputs.configured == 'true'
+      - uses: actions/setup-python@v5
+        if: steps.staging.outputs.configured == 'true'
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        if: steps.staging.outputs.configured == 'true'
+        with:
+          node-version: 24
+      - run: pip install PyMuPDF==1.26.4
+        if: steps.staging.outputs.configured == 'true'
+      - run: python services/analyzer/tools/generate_e2e_fixture.py /tmp/manzil-e2e.pdf
+        if: steps.staging.outputs.configured == 'true'
       - name: Run upload-to-restore against staging
         if: steps.staging.outputs.configured == 'true'
         env:
