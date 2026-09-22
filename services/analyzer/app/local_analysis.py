@@ -18,7 +18,7 @@ from .openings import detect_doors,detect_windows,fuse_ai_opening_detections,nor
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
-from .symbols import extract_local_onnx_detections,extract_symbol_detections,normalize_configured_symbols
+from .symbols import extract_local_onnx_detections,extract_remote_symbols,extract_symbol_detections,merge_symbol_sets,normalize_configured_symbols,symbol_detector_mode
 from .topology import classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,quarantine_dimension_aligned_walls,rasterize_wall_mask
 
@@ -99,7 +99,20 @@ def analyze_document_bytes_local(
     if onnx_model_configured:
         try:
             ai_detections=extract_local_onnx_detections(image)
-            symbols=normalize_configured_symbols(ai_detections,w,h)
+            local_symbols=normalize_configured_symbols(ai_detections,w,h)
+            mode=symbol_detector_mode()
+            if (
+                mode in {"augment","remote"}
+                and os.getenv("SYMBOL_DETECTOR_URL","").strip()
+            ):
+                remote_symbols=asyncio.run(extract_remote_symbols(image))
+                symbols=(
+                    remote_symbols
+                    if mode=="remote"
+                    else merge_symbol_sets(local_symbols,remote_symbols)
+                )
+            else:
+                symbols=local_symbols
         except Exception:
             ai_detections=[]
             symbols=[]

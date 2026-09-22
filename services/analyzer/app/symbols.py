@@ -83,6 +83,16 @@ def _raw_bbox(item:dict)->tuple[float,float,float,float]|None:
             return None
 
     # Some detectors return top-level coordinates instead of bbox.
+    if all(key in item for key in ("x","y","width","height")):
+        try:
+            x=float(item["x"]); y=float(item["y"])
+            width=float(item["width"]); height=float(item["height"])
+        except (TypeError,ValueError):
+            return None
+        fmt=str(item.get("bbox_format",item.get("format","cxcywh"))).strip().lower()
+        if fmt in {"xywh","x_y_width_height","top-left"}:
+            return x,y,x+width,y+height
+        return x-width/2,y-height/2,x+width/2,y+height/2
     if any(key in item for key in ("x1","left","cx")):
         return _raw_bbox({"bbox":item,"bbox_format":item.get("bbox_format","xyxy")})
     return None
@@ -143,6 +153,7 @@ def normalize_symbol_response(
     min_confidence:float=.78,
     *,
     per_kind_min_confidence:dict[str,float]|None=None,
+    provenance:str="ai",
 )->list[dict]:
     if isinstance(payload,dict):
         raw=payload.get("symbols",payload.get("detections",payload.get("predictions",[])))
@@ -180,7 +191,7 @@ def normalize_symbol_response(
             "b":{"x":x2,"y":y2},
             "confidence":round(confidence,4),
             "reviewed":False,
-            "provenance":"ai",
+            "provenance":provenance,
         })
 
     accepted=[]
@@ -574,25 +585,58 @@ def extract_local_onnx_symbols(image:np.ndarray)->list[dict]:
     )
 
 
-async def extract_symbol_detections(image:np.ndarray)->list[dict]:
-    # Prefer an in-process ONNX model when configured. This removes network
-    # latency and keeps plan images inside the Analyzer boundary.
-    try:
-        local=extract_local_onnx_symbols(image)
-    except Exception:
-        local=[]
-    if local:
-        return local
+def symbol_detector_mode()->str:
+    value=os.getenv("SYMBOL_DETECTOR_MODE","fallback").strip().lower()
+    return value if value in {"fallback","augment","remote","local"} else "fallback"
 
+
+def merge_symbol_sets(*groups:list[dict])->list[dict]:
+    candidates=[
+        dict(item)
+        for group in groups
+        for item in (group or [])
+        if isinstance(item,dict)
+    ]
+    accepted=[]
+    for candidate in sorted(
+        candidates,
+        key=lambda item:float(item.get("confidence",0.0)),
+        reverse=True,
+    ):
+        same=any(
+            existing.get("kind")==candidate.get("kind")
+            and _iou(existing,candidate)>=.55
+            for existing in accepted
+        )
+        if same:
+            continue
+        conflict=any(
+            existing.get("kind")!=candidate.get("kind")
+            and _iou(existing,candidate)>=.78
+            for existing in accepted
+        )
+        if conflict:
+            continue
+        accepted.append(candidate)
+    for index,item in enumerate(accepted,start=1):
+        item["id"]=f"symbol-{index}"
+    return accepted
+
+
+async def extract_remote_symbols(image:np.ndarray)->list[dict]:
     url=os.getenv("SYMBOL_DETECTOR_URL","").strip()
     if not url:
         return []
     token=os.getenv("SYMBOL_DETECTOR_TOKEN","").strip()
     try:
-        min_confidence=float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78")
+        min_confidence=float(
+            os.getenv("SYMBOL_REMOTE_MIN_CONFIDENCE",
+                      os.getenv("SYMBOL_MIN_CONFIDENCE",".55"))
+            or ".55"
+        )
     except ValueError:
-        min_confidence=.78
-    min_confidence=max(.50,min(.99,min_confidence))
+        min_confidence=.55
+    min_confidence=max(.05,min(.99,min_confidence))
 
     ok,encoded=cv2.imencode(".png",image)
     if not ok:
@@ -607,4 +651,39 @@ async def extract_symbol_detections(image:np.ndarray)->list[dict]:
         response.raise_for_status()
         payload=response.json()
     h,w=image.shape[:2]
-    return normalize_symbol_response(payload,w,h,min_confidence)
+    return normalize_symbol_response(
+        payload,
+        w,
+        h,
+        min_confidence,
+        provenance="remote-ai",
+    )
+
+
+async def extract_symbol_detections(image:np.ndarray)->list[dict]:
+    mode=symbol_detector_mode()
+    local=[]
+    if mode!="remote":
+        try:
+            local=extract_local_onnx_symbols(image)
+        except Exception:
+            local=[]
+
+    if mode=="local":
+        return local
+    if mode=="fallback" and local:
+        return local
+
+    remote=[]
+    if os.getenv("SYMBOL_DETECTOR_URL","").strip():
+        try:
+            remote=await extract_remote_symbols(image)
+        except Exception:
+            remote=[]
+
+    if mode=="remote":
+        return remote
+    if mode=="augment":
+        return merge_symbol_sets(local,remote)
+    return local or remote
+

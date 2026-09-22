@@ -1,6 +1,6 @@
 import numpy as np
 
-from app.symbols import normalize_configured_symbols,_env_confidence,_decode_yolo_output,_dedupe_raw_detections,_prepare_yolo_rows,_tile_windows,normalize_symbol_response
+from app.symbols import merge_symbol_sets,normalize_configured_symbols,_env_confidence,_decode_yolo_output,_dedupe_raw_detections,_prepare_yolo_rows,_tile_windows,normalize_symbol_response
 
 
 def test_normalizes_supported_symbol_classes_and_boxes():
@@ -228,3 +228,62 @@ def test_configured_symbol_policy_is_shared_and_sink_specific(monkeypatch):
         ("toilet",.65),
         ("sink",.12),
     ]
+
+
+def test_top_level_center_bbox_payload_is_supported():
+    payload={
+        "predictions":[{
+            "class":"toilet",
+            "x":100,
+            "y":80,
+            "width":40,
+            "height":20,
+            "confidence":.9,
+        }],
+    }
+    result=normalize_symbol_response(payload,200,160,.5)
+    assert len(result)==1
+    assert result[0]["a"]=={"x":80.0,"y":70.0}
+    assert result[0]["b"]=={"x":120.0,"y":90.0}
+
+
+def test_merge_symbol_sets_keeps_stronger_overlapping_class():
+    local=[{
+        "id":"local",
+        "kind":"sink",
+        "a":{"x":10.0,"y":10.0},
+        "b":{"x":60.0,"y":60.0},
+        "confidence":.62,
+        "reviewed":False,
+        "provenance":"ai",
+    }]
+    remote=[{
+        "id":"remote",
+        "kind":"toilet",
+        "a":{"x":11.0,"y":11.0},
+        "b":{"x":59.0,"y":59.0},
+        "confidence":.91,
+        "reviewed":False,
+        "provenance":"remote-ai",
+    },{
+        "id":"remote2",
+        "kind":"bathtub",
+        "a":{"x":100.0,"y":20.0},
+        "b":{"x":170.0,"y":80.0},
+        "confidence":.8,
+        "reviewed":False,
+        "provenance":"remote-ai",
+    }]
+    result=merge_symbol_sets(local,remote)
+    assert [item["kind"] for item in result]==["toilet","bathtub"]
+    assert result[0]["provenance"]=="remote-ai"
+
+
+def test_symbol_detector_mode_defaults_safely(monkeypatch):
+    from app.symbols import symbol_detector_mode
+    monkeypatch.delenv("SYMBOL_DETECTOR_MODE",raising=False)
+    assert symbol_detector_mode()=="fallback"
+    monkeypatch.setenv("SYMBOL_DETECTOR_MODE","augment")
+    assert symbol_detector_mode()=="augment"
+    monkeypatch.setenv("SYMBOL_DETECTOR_MODE","unexpected")
+    assert symbol_detector_mode()=="fallback"
