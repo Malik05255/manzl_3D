@@ -590,3 +590,64 @@ def test_vector_window_rejects_parallel_group_far_from_wall():
     ]
     windows=detect_windows(image,walls,None,vector_lines=vectors)
     assert windows==[]
+
+
+def test_vector_endpoint_door_recovers_single_wall_endpoint():
+    image=np.full((600,900,3),255,dtype=np.uint8)
+    walls=[wall("host",300,300,760,300)]
+    vectors=[
+        {
+            "a":{"x":300.0,"y":300.0},
+            "b":{"x":255.0,"y":255.0},
+            "widthPx":1.2,
+        },
+    ]
+    doors=detect_doors(
+        image,
+        walls,
+        .02,
+        vector_lines=vectors,
+    )
+    assert len(doors)==1
+    door=doors[0]
+    assert door["provenance"]=="pdf-vector-endpoint"
+    assert door["wallId"]=="host"
+    assert door["b"]["x"]<door["a"]["x"]
+
+
+def test_vector_endpoint_door_rejects_parallel_line():
+    image=np.full((600,900,3),255,dtype=np.uint8)
+    walls=[wall("host",300,300,760,300)]
+    vectors=[
+        {
+            "a":{"x":300.0,"y":300.0},
+            "b":{"x":240.0,"y":300.0},
+            "widthPx":1.2,
+        },
+    ]
+    doors=detect_doors(
+        image,
+        walls,
+        .02,
+        vector_lines=vectors,
+    )
+    assert doors==[]
+
+
+def test_vector_endpoint_door_rejects_leaf_far_from_wall_endpoint():
+    image=np.full((600,900,3),255,dtype=np.uint8)
+    walls=[wall("host",300,300,760,300)]
+    vectors=[
+        {
+            "a":{"x":360.0,"y":300.0},
+            "b":{"x":315.0,"y":255.0},
+            "widthPx":1.2,
+        },
+    ]
+    doors=detect_doors(
+        image,
+        walls,
+        .02,
+        vector_lines=vectors,
+    )
+    assert doors==[]
