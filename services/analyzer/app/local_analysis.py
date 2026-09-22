@@ -18,7 +18,7 @@ from .openings import detect_doors,detect_windows,fuse_ai_opening_detections,nor
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
-from .symbols import extract_local_onnx_detections,extract_symbol_detections,normalize_configured_symbols
+from .symbols import extract_configured_onnx_detections,extract_symbol_detections,normalize_configured_symbols
 from .topology import classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,quarantine_dimension_aligned_walls,rasterize_wall_mask
 
@@ -91,14 +91,17 @@ def analyze_document_bytes_local(
 
     symbols=[]
     ai_detections=[]
-    onnx_model_configured=bool(os.getenv("SYMBOL_ONNX_MODEL","").strip())
+    onnx_model_configured=bool(
+        os.getenv("SYMBOL_ONNX_MODEL","").strip()
+        or os.getenv("SYMBOL_SECONDARY_ONNX_MODEL","").strip()
+    )
     symbol_provider_configured=bool(
         onnx_model_configured
         or os.getenv("SYMBOL_DETECTOR_URL","").strip()
     )
     if onnx_model_configured:
         try:
-            ai_detections=extract_local_onnx_detections(image)
+            ai_detections=extract_configured_onnx_detections(image)
             symbols=normalize_configured_symbols(ai_detections,w,h)
         except Exception:
             ai_detections=[]
