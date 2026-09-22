@@ -467,3 +467,57 @@ def test_convincing_geometric_swing_beats_close_ai_window():
     doors,windows=resolve_opening_conflicts([door],[window])
     assert [item["id"] for item in doors]==["door-strong"]
     assert windows==[]
+
+
+
+def test_mixed_leaf_and_opposite_arc_does_not_create_double_swing():
+    image=np.full((320,380,3),255,dtype=np.uint8)
+    cv2.line(image,(30,150),(120,150),(0,0,0),5)
+    cv2.line(image,(210,150),(350,150),(0,0,0),5)
+    # One hinged leaf on the left.
+    cv2.line(image,(120,150),(160,105),(0,0,0),4)
+    # Arc-like evidence centred on the opposite hinge. Mixed evidence should
+    # not be enough for a true double swing.
+    cv2.ellipse(image,(210,150),(72,72),0,180,270,(0,0,0),3)
+
+    doors=detect_doors(
+        image,
+        [wall("left",30,150,120,150),wall("right",210,150,350,150)],
+        meters_per_pixel=.02,
+    )
+    assert len(doors)==1
+    assert doors[0]["doorSubtype"]=="single_swing"
+
+
+def test_strong_glazing_survives_one_spurious_leaf_chord_without_arc():
+    image=np.full((320,420,3),255,dtype=np.uint8)
+    cv2.line(image,(30,160),(120,160),(0,0,0),5)
+    cv2.line(image,(260,160),(390,160),(0,0,0),5)
+    # Three separated glazing strokes across the opening.
+    for y in (150,160,170):
+        cv2.line(image,(125,y),(255,y),(0,0,0),2)
+    # One short diagonal chord can be produced by nearby annotation/detailing.
+    cv2.line(image,(120,160),(172,118),(0,0,0),3)
+
+    windows=detect_windows(
+        image,
+        [wall("left",30,160,120,160),wall("right",260,160,390,160)],
+        meters_per_pixel=.02,
+    )
+    assert len(windows)==1
+
+
+def test_real_swing_arc_still_blocks_window_even_with_parallel_strokes():
+    image=np.full((320,420,3),255,dtype=np.uint8)
+    cv2.line(image,(30,160),(120,160),(0,0,0),5)
+    cv2.line(image,(260,160),(390,160),(0,0,0),5)
+    for y in (150,160,170):
+        cv2.line(image,(125,y),(255,y),(0,0,0),2)
+    cv2.ellipse(image,(120,160),(100,100),0,270,360,(0,0,0),3)
+
+    windows=detect_windows(
+        image,
+        [wall("left",30,160,120,160),wall("right",260,160,390,160)],
+        meters_per_pixel=.02,
+    )
+    assert windows==[]
