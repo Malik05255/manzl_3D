@@ -1130,8 +1130,18 @@ def normalize_opening_hosts(
     windows:list[dict],
 )->tuple[list[dict],list[dict],list[dict]]:
     doors,windows=resolve_opening_conflicts(doors,windows)
-    openings=[*doors,*windows]
-    if not walls or not openings:
+    all_openings=[*doors,*windows]
+    # PDF-vector windows are excellent object evidence, but they should not
+    # alter wall topology. A dense glazing group can span or touch several
+    # nearby wall segments and would otherwise union unrelated walls.
+    topology_openings=[
+        *doors,
+        *[
+            window for window in windows
+            if str(window.get("provenance") or "")!="pdf-vector"
+        ],
+    ]
+    if not walls or not all_openings:
         return walls,doors,windows
 
     by_id={str(wall["id"]):wall for wall in walls}
@@ -1153,7 +1163,7 @@ def normalize_opening_hosts(
         if a!=b:
             parent[b]=a
 
-    for opening in openings:
+    for opening in topology_openings:
         nearby=[]
         for wall in walls:
             if _angle_difference(wall,opening)>6.0:
@@ -1236,7 +1246,7 @@ def normalize_opening_hosts(
             replacement[str(wall["id"])]=canonical_id
 
     normalized_by_id={str(wall["id"]):wall for wall in normalized}
-    for opening in openings:
+    for opening in all_openings:
         wall_id=str(opening.get("wallId") or "")
         if wall_id in replacement:
             opening["wallId"]=replacement[wall_id]
