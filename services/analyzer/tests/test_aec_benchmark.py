@@ -406,3 +406,39 @@ def test_raster_window_keeps_generic_padding():
     assert y1==195.0
     assert x2==205.0
     assert y2==205.0
+
+
+def test_dedicated_detector_bbox_is_used_for_aec_openings():
+    plan={
+        "widthPx":1000,
+        "heightPx":500,
+        "walls":[],
+        "rooms":[],
+        "doors":[{
+            "id":"d",
+            "kind":"door",
+            "a":{"x":320.0,"y":100.0},
+            "b":{"x":420.0,"y":100.0},
+            "confidence":.9,
+            "detectorBBox":[300.0,80.0,450.0,230.0],
+            "detectorSource":"mit-floorplan",
+        }],
+        "windows":[{
+            "id":"w",
+            "kind":"window",
+            "a":{"x":600.0,"y":100.0},
+            "b":{"x":700.0,"y":100.0},
+            "confidence":.9,
+            "detectorBBox":[580.0,90.0,730.0,150.0],
+            "detectorSource":"mit-floorplan",
+        }],
+        "symbols":[],
+    }
+    prediction=plan_to_aec_prediction(
+        plan,
+        sheet="sheet",
+        width=2000,
+        height=1000,
+    )
+    assert prediction["objects"][0]["bbox"]==[600.0,160.0,900.0,460.0]
+    assert prediction["objects"][1]["bbox"]==[1160.0,180.0,1460.0,300.0]
