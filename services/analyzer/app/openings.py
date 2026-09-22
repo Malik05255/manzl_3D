@@ -93,17 +93,37 @@ def _opening_roi(image:np.ndarray,a:dict,b:dict,gap_px:float)->tuple[np.ndarray,
 def _hough_segments(roi:np.ndarray,gap_px:float)->list[tuple[int,int,int,int]]:
     if roi.size==0:
         return []
-    gray=cv2.cvtColor(roi,cv2.COLOR_BGR2GRAY)
+    h,w=roi.shape[:2]
+    max_dimension=max(h,w)
+    # Evidence only needs line direction/coverage, not native-resolution edge
+    # density. Large AEC openings otherwise make Hough dominate runtime.
+    scale=min(1.0,1000.0/max(1.0,float(max_dimension)))
+    if scale<.999:
+        work=cv2.resize(
+            roi,
+            (max(1,int(round(w*scale))),max(1,int(round(h*scale)))),
+            interpolation=cv2.INTER_AREA,
+        )
+    else:
+        work=roi
+    scaled_gap=max(1.0,float(gap_px)*scale)
+    gray=cv2.cvtColor(work,cv2.COLOR_BGR2GRAY)
     edges=cv2.Canny(gray,55,155)
     raw=cv2.HoughLinesP(
         edges,
         1,
         np.pi/360,
-        threshold=max(8,int(gap_px*0.16)),
-        minLineLength=max(7,int(gap_px*0.25)),
-        maxLineGap=max(3,int(gap_px*0.10)),
+        threshold=max(8,int(scaled_gap*0.16)),
+        minLineLength=max(7,int(scaled_gap*0.25)),
+        maxLineGap=max(3,int(scaled_gap*0.10)),
     )
-    return [] if raw is None else [tuple(map(int,item)) for item in np.asarray(raw).reshape(-1,4)]
+    if raw is None:
+        return []
+    inverse=1.0/max(scale,1e-9)
+    return [
+        tuple(int(round(float(value)*inverse)) for value in item)
+        for item in np.asarray(raw).reshape(-1,4)
+    ]
 
 
 def _door_leaf_evidence_details(
