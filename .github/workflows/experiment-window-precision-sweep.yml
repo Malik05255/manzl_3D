@@ -1,0 +1,249 @@
+name: Window Precision Sweep
+
+on:
+  push:
+    branches: [exp/window-precision-sweep]
+    paths:
+      - .github/workflows/experiment-window-precision-sweep.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install scorer dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely
+
+      - name: Download completed AEC-15 canonical artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35755512704
+          pattern: stages-2-4-*
+          path: benchmark-input
+          merge-multiple: true
+
+      - name: Sweep PDF-vector window precision filters
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json, os, math
+          from pathlib import Path
+          from app.aec_benchmark import plan_to_aec_prediction, run_official_scorer
+
+          root=Path("../..")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          by_sheet={str(item["sheet"]):item for item in manifest["sheets"]}
+          canonical_candidates=list((root/"benchmark-input").rglob("_canonical"))
+          if not canonical_candidates:
+              raise SystemExit("No canonical directory found")
+          canonical=canonical_candidates[0]
+          sheets=sorted(p.stem for p in canonical.glob("sheet_*.json"))
+          if len(sheets)!=15:
+              raise SystemExit(f"Expected 15 sheets, found {len(sheets)}")
+
+          configs=[
+              {
+                  "name":"baseline",
+              },
+              {
+                  "name":"conf90",
+                  "min_conf":.90,
+              },
+              {
+                  "name":"conf925",
+                  "min_conf":.925,
+              },
+              {
+                  "name":"geo-wide",
+                  "span_th":(1.5,12.0),
+                  "depth_th":(.30,1.80),
+                  "depth_span":(.04,.50),
+              },
+              {
+                  "name":"geo-mid",
+                  "span_th":(2.0,10.0),
+                  "depth_th":(.35,1.40),
+                  "depth_span":(.06,.42),
+              },
+              {
+                  "name":"geo-tight",
+                  "span_th":(2.5,9.0),
+                  "depth_th":(.45,1.25),
+                  "depth_span":(.08,.35),
+              },
+              {
+                  "name":"conf90-geo-wide",
+                  "min_conf":.90,
+                  "span_th":(1.5,12.0),
+                  "depth_th":(.30,1.80),
+                  "depth_span":(.04,.50),
+              },
+              {
+                  "name":"conf90-geo-mid",
+                  "min_conf":.90,
+                  "span_th":(2.0,10.0),
+                  "depth_th":(.35,1.40),
+                  "depth_span":(.06,.42),
+              },
+              {
+                  "name":"conf925-geo-wide",
+                  "min_conf":.925,
+                  "span_th":(1.5,12.0),
+                  "depth_th":(.30,1.80),
+                  "depth_span":(.04,.50),
+              },
+              {
+                  "name":"conf925-geo-mid",
+                  "min_conf":.925,
+                  "span_th":(2.0,10.0),
+                  "depth_th":(.35,1.40),
+                  "depth_span":(.06,.42),
+              },
+          ]
+
+          def in_range(value,bounds):
+              if bounds is None:
+                  return True
+              return bounds[0]<=value<=bounds[1]
+
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          rows=[]
+          for config in configs:
+              target=root/f"benchmark-output/window-precision/{config['name']}"
+              target.mkdir(parents=True,exist_ok=True)
+              kept_vector=0
+              removed_vector=0
+              kept_other=0
+
+              for sheet in sheets:
+                  plan=json.loads((canonical/f"{sheet}.json").read_text())
+                  wall_by_id={str(w["id"]):w for w in plan.get("walls",[])}
+                  filtered=[]
+                  for window in plan.get("windows",[]):
+                      if window.get("provenance")!="pdf-vector":
+                          filtered.append(window)
+                          kept_other+=1
+                          continue
+
+                      wall=wall_by_id.get(str(window.get("wallId","")))
+                      try:
+                          ax=float(window["a"]["x"]); ay=float(window["a"]["y"])
+                          bx=float(window["b"]["x"]); by=float(window["b"]["y"])
+                          span=math.hypot(bx-ax,by-ay)
+                          thickness=float((wall or {}).get("thicknessPx",0.0) or 0.0)
+                          depth=float(window.get("windowDepthPx",0.0) or 0.0)
+                          confidence=float(window.get("confidence",0.0) or 0.0)
+                      except (KeyError,TypeError,ValueError):
+                          removed_vector+=1
+                          continue
+                      if thickness<=0 or span<=0:
+                          removed_vector+=1
+                          continue
+
+                      span_th=span/thickness
+                      depth_th=depth/thickness
+                      depth_span=depth/span
+                      if confidence < float(config.get("min_conf",0.0)):
+                          removed_vector+=1
+                          continue
+                      if not in_range(span_th,config.get("span_th")):
+                          removed_vector+=1
+                          continue
+                      if not in_range(depth_th,config.get("depth_th")):
+                          removed_vector+=1
+                          continue
+                      if not in_range(depth_span,config.get("depth_span")):
+                          removed_vector+=1
+                          continue
+                      filtered.append(window)
+                      kept_vector+=1
+
+                  plan["windows"]=filtered
+                  item=by_sheet[sheet]
+                  prediction=plan_to_aec_prediction(
+                      plan,
+                      sheet=sheet,
+                      width=int(item["width"]),
+                      height=int(item["height"]),
+                  )
+                  (target/f"{sheet}.json").write_text(
+                      json.dumps(prediction,separators=(",",":")),
+                      encoding="utf-8",
+                  )
+
+              code,output,report=run_official_scorer(
+                  scorer,target,dataset,sheet_names=sheets,include_per_sheet=True,
+              )
+              if code!=0 or report is None:
+                  print(output)
+                  raise SystemExit(code or 1)
+              window=report.get("classes",{}).get("Window",{})
+              row={
+                  "name":config["name"],
+                  "keptVector":kept_vector,
+                  "removedVector":removed_vector,
+                  "keptOther":kept_other,
+                  "window":window,
+                  "objectMicro":report.get("objectMicro",{}),
+                  "macroF1":report.get("macroF1",0),
+              }
+              rows.append(row)
+              print("WINDOW_FILTER",json.dumps(row,sort_keys=True))
+
+          rows.sort(
+              key=lambda row:(
+                  float(row["window"].get("f1",0)),
+                  float(row["objectMicro"].get("f1",0)),
+                  float(row["macroF1"]),
+              ),
+              reverse=True,
+          )
+          target=root/"benchmark-output/window-precision/report.json"
+          target.parent.mkdir(parents=True,exist_ok=True)
+          target.write_text(json.dumps(rows,indent=2),encoding="utf-8")
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Window precision sweep — AEC-15\n\n")
+              out.write("| Filter | Vector kept | Window TP | FP | FN | P | R | F1 | Object F1 | macroF1 |\n")
+              out.write("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+              for row in rows:
+                  w=row["window"]
+                  out.write(
+                      f"| {row['name']} | {row['keptVector']} | {w.get('tp',0)} | "
+                      f"{w.get('fp',0)} | {w.get('fn',0)} | "
+                      f"{float(w.get('precision',0)):.3f} | {float(w.get('recall',0)):.3f} | "
+                      f"{float(w.get('f1',0)):.3f} | "
+                      f"{float(row['objectMicro'].get('f1',0)):.3f} | "
+                      f"{float(row['macroF1']):.3f} |\n"
+                  )
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: window-precision-sweep-${{ github.sha }}
+          path: benchmark-output/window-precision/report.json
+          retention-days: 5
