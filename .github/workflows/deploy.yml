@@ -16,8 +16,8 @@ jobs:
     timeout-minutes: 60
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      INTERNAL_TOKEN: ${{ secrets.MANZIL_INTERNAL_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      INTERNAL_TOKEN_INPUT: ${{ secrets.MANZIL_INTERNAL_TOKEN }}
       D1_DATABASE_NAME_INPUT: ${{ vars.MANZIL_D1_DATABASE_NAME }}
       R2_BUCKET_INPUT: ${{ vars.MANZIL_R2_BUCKET }}
       ANALYZE_QUEUE_INPUT: ${{ vars.MANZIL_ANALYZE_QUEUE }}
@@ -41,7 +41,12 @@ jobs:
           set -eu
           : "${CLOUDFLARE_API_TOKEN:?Missing secret CLOUDFLARE_API_TOKEN}"
           : "${CLOUDFLARE_ACCOUNT_ID:?Missing secret CLOUDFLARE_ACCOUNT_ID}"
-          : "${INTERNAL_TOKEN:?Missing secret MANZIL_INTERNAL_TOKEN}"
+          if [ -n "$INTERNAL_TOKEN_INPUT" ]; then
+            printf 'INTERNAL_TOKEN=%s\n' "$INTERNAL_TOKEN_INPUT" >> "$GITHUB_ENV"
+          else
+            GENERATED_INTERNAL_TOKEN="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+            printf 'INTERNAL_TOKEN=%s\n' "$GENERATED_INTERNAL_TOKEN" >> "$GITHUB_ENV"
+          fi
           docker info >/dev/null
 
       - name: Install workspace and deployment dependencies
