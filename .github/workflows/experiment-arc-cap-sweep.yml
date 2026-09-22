@@ -1,0 +1,127 @@
+name: Arc ROI Cap Sweep
+
+on:
+  push:
+    branches: [exp/arc-adaptive-cap]
+    paths:
+      - services/analyzer/app/openings.py
+      - .github/workflows/experiment-arc-cap-sweep.yml
+  workflow_dispatch:
+
+jobs:
+  sheet-15:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        cap: [480, 640, 800]
+    env:
+      OPENING_ARC_MAX_ROI: ${{ matrix.cap }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt pytest shapely
+          pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
+      - name: Run opening tests
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_openings.py
+      - name: Export FloorCAD ONNX
+        run: |
+          python - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          from huggingface_hub import hf_hub_download
+          from ultralytics import YOLO
+          source=hf_hub_download("mudasir13cs/floorcad-yolov8n-detect","floorcad-yolov8n-detect.pt")
+          model=YOLO(source)
+          exported=model.export(format="onnx",imgsz=640,opset=12,simplify=False,dynamic=False)
+          target=Path("benchmark-model"); target.mkdir(exist_ok=True)
+          shutil.copy2(exported,target/"floorcad.onnx")
+          classes=[str(model.names[index]) for index in sorted(model.names)]
+          (target/"classes.json").write_text(json.dumps(classes),encoding="utf-8")
+          PY
+      - name: Configure detector
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          classes=json.loads(Path("benchmark-model/classes.json").read_text())
+          with Path(os.environ["GITHUB_ENV"]).open("a") as env:
+              env.write("SYMBOL_ONNX_MODEL="+str(Path("benchmark-model/floorcad.onnx").resolve())+"\n")
+              env.write("SYMBOL_ONNX_CLASSES="+json.dumps(classes,separators=(",",":"))+"\n")
+              env.write("SYMBOL_ONNX_RAW_MIN_CONFIDENCE=0.30\n")
+              env.write("SYMBOL_MIN_CONFIDENCE=0.55\n")
+              env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
+          PY
+      - name: Analyze and score sheet 15
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p ../../benchmark-output/cap-${OPENING_ARC_MAX_ROI}
+          python -m app.aec_benchmark \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --output ../../benchmark-output/cap-${OPENING_ARC_MAX_ROI} \
+            --offset 14 --limit 1
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from app.aec_benchmark import run_official_scorer
+          root=Path("../..")
+          cap=os.environ["OPENING_ARC_MAX_ROI"]
+          pred=root/f"benchmark-output/cap-{cap}"
+          timing=json.loads((pred/"_timings/sheet_15.json").read_text())
+          code,output,report=run_official_scorer(
+              root/"external/aec-geometric-bench/scoring/score.py",
+              pred,
+              root/"external/aec-geometric-bench/dataset",
+              sheet_names=["sheet_15"],
+              include_per_sheet=True,
+          )
+          (pred/"report.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
+          sheet=report.get("sheets",{}).get("sheet_15",{})
+          print("CAP",cap)
+          print("CAP_ANALYSIS_SECONDS",timing["analysisSeconds"])
+          print("CAP_TOTAL_SECONDS",timing["totalSeconds"])
+          print("CAP_MACRO_F1",sheet.get("macroF1",0))
+          print("CAP_WALL_F1",sheet.get("wallPixel",{}).get("f1",0))
+          print("CAP_AREA_PIXEL_F1",sheet.get("areaPixel",{}).get("f1",0))
+          print("CAP_AREA_INSTANCE_F1",sheet.get("areaInstance",{}).get("f1",0))
+          print(output)
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write(f"## Arc cap {cap}px — sheet_15\n\n")
+              out.write(f"- analysis: {timing['analysisSeconds']:.2f}s\n")
+              out.write(f"- total: {timing['totalSeconds']:.2f}s\n")
+              out.write(f"- macroF1: {float(sheet.get('macroF1',0)):.4f}\n")
+              out.write(f"- wall F1: {float(sheet.get('wallPixel',{}).get('f1',0)):.3f}\n")
+              out.write(f"- area pixel F1: {float(sheet.get('areaPixel',{}).get('f1',0)):.3f}\n")
+              out.write(f"- area instance F1: {float(sheet.get('areaInstance',{}).get('f1',0)):.3f}\n")
+          raise SystemExit(code)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arc-cap-${{ matrix.cap }}-${{ github.sha }}
+          path: |
+            benchmark-output/cap-${{ matrix.cap }}/_timings/sheet_15.json
+            benchmark-output/cap-${{ matrix.cap }}/sheet_15.json
+            benchmark-output/cap-${{ matrix.cap }}/report.json
+          if-no-files-found: warn
+          retention-days: 5
