@@ -408,3 +408,62 @@ def test_ai_opening_does_not_duplicate_geometry_detection():
     assert len(doors)==1
     assert doors[0]["id"]=="door-1"
     assert doors[0]["provenance"]=="opencv"
+
+
+
+def test_strong_ai_window_can_correct_weaker_opencv_door():
+    door={
+        "id":"door-weak",
+        "kind":"door",
+        "doorSubtype":"double_swing",
+        "doorSwingSide":"unknown",
+        "doorSwingDepthPx":8.0,
+        "wallId":"host",
+        "a":{"x":100.0,"y":120.0},
+        "b":{"x":170.0,"y":120.0},
+        "confidence":.78,
+        "reviewed":False,
+        "provenance":"opencv",
+    }
+    window={
+        "id":"window-ai",
+        "kind":"window",
+        "wallId":"host",
+        "a":{"x":102.0,"y":120.0},
+        "b":{"x":169.0,"y":120.0},
+        "confidence":.91,
+        "reviewed":False,
+        "provenance":"ai",
+    }
+    doors,windows=resolve_opening_conflicts([door],[window])
+    assert doors==[]
+    assert [item["id"] for item in windows]==["window-ai"]
+
+
+def test_convincing_geometric_swing_beats_close_ai_window():
+    door={
+        "id":"door-strong",
+        "kind":"door",
+        "doorSubtype":"single_swing",
+        "doorSwingSide":"negative",
+        "doorSwingDepthPx":62.0,
+        "wallId":"host",
+        "a":{"x":100.0,"y":120.0},
+        "b":{"x":170.0,"y":120.0},
+        "confidence":.86,
+        "reviewed":False,
+        "provenance":"opencv",
+    }
+    window={
+        "id":"window-ai",
+        "kind":"window",
+        "wallId":"host",
+        "a":{"x":102.0,"y":120.0},
+        "b":{"x":169.0,"y":120.0},
+        "confidence":.94,
+        "reviewed":False,
+        "provenance":"ai",
+    }
+    doors,windows=resolve_opening_conflicts([door],[window])
+    assert [item["id"] for item in doors]==["door-strong"]
+    assert windows==[]
