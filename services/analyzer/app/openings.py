@@ -851,8 +851,30 @@ def detect_pdf_vector_windows(
                     continue
                 if best_host is None or distance<best_host[0]:
                     best_host=(distance,str(wall["id"]))
-            if best_host is not None:
-                host_id=best_host[1]
+            if best_host is None:
+                continue
+            host_id=best_host[1]
+            host=next(
+                (wall for wall in walls if str(wall["id"])==host_id),
+                None,
+            )
+            if host is None:
+                continue
+            host_thickness=max(1.0,float(host.get("thicknessPx",4.0) or 4.0))
+            long_span=max(box_width,box_height)
+            short_span=min(box_width,box_height)
+            min_architectural_span=max(55.0,base*.018)
+            max_architectural_span=max(
+                min_architectural_span*1.5,
+                min(450.0,base*.065),
+            )
+            if long_span<min_architectural_span or long_span>max_architectural_span:
+                continue
+            thickness_ratio=short_span/host_thickness
+            if thickness_ratio<.80 or thickness_ratio>1.20:
+                continue
+            if aspect<2.40:
+                continue
 
             confidence=min(.96,.76+.035*min(5,support))
             raw.append({
