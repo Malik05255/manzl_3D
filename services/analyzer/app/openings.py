@@ -505,6 +505,143 @@ def detect_doors(
     return result
 
 
+def _embedded_window_candidates(
+    image:np.ndarray,
+    walls:list[dict],
+    meters_per_pixel:float|None,
+)->list[dict]:
+    """Detect glazing drawn inside a continuous host wall.
+
+    Some CAD plans keep the wall centerline continuous through windows instead
+    of splitting it into two wall fragments. The gap-based detector cannot see
+    those openings, so this pass looks for two short, parallel glazing strokes
+    centred on a materially longer wall. Long wall-edge lines are rejected.
+    """
+    min_span,max_span,_=_window_gap_limits(image,meters_per_pixel)
+    h,w=image.shape[:2]
+    candidates=[]
+
+    for wall in walls:
+        length,ux,uy,nx,ny=_segment_geometry(wall)
+        if length<max(min_span*1.35,24.0):
+            continue
+
+        wall_offset=_line_offset(wall,nx,ny)
+        wall_start,wall_end=_projection_interval(wall,ux,uy)
+        thickness=max(2.0,float(wall.get("thicknessPx",4.0) or 4.0))
+        corridor=max(10.0,thickness*2.8,min_span*.16)
+
+        ax,ay=_point(wall["a"])
+        bx,by=_point(wall["b"])
+        pad=int(math.ceil(corridor+8.0))
+        x1=max(0,int(math.floor(min(ax,bx)-pad)))
+        x2=min(w,int(math.ceil(max(ax,bx)+pad)))
+        y1=max(0,int(math.floor(min(ay,by)-pad)))
+        y2=min(h,int(math.ceil(max(ay,by)+pad)))
+        roi=image[y1:y2,x1:x2]
+        if roi.size==0:
+            continue
+
+        strokes=[]
+        probe=max(min_span,min(max_span,length*.55))
+        for rx1,ry1,rx2,ry2 in _hough_segments(roi,probe):
+            gx1=float(x1+rx1); gy1=float(y1+ry1)
+            gx2=float(x1+rx2); gy2=float(y1+ry2)
+            dx=gx2-gx1
+            dy=gy2-gy1
+            stroke_length=math.hypot(dx,dy)
+            if stroke_length<min_span*.60 or stroke_length>max_span*1.18:
+                continue
+            # Wall edges normally span most of the host. They are not glazing.
+            if stroke_length>length*.68:
+                continue
+            angle=math.degrees(math.atan2(dy,dx))%180.0
+            wall_angle=math.degrees(math.atan2(uy,ux))%180.0
+            if _angle_delta_degrees(angle,wall_angle)>7.0:
+                continue
+
+            first=gx1*ux+gy1*uy
+            second=gx2*ux+gy2*uy
+            start=max(wall_start,min(first,second))
+            end=min(wall_end,max(first,second))
+            span=end-start
+            if span<min_span*.58 or span>max_span*1.12:
+                continue
+            if start<=wall_start+min_span*.10 or end>=wall_end-min_span*.10:
+                continue
+
+            mx=(gx1+gx2)/2
+            my=(gy1+gy2)/2
+            offset=mx*nx+my*ny
+            if abs(offset-wall_offset)>corridor:
+                continue
+            strokes.append((start,end,offset,stroke_length))
+
+        if len(strokes)<2:
+            continue
+
+        best=None
+        for index,left in enumerate(strokes):
+            ls,le,lo,_=left
+            for right in strokes[index+1:]:
+                rs,re,ro,_=right
+                separation=abs(lo-ro)
+                min_sep=max(4.0,thickness*.45)
+                max_sep=max(18.0,thickness*4.5,min_span*.30)
+                if separation<min_sep or separation>max_sep:
+                    continue
+
+                overlap_start=max(ls,rs)
+                overlap_end=min(le,re)
+                span=overlap_end-overlap_start
+                if span<min_span*.62 or span>max_span:
+                    continue
+                if span>length*.62:
+                    continue
+                shorter=max(1e-9,min(le-ls,re-rs))
+                if span/shorter<.68:
+                    continue
+                if abs(((lo+ro)/2)-wall_offset)>max(5.0,thickness*1.35):
+                    continue
+
+                # Two glazing strokes should describe approximately the same
+                # opening interval instead of two unrelated parallel marks.
+                edge_delta=max(abs(ls-rs),abs(le-re))
+                if edge_delta>max(10.0,span*.22):
+                    continue
+
+                a=_point_from_frame(overlap_start,wall_offset,ux,uy)
+                b=_point_from_frame(overlap_end,wall_offset,ux,uy)
+                arc_evidence=_door_arc_evidence(image,a,b,span)
+                leaf_evidence=_door_leaf_evidence(
+                    image,a,b,span,wall_angle,
+                )
+                if arc_evidence>0 or leaf_evidence>=2:
+                    continue
+
+                score=span/max(min_span,1.0)+separation/max(min_sep,1.0)
+                if best is None or score>best[0]:
+                    best=(score,a,b,leaf_evidence)
+
+        if best is None:
+            continue
+
+        _,a,b,leaf_evidence=best
+        confidence=.84-(.04 if leaf_evidence==1 else 0.0)
+        candidates.append({
+            "id":f"window-embedded-{len(candidates)+1}",
+            "kind":"window",
+            "wallId":str(wall["id"]),
+            "a":a,
+            "b":b,
+            "confidence":round(confidence,3),
+            "reviewed":False,
+            "provenance":"opencv",
+        })
+
+    return candidates
+
+
 def detect_windows(
     image:np.ndarray,
     walls:list[dict],
@@ -563,6 +700,9 @@ def detect_windows(
                 "provenance":"opencv",
             })
 
+    candidates.extend(
+        _embedded_window_candidates(image,walls,meters_per_pixel)
+    )
     result=_dedupe(candidates,max(min_gap*0.55,8.0))
     for index,item in enumerate(result,start=1):
         item["id"]=f"window-{index}"
