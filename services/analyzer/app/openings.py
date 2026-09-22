@@ -458,11 +458,13 @@ def detect_doors(
                 continue
 
             evidence=leaf_evidence+arc_evidence
-            hinges=leaf_hinges|arc_hinges
-            if {"a","b"}.issubset(hinges):
-                door_subtype="double_swing"
-            else:
-                door_subtype="single_swing"
+            # A true double-swing should show two independent leaves or two
+            # independent hinge-centred arcs. Mixing one leaf on one side with
+            # an unrelated arc on the other side caused excessive double-door
+            # classifications on real AEC sheets.
+            double_leaf={"a","b"}.issubset(leaf_hinges)
+            double_arc={"a","b"}.issubset(arc_hinges)
+            door_subtype="double_swing" if (double_leaf or double_arc) else "single_swing"
             swing_side=leaf_side if leaf_side!="unknown" else arc_side
             swing_depth=max(leaf_depth,arc_depth)
             confidence=min(
@@ -519,13 +521,23 @@ def detect_windows(
             b=_point_from_frame(ss,offset,ux,uy)
 
             leaf_evidence=_door_leaf_evidence(image,a,b,gap,wall_angle)
-            if leaf_evidence>0:
-                continue
             evidence=_parallel_window_evidence(image,a,b,gap,wall_angle)
             if evidence<2:
                 continue
+            arc_evidence=_door_arc_evidence(image,a,b,gap)
+            # Strong glazing evidence can survive one spurious Hough leaf chord
+            # when no swing arc exists. Two leaf hits or any real arc remain
+            # decisive door evidence.
+            if arc_evidence>0 or leaf_evidence>=2:
+                continue
+            if leaf_evidence==1 and evidence<3:
+                continue
 
-            confidence=min(0.95,0.70+0.055*evidence+(0.04 if meters_per_pixel else 0.0))
+            confidence=min(
+                0.95,
+                0.70+0.055*evidence+(0.04 if meters_per_pixel else 0.0)
+                -(0.04 if leaf_evidence==1 else 0.0),
+            )
             if confidence<0.80:
                 continue
 
