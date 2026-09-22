@@ -4,7 +4,11 @@ import cv2
 import fitz
 import numpy as np
 
-PDF_RENDER_SCALE=2.4
+try:
+    PDF_RENDER_SCALE=float(os.getenv("PDF_RENDER_SCALE","2.4") or "2.4")
+except ValueError:
+    PDF_RENDER_SCALE=2.4
+PDF_RENDER_SCALE=max(1.0,min(2.4,PDF_RENDER_SCALE))
 
 
 def _pixmap_to_bgr(pix:fitz.Pixmap)->np.ndarray:
