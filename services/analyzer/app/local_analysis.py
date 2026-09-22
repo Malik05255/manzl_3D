@@ -151,16 +151,28 @@ def analyze_document_bytes_local(
     scale,scale_confidence,scale_warnings=estimate_scale_with_diagnostics(dimensions,w,h)
     phase_timings["dimensionsScale"]=round(time.perf_counter()-phase_started,4)
 
+    openings_started=time.perf_counter()
+
     phase_started=time.perf_counter()
     doors=detect_doors(image,topology_walls,scale)
+    phase_timings["doors"]=round(time.perf_counter()-phase_started,4)
+
+    phase_started=time.perf_counter()
     windows=detect_windows(image,topology_walls,scale)
+    phase_timings["windows"]=round(time.perf_counter()-phase_started,4)
+
+    phase_started=time.perf_counter()
     if ai_detections:
         doors,windows=fuse_ai_opening_detections(
             topology_walls,doors,windows,ai_detections,
             min_confidence=max(.15,min(.99,float(os.getenv("OPENING_ONNX_MIN_CONFIDENCE",".35") or ".35"))),
         )
+    phase_timings["openingAiFusion"]=round(time.perf_counter()-phase_started,4)
+
+    phase_started=time.perf_counter()
     walls,doors,windows=normalize_opening_hosts(walls,doors,windows)
-    phase_timings["openings"]=round(time.perf_counter()-phase_started,4)
+    phase_timings["openingNormalization"]=round(time.perf_counter()-phase_started,4)
+    phase_timings["openings"]=round(time.perf_counter()-openings_started,4)
 
     phase_started=time.perf_counter()
     topology_walls=[
