@@ -1,0 +1,169 @@
+name: Tile 1200 Full AEC
+
+on:
+  push:
+    branches: [exp/tile-1200-full-aec]
+    paths:
+      - services/analyzer/app/symbols.py
+      - services/analyzer/tests/test_symbols.py
+      - .github/workflows/experiment-tile-1200-full-aec.yml
+  workflow_dispatch:
+
+jobs:
+  shard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix:
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely pytest
+
+      - name: Download validated FloorCAD ONNX
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35762303613
+          name: floorcad-onnx-64e7743e9794a9b74eb122f469bba3dd3d48d6a5
+          path: benchmark-model
+
+      - name: Configure detector
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          info=json.loads(Path("benchmark-model/symbol-model-info.json").read_text())
+          with Path(os.environ["GITHUB_ENV"]).open("a") as env:
+              env.write("SYMBOL_ONNX_MODEL="+str(Path("benchmark-model/floorcad-symbols.onnx").resolve())+"\n")
+              env.write("SYMBOL_ONNX_CLASSES="+json.dumps(info["classes"],separators=(",",":"))+"\n")
+              env.write("SYMBOL_MIN_CONFIDENCE=0.55\n")
+              env.write("SYMBOL_SINK_MIN_CONFIDENCE=0.10\n")
+              env.write("SYMBOL_ONNX_RAW_MIN_CONFIDENCE=0.10\n")
+              env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
+          PY
+
+      - name: Run symbol tests
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_symbols.py
+
+      - name: Run AEC shard
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p "../../benchmark-output/shard-${{ matrix.shard }}"
+          python -m app.aec_benchmark \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --output "../../benchmark-output/shard-${{ matrix.shard }}" \
+            --offset "${{ matrix.shard }}" \
+            --limit 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tile1200-shard-${{ matrix.shard }}-${{ github.sha }}
+          path: |
+            benchmark-output/shard-${{ matrix.shard }}/*.json
+            benchmark-output/shard-${{ matrix.shard }}/_canonical/*.json
+            benchmark-output/shard-${{ matrix.shard }}/_timings/*.json
+          if-no-files-found: error
+          retention-days: 3
+
+  score:
+    if: always()
+    needs: shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tile1200-shard-*-${{ github.sha }}
+          path: benchmark-output/aec15
+          merge-multiple: true
+      - name: Score AEC-15
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from app.aec_benchmark import run_official_scorer
+
+          root=Path("../..")
+          pred=root/"benchmark-output/aec15"
+          dataset=root/"external/aec-geometric-bench/dataset"
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          sheets=[f"sheet_{i:02d}" for i in range(1,16)]
+          available=sorted(p.stem for p in pred.glob("sheet_*.json"))
+          missing=[s for s in sheets if s not in available]
+          if missing:
+              raise SystemExit("Missing sheets: "+", ".join(missing))
+          code,output,report=run_official_scorer(
+              scorer,pred,dataset,sheet_names=sheets,include_per_sheet=True,
+          )
+          target=root/"benchmark-output/tile1200-report.json"
+          if report is not None:
+              target.write_text(json.dumps(report,indent=2),encoding="utf-8")
+              classes=report.get("classes",{})
+              with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+                  out.write("## Tile 1200 — AEC-15\n\n")
+                  out.write(f"- Object micro F1: {float(report.get('objectMicro',{}).get('f1',0)):.3f}\n")
+                  out.write(f"- macroF1: {float(report.get('macroF1',0)):.3f}\n")
+                  for cls in ("Single Swing Door","Double Swing Door","Window","Sink","Toilet","Bathtub","Shower","Cooktops"):
+                      item=classes.get(cls,{})
+                      out.write(
+                          f"- {cls}: TP {item.get('tp',0)} FP {item.get('fp',0)} "
+                          f"FN {item.get('fn',0)} F1 {float(item.get('f1',0)):.3f}\n"
+                      )
+                  for metric in ("wallPixel","areaPixel","areaInstance"):
+                      item=report.get(metric,{})
+                      out.write(f"- {metric} F1: {float(item.get('f1',0)):.3f}\n")
+          print(output)
+          raise SystemExit(code)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tile1200-aec15-report-${{ github.sha }}
+          path: benchmark-output/tile1200-report.json
+          if-no-files-found: warn
+          retention-days: 5
