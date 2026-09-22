@@ -50,7 +50,7 @@ def _contains(polygon:list[dict],x:float,y:float)->bool:
     return cv2.pointPolygonTest(contour,(float(x),float(y)),False)>=0
 
 
-def detect_rooms(wall_mask:np.ndarray,labels:list[dict],meters_per_pixel:float|None,min_area_ratio:float=0.004,max_area_ratio:float=0.72)->list[dict]:
+def detect_rooms(wall_mask:np.ndarray,labels:list[dict],meters_per_pixel:float|None,min_area_ratio:float=0.0012,max_area_ratio:float=0.72)->list[dict]:
     h,w=wall_mask.shape[:2]
     close_size=max(7,min(25,min(h,w)//80))
     barrier=cv2.morphologyEx(
