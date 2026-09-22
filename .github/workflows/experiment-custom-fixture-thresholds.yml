@@ -1,0 +1,221 @@
+name: Custom Fixture Threshold Sweep
+
+on:
+  push:
+    branches: [exp/custom-fixture-threshold-sweep]
+    paths:
+      - .github/workflows/experiment-custom-fixture-thresholds.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install scorer dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely
+
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35771807959
+          pattern: synthetic-object-sheet-*
+          path: benchmark-input
+          merge-multiple: true
+
+      - name: Sweep fixture thresholds on four AEC sheets
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import copy, json, os, shutil
+          from pathlib import Path
+          from app.aec_benchmark import plan_to_aec_prediction, run_official_scorer
+
+          root=Path("../..")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          items={str(item["sheet"]):item for item in manifest["sheets"]}
+
+          canonical_dirs=list((root/"benchmark-input").rglob("_canonical"))
+          if not canonical_dirs:
+              raise SystemExit("No canonical predictions found")
+          canonical=canonical_dirs[0]
+          sheets=sorted(path.stem for path in canonical.glob("sheet_*.json"))
+          if not sheets:
+              raise SystemExit("No canonical sheet files found")
+          print("SHEETS",sheets)
+
+          configs={
+              "sink":{
+                  "aec":"Sink",
+                  "values":[.15,.20,.25,.30,.35,.40,.45,.50,.55,.60,.65,.70,.75],
+              },
+              "toilet":{
+                  "aec":"Toilet",
+                  "values":[.25,.30,.35,.40,.45,.50,.55,.60,.65,.70,.75,.80,.85],
+              },
+              "bathtub":{
+                  "aec":"Bathtub",
+                  "values":[.25,.30,.35,.40,.45,.50,.55,.60,.65,.70,.75,.80,.85],
+              },
+              "shower":{
+                  "aec":"Shower",
+                  "values":[.25,.30,.35,.40,.45,.50,.55,.60,.65,.70,.75,.80,.85],
+              },
+              "cooktop":{
+                  "aec":"Cooktops",
+                  "values":[.25,.30,.35,.40,.45,.50,.55,.60,.65,.70,.75,.80,.85],
+              },
+          }
+
+          plans={
+              sheet:json.loads((canonical/f"{sheet}.json").read_text())
+              for sheet in sheets
+          }
+
+          def export_with_thresholds(target:Path,thresholds:dict[str,float]):
+              target.mkdir(parents=True,exist_ok=True)
+              for sheet,source in plans.items():
+                  plan=copy.deepcopy(source)
+                  kept=[]
+                  for symbol in plan.get("symbols",[]):
+                      kind=str(symbol.get("kind",""))
+                      minimum=thresholds.get(kind)
+                      if minimum is not None and float(symbol.get("confidence",0.0))<minimum:
+                          continue
+                      kept.append(symbol)
+                  plan["symbols"]=kept
+                  item=items[sheet]
+                  pred=plan_to_aec_prediction(
+                      plan,
+                      sheet=sheet,
+                      width=int(item["width"]),
+                      height=int(item["height"]),
+                  )
+                  (target/f"{sheet}.json").write_text(
+                      json.dumps(pred,separators=(",",":")),
+                      encoding="utf-8",
+                  )
+
+          results={}
+          best={}
+          work=root/"benchmark-output/custom-thresholds"
+          for kind,spec in configs.items():
+              rows=[]
+              for threshold in spec["values"]:
+                  target=work/kind/f"{threshold:.2f}"
+                  export_with_thresholds(target,{kind:threshold})
+                  code,output,report=run_official_scorer(
+                      scorer,
+                      target,
+                      dataset,
+                      sheet_names=sheets,
+                      include_per_sheet=True,
+                  )
+                  if code!=0 or report is None:
+                      print(output)
+                      raise SystemExit(code or 1)
+                  metric=report.get("classes",{}).get(spec["aec"],{})
+                  row={
+                      "threshold":threshold,
+                      "tp":int(metric.get("tp",0)),
+                      "fp":int(metric.get("fp",0)),
+                      "fn":int(metric.get("fn",0)),
+                      "precision":float(metric.get("precision",0)),
+                      "recall":float(metric.get("recall",0)),
+                      "f1":float(metric.get("f1",0)),
+                  }
+                  rows.append(row)
+                  print("CLASS_SWEEP",kind,json.dumps(row,sort_keys=True))
+              rows.sort(
+                  key=lambda row:(
+                      row["f1"],
+                      row["precision"],
+                      row["recall"],
+                      -row["threshold"],
+                  ),
+                  reverse=True,
+              )
+              results[kind]=rows
+              best[kind]=rows[0]["threshold"]
+
+          combined=work/"combined-best"
+          export_with_thresholds(combined,best)
+          code,output,report=run_official_scorer(
+              scorer,
+              combined,
+              dataset,
+              sheet_names=sheets,
+              include_per_sheet=True,
+          )
+          if code!=0 or report is None:
+              print(output)
+              raise SystemExit(code or 1)
+
+          payload={
+              "sheets":sheets,
+              "bestThresholds":best,
+              "sweeps":results,
+              "combined":{
+                  "objectMicro":report.get("objectMicro",{}),
+                  "macroF1":report.get("macroF1",0),
+                  "classes":{
+                      name:report.get("classes",{}).get(name,{})
+                      for name in (
+                          "Sink","Toilet","Bathtub","Shower","Cooktops"
+                      )
+                  },
+              },
+          }
+          target=work/"fixture-threshold-report.json"
+          target.write_text(json.dumps(payload,indent=2),encoding="utf-8")
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Custom fixture threshold sweep\n\n")
+              out.write("| Class | Best threshold | TP | FP | FN | Precision | Recall | F1 |\n")
+              out.write("|---|---:|---:|---:|---:|---:|---:|---:|\n")
+              for kind,spec in configs.items():
+                  row=results[kind][0]
+                  out.write(
+                      f"| {spec['aec']} | {row['threshold']:.2f} | {row['tp']} | "
+                      f"{row['fp']} | {row['fn']} | {row['precision']:.3f} | "
+                      f"{row['recall']:.3f} | {row['f1']:.3f} |\n"
+                  )
+              out.write(
+                  f"\nCombined object micro F1: "
+                  f"{float(report.get('objectMicro',{}).get('f1',0)):.3f}\n"
+              )
+              out.write(
+                  f"Combined macroF1: {float(report.get('macroF1',0)):.3f}\n"
+              )
+          print("BEST_THRESHOLDS",json.dumps(best,sort_keys=True))
+          print(output)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: custom-fixture-threshold-report-${{ github.sha }}
+          path: benchmark-output/custom-thresholds/fixture-threshold-report.json
+          retention-days: 6
