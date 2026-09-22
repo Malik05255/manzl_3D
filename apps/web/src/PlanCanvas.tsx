@@ -14,7 +14,7 @@ export interface PlanLayerVisibility{
 }
 
 export const DEFAULT_PLAN_LAYERS:PlanLayerVisibility={
-  source:true,
+  source:false,
   rooms:true,
   walls:true,
   openings:true,
