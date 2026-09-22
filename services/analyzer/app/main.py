@@ -168,7 +168,12 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
         labels=_merge_labels(labels,native_labels,distance)
 
     await progress(req.callback_url,req.project_id,"geometry",58,"استخراج الجدران والهندسة")
-    walls,wall_mask=detect_walls(ink)
+    wall_input=(
+        structural_mask
+        if reconstruction_v2 and structural_mask is not None and cv2.countNonZero(structural_mask)>0
+        else ink
+    )
+    walls,wall_mask=detect_walls(wall_input)
     vector_lines=[]
     if req.mime_type=="application/pdf":
         try:
