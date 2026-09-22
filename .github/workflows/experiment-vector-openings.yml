@@ -1,0 +1,46 @@
+name: Vector Opening Probe
+
+on:
+  push:
+    branches: [exp/vector-openings]
+    paths:
+      - services/analyzer/tools/vector_opening_probe.py
+      - .github/workflows/experiment-vector-openings.yml
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - name: Install analyzer dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt
+      - name: Probe vector opening geometry
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p ../../benchmark-output/vector-probe
+          python tools/vector_opening_probe.py \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --sheet sheet_05 \
+            --output ../../benchmark-output/vector-probe/sheet_05.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vector-opening-probe-${{ github.sha }}
+          path: benchmark-output/vector-probe/sheet_05.json
+          if-no-files-found: error
+          retention-days: 3
