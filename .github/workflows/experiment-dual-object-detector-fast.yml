@@ -69,11 +69,22 @@ jobs:
               return paths[0]
 
           primary_model=list(Path("primary-artifact").rglob("*.onnx"))[0]
-          primary_classes=locate("primary-artifact","classes.json")
           secondary_model=list(Path("secondary-artifact").rglob("*.onnx"))[0]
           secondary_classes=locate("secondary-artifact","classes.json")
 
-          p_classes=json.loads(primary_classes.read_text())
+          primary_class_files=list(Path("primary-artifact").rglob("classes.json"))
+          if primary_class_files:
+              p_classes=json.loads(primary_class_files[0].read_text())
+          else:
+              p_classes=[
+                  "bath","bath_tub","bay_window","bed","bedside_cupboard",
+                  "blind_window","chair","class_31","class_32","class_34",
+                  "class_35","double_door","elevator","escalator","gas_stove",
+                  "half_height_cabinet","high_cabinet","opening_symbol","parking",
+                  "railing","refrigerator","single_door","sink","sliding_door",
+                  "sofa","squat_toilet","stair","table","toilet","tv_cabinet",
+                  "urinal","wall","wardrobe","washing_machine","window",
+              ]
           s_classes=json.loads(secondary_classes.read_text())
 
           with Path(os.environ["GITHUB_ENV"]).open("a") as env:
