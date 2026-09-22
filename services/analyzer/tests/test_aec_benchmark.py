@@ -242,3 +242,37 @@ def test_official_scorer_uses_selected_subset_and_reports_each_sheet(tmp_path):
     assert report["objectMicro"]["tp"]==1
     assert report["selectedSheets"]==["sheet_01"]
     assert report["sheets"]["sheet_01"]["objectMicro"]["tp"]==1
+
+
+
+def test_quarantined_wall_candidate_is_not_emitted_to_aec():
+    source={
+        "widthPx":500,
+        "heightPx":400,
+        "walls":[
+            {
+                "id":"review-only",
+                "a":{"x":20.0,"y":40.0},
+                "b":{"x":480.0,"y":40.0},
+                "thicknessPx":4.0,
+                "confidence":.64,
+                "provenance":"pdf-vector",
+            },
+            {
+                "id":"accepted",
+                "a":{"x":20.0,"y":120.0},
+                "b":{"x":480.0,"y":120.0},
+                "thicknessPx":10.0,
+                "confidence":.90,
+                "provenance":"mixed",
+            },
+        ],
+        "rooms":[],
+        "doors":[],
+        "windows":[],
+        "symbols":[],
+    }
+    prediction=plan_to_aec_prediction(source,sheet="sheet",width=500,height=400)
+    assert len(prediction["walls"])==1
+    ys={round(point[1]) for point in prediction["walls"][0]}
+    assert min(ys)<120<max(ys) or 120 in ys
