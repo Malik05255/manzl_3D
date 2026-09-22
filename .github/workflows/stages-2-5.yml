@@ -175,6 +175,7 @@ jobs:
             benchmark-output/shard-${{ matrix.shard }}/*.json
             benchmark-output/shard-${{ matrix.shard }}/_canonical/*.json
             benchmark-output/shard-${{ matrix.shard }}/_debug/*.png
+            benchmark-output/shard-${{ matrix.shard }}/_timings/*.json
           if-no-files-found: error
           retention-days: 2
 
@@ -324,6 +325,7 @@ jobs:
             benchmark-output/aec15/predictions/*.json
             benchmark-output/aec15/predictions/_canonical/*.json
             benchmark-output/aec15/predictions/_debug/*.png
+            benchmark-output/aec15/predictions/_timings/*.json
           if-no-files-found: warn
           retention-days: 14
 
