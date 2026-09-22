@@ -179,6 +179,136 @@ def _door_leaf_evidence_details(
     return evidence,hinges,swing_side,float(swing_depth)
 
 
+def _build_vector_door_index(
+    vector_lines:list[dict]|None,
+    image_shape:tuple[int,...],
+)->tuple[list[dict],dict[tuple[int,int],list[int]],float]:
+    if not vector_lines:
+        return [],{},1.0
+    h,w=image_shape[:2]
+    base=float(min(h,w))
+    cell_size=max(48.0,min(180.0,base*.025))
+    min_length=max(7.0,base*.005)
+    max_length=max(40.0,base*.20)
+    features=[]
+    cells:dict[tuple[int,int],list[int]]={}
+
+    for raw in vector_lines:
+        try:
+            ax,ay=_point(raw["a"])
+            bx,by=_point(raw["b"])
+            width_px=float(raw.get("widthPx",1.0) or 1.0)
+        except (KeyError,TypeError,ValueError):
+            continue
+        dx=bx-ax
+        dy=by-ay
+        length=math.hypot(dx,dy)
+        if length<min_length or length>max_length or width_px>10.0:
+            continue
+        angle=math.degrees(math.atan2(dy,dx))%180.0
+        mx=(ax+bx)/2
+        my=(ay+by)/2
+        index=len(features)
+        features.append({
+            "a":{"x":ax,"y":ay},
+            "b":{"x":bx,"y":by},
+            "length":length,
+            "angle":angle,
+            "mx":mx,
+            "my":my,
+        })
+        occupied={
+            (int(math.floor(px/cell_size)),int(math.floor(py/cell_size)))
+            for px,py in ((ax,ay),(bx,by),(mx,my))
+        }
+        for cell in occupied:
+            cells.setdefault(cell,[]).append(index)
+    return features,cells,cell_size
+
+
+def _vector_door_leaf_evidence_details(
+    vector_index:tuple[list[dict],dict[tuple[int,int],list[int]],float],
+    a:dict,
+    b:dict,
+    gap_px:float,
+    wall_angle_deg:float,
+)->tuple[int,set[str],str,float]:
+    features,cells,cell_size=vector_index
+    if not features:
+        return 0,set(),"unknown",0.0
+
+    ax,ay=_point(a)
+    bx,by=_point(b)
+    cx=(ax+bx)/2
+    cy=(ay+by)/2
+    gap_length=max(1e-9,math.hypot(bx-ax,by-ay))
+    ux=(bx-ax)/gap_length
+    uy=(by-ay)/gap_length
+    nx=-uy
+    ny=ux
+    radius=max(32.0,gap_px*1.35)
+    hinge_tolerance=max(9.0,gap_px*.30)
+    min_cell_x=int(math.floor((cx-radius)/cell_size))
+    max_cell_x=int(math.floor((cx+radius)/cell_size))
+    min_cell_y=int(math.floor((cy-radius)/cell_size))
+    max_cell_y=int(math.floor((cy+radius)/cell_size))
+    possible=set()
+    for cell_x in range(min_cell_x,max_cell_x+1):
+        for cell_y in range(min_cell_y,max_cell_y+1):
+            possible.update(cells.get((cell_x,cell_y),[]))
+
+    accepted=set()
+    hinges:set[str]=set()
+    signed_depths=[]
+    for index in possible:
+        item=features[index]
+        length=float(item["length"])
+        if length<gap_px*.40 or length>gap_px*1.75:
+            continue
+        angle=float(item["angle"])
+        delta=_angle_delta_degrees(angle,wall_angle_deg)
+        if not 18<=delta<=82:
+            continue
+        endpoints=[
+            _point(item["a"]),
+            _point(item["b"]),
+        ]
+        distance_a=[math.hypot(px-ax,py-ay) for px,py in endpoints]
+        distance_b=[math.hypot(px-bx,py-by) for px,py in endpoints]
+        nearest_a=min(distance_a)
+        nearest_b=min(distance_b)
+        nearest=min(nearest_a,nearest_b)
+        if nearest>hinge_tolerance:
+            continue
+        hinge="a" if nearest_a<=nearest_b else "b"
+        hx,hy=(ax,ay) if hinge=="a" else (bx,by)
+        far=max(
+            endpoints,
+            key=lambda point:math.hypot(point[0]-hx,point[1]-hy),
+        )
+        if math.hypot(far[0]-hx,far[1]-hy)<gap_px*.36:
+            continue
+        key=(hinge,round(angle/6.0))
+        if key in accepted:
+            continue
+        accepted.add(key)
+        hinges.add(hinge)
+        signed_depths.append((far[0]-hx)*nx+(far[1]-hy)*ny)
+
+    evidence=len(accepted)
+    if not signed_depths:
+        return evidence,hinges,"unknown",0.0
+    positive=sum(abs(value) for value in signed_depths if value>0)
+    negative=sum(abs(value) for value in signed_depths if value<0)
+    total=positive+negative
+    if total<=1e-9 or abs(positive-negative)/total<.18:
+        swing_side="unknown"
+    else:
+        swing_side="positive" if positive>negative else "negative"
+    swing_depth=max(abs(value) for value in signed_depths)
+    return evidence,hinges,swing_side,float(swing_depth)
+
+
 def _door_leaf_evidence(
     image:np.ndarray,
     a:dict,
@@ -468,9 +598,11 @@ def detect_doors(
     image:np.ndarray,
     walls:list[dict],
     meters_per_pixel:float|None,
+    vector_lines:list[dict]|None=None,
 )->list[dict]:
     min_gap,max_gap,axis_tol=_door_gap_limits(image,meters_per_pixel)
     candidates=[]
+    vector_index=_build_vector_door_index(vector_lines,image.shape)
 
     for index,left in enumerate(walls):
         length,ux,uy,_,_=_segment_geometry(left)
@@ -487,7 +619,22 @@ def detect_doors(
             a=_point_from_frame(fe,offset,ux,uy)
             b=_point_from_frame(ss,offset,ux,uy)
 
-            leaf_evidence,leaf_hinges,leaf_side,leaf_depth=_door_leaf_evidence_details(image,a,b,gap,wall_angle)
+            leaf_evidence,leaf_hinges,leaf_side,leaf_depth=_door_leaf_evidence_details(
+                image,a,b,gap,wall_angle,
+            )
+            (
+                vector_evidence,vector_hinges,vector_side,vector_depth,
+            )=_vector_door_leaf_evidence_details(
+                vector_index,a,b,gap,wall_angle,
+            )
+            leaf_hinges=set(leaf_hinges)|set(vector_hinges)
+            leaf_evidence=max(
+                leaf_evidence,vector_evidence,len(leaf_hinges),
+            )
+            if leaf_side=="unknown" and vector_side!="unknown":
+                leaf_side=vector_side
+            leaf_depth=max(leaf_depth,vector_depth)
+
             arc_evidence,arc_hinges,arc_side,arc_depth=_door_arc_evidence_details(image,a,b,gap)
             if leaf_evidence<1 and arc_evidence<1:
                 continue
@@ -521,7 +668,7 @@ def detect_doors(
                 "b":b,
                 "confidence":round(confidence,3),
                 "reviewed":False,
-                "provenance":"opencv",
+                "provenance":"mixed" if vector_evidence>0 else "opencv",
             })
 
     result=_dedupe(candidates,max(min_gap*0.6,8.0))
