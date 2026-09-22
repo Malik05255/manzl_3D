@@ -38,3 +38,16 @@
 10. يكتب روابط Web/API/Analyzer في GitHub Actions summary.
 
 الـAnalyzer نفسه خدمة Python/OpenCV حاوية مستقلة، لذلك يجب نشر صورته في خدمة حاويات مناسبة ثم وضع رابطها في `MANZIL_ANALYZER_URL`.
+
+
+## تحسين اكتشاف Fixtures اختياريًا
+
+خدمة الـAnalyzer تدعم مزود Roboflow اختياريًا لـ `sink / toilet / bathtub / shower / cooktop`.
+المفتاح لا يوضع في الواجهة ولا في المستودع؛ يضاف فقط إلى متغيرات/Secrets خدمة الـAnalyzer:
+
+- `ROBOFLOW_API_KEY` — Secret.
+- `ROBOFLOW_FIXTURE_MODEL_ID` — الافتراضي `floorplan-details-fork-2uqql/1`.
+- `ROBOFLOW_API_URL` — الافتراضي `https://detect.roboflow.com`.
+- `ROBOFLOW_FIXTURE_MIN_CONFIDENCE` — الافتراضي `0.35`.
+
+إذا لم يوجد المفتاح، أو تعذر المزود، يعود الـAnalyzer تلقائيًا إلى كاشف ONNX المحلي ولا يفشل التحليل.
