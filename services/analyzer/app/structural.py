@@ -114,3 +114,56 @@ def structural_mask_metrics(mask: np.ndarray) -> dict[str, float]:
         "wallRegionRatio": round(ratio, 5),
         "structuralComponents": float(components),
     }
+
+
+def wall_structural_support(mask: np.ndarray, wall: dict) -> float:
+    try:
+        x1 = int(round(float(wall["a"]["x"])))
+        y1 = int(round(float(wall["a"]["y"])))
+        x2 = int(round(float(wall["b"]["x"])))
+        y2 = int(round(float(wall["b"]["y"])))
+        thickness = max(2.0, float(wall.get("thicknessPx", 4.0)))
+    except (KeyError, TypeError, ValueError):
+        return 0.0
+    h, w = mask.shape[:2]
+    probe = np.zeros_like(mask)
+    width = max(3, min(24, int(round(thickness * 0.65))))
+    cv2.line(probe, (x1, y1), (x2, y2), 255, width, cv2.LINE_8)
+    pixels = cv2.countNonZero(probe)
+    if pixels <= 0:
+        return 0.0
+    supported = cv2.countNonZero(cv2.bitwise_and(probe, mask))
+    return float(supported) / float(pixels)
+
+
+def filter_walls_by_structural_support(
+    walls: list[dict],
+    structural_mask: np.ndarray,
+    *,
+    minimum_support: float = 0.34,
+) -> tuple[list[dict], list[dict]]:
+    """Split wall candidates into structural and rejected raster strokes.
+
+    Native PDF-vector/mixed candidates are retained because they carry evidence
+    independent of pixels. Pure OpenCV candidates must overlap the conservative
+    structural-region mask; this removes dimension rules, text baselines and
+    furniture strokes before the clean redraw is built.
+    """
+    accepted: list[dict] = []
+    rejected: list[dict] = []
+    for wall in walls:
+        provenance = str(wall.get("provenance", "opencv"))
+        support = wall_structural_support(structural_mask, wall)
+        candidate = dict(wall)
+        candidate["structuralSupport"] = round(support, 3)
+        if provenance in {"pdf-vector", "mixed"} or support >= minimum_support:
+            if provenance == "opencv":
+                candidate["confidence"] = round(
+                    min(0.97, max(float(candidate.get("confidence", 0.0)), 0.70 + 0.22 * support)),
+                    3,
+                )
+            accepted.append(candidate)
+        else:
+            candidate["confidence"] = min(float(candidate.get("confidence", 0.0)), 0.49)
+            rejected.append(candidate)
+    return accepted, rejected
