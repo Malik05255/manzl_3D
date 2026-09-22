@@ -762,6 +762,26 @@ def _vector_window_candidates(
             "provenance":"pdf-vector",
         })
 
+    if len(raw_candidates)>100:
+        lengths=[]
+        for candidate in raw_candidates:
+            ax,ay=_point(candidate["a"])
+            bx,by=_point(candidate["b"])
+            lengths.append(math.hypot(bx-ax,by-ay))
+        support_threshold=max(6,int(math.ceil(len(raw_candidates)*.075)))
+        kept=[]
+        for index,candidate in enumerate(raw_candidates):
+            length=lengths[index]
+            tolerance=max(3.0,length*.03)
+            support=sum(
+                abs(other-length)<=tolerance
+                for other in lengths
+            )
+            if support>=support_threshold:
+                candidate["vectorFamilySupport"]=support
+                kept.append(candidate)
+        raw_candidates=kept
+
     return raw_candidates
 
 
