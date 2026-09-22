@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 
+import app.openings as openings_module
 from app.openings import _door_arc_evidence_details,_door_subtype_from_evidence,detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
 
 
@@ -530,3 +531,26 @@ def test_double_swing_requires_two_visible_leaf_hinges():
     assert _door_subtype_from_evidence(set(),{"a","b"})=="single_swing"
 
 
+
+
+def test_window_gap_reuses_one_hough_line_context(monkeypatch):
+    image=np.full((280,360,3),255,dtype=np.uint8)
+    cv2.line(image,(25,140),(120,140),(0,0,0),5)
+    cv2.line(image,(220,140),(335,140),(0,0,0),5)
+    cv2.line(image,(122,134),(218,134),(0,0,0),3)
+    cv2.line(image,(122,146),(218,146),(0,0,0),3)
+    walls=[
+        wall("left",25,140,120,140),
+        wall("right",220,140,335,140),
+    ]
+
+    original=openings_module._hough_segments
+    calls={"count":0}
+    def counted(roi,gap_px):
+        calls["count"]+=1
+        return original(roi,gap_px)
+    monkeypatch.setattr(openings_module,"_hough_segments",counted)
+
+    windows=detect_windows(image,walls,meters_per_pixel=.02)
+    assert len(windows)==1
+    assert calls["count"]==1
