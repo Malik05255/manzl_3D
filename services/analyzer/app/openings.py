@@ -692,6 +692,223 @@ def _point_line_metrics(point:dict,wall:dict)->tuple[float,float]:
     return math.hypot(px-cx,py-cy),t
 
 
+def _vector_bbox_iou(left:list[float],right:list[float])->float:
+    ax1,ay1,ax2,ay2=left
+    bx1,by1,bx2,by2=right
+    intersection=max(0.0,min(ax2,bx2)-max(ax1,bx1))*max(0.0,min(ay2,by2)-max(ay1,by1))
+    if intersection<=0:
+        return 0.0
+    area_a=max(0.0,ax2-ax1)*max(0.0,ay2-ay1)
+    area_b=max(0.0,bx2-bx1)*max(0.0,by2-by1)
+    union=area_a+area_b-intersection
+    return intersection/union if union>0 else 0.0
+
+
+def _vector_window_source_bbox(
+    start:float,
+    end:float,
+    offset_a:float,
+    offset_b:float,
+    ux:float,
+    uy:float,
+)->list[float]:
+    low=min(offset_a,offset_b)
+    high=max(offset_a,offset_b)
+    points=[
+        _point_from_frame(start,low,ux,uy),
+        _point_from_frame(end,low,ux,uy),
+        _point_from_frame(end,high,ux,uy),
+        _point_from_frame(start,high,ux,uy),
+    ]
+    xs=[float(point["x"]) for point in points]
+    ys=[float(point["y"]) for point in points]
+    return [min(xs),min(ys),max(xs),max(ys)]
+
+
+def detect_pdf_vector_windows(
+    vector_lines:list[dict],
+    walls:list[dict],
+    width:int,
+    height:int,
+)->list[dict]:
+    """Detect high-precision CAD windows from repeated parallel vector strokes.
+
+    Architectural CAD commonly draws a window as several thin, parallel lines
+    spanning nearly the same interval inside a wall. Requiring repeated support
+    is deliberately conservative: two plain wall faces alone are not enough.
+    """
+    if not vector_lines:
+        return []
+    base=float(max(1,min(width,height)))
+    min_length=max(32.0,base*.010)
+    max_length=max(min_length*2.0,min(620.0,base*.115))
+    min_separation=max(6.0,base*.0015)
+    max_separation=max(24.0,base*.0125)
+    max_stroke_width=max(3.0,base*.0015)
+
+    usable=[]
+    for line in vector_lines:
+        length,ux,uy,nx,ny=_segment_geometry(line)
+        if length<min_length or length>max_length:
+            continue
+        try:
+            stroke_width=float(line.get("widthPx",1.0) or 1.0)
+        except (TypeError,ValueError):
+            stroke_width=1.0
+        if stroke_width>max_stroke_width:
+            continue
+        start,end=_projection_interval(line,ux,uy)
+        offset=_line_offset(line,nx,ny)
+        usable.append({
+            "line":line,
+            "length":length,
+            "ux":ux,"uy":uy,"nx":nx,"ny":ny,
+            "start":start,"end":end,"offset":offset,
+            "widthPx":stroke_width,
+        })
+
+    raw=[]
+    for index,left in enumerate(usable):
+        for right in usable[index+1:]:
+            if _angle_difference(left["line"],right["line"])>2.0:
+                continue
+            ux=float(left["ux"]); uy=float(left["uy"])
+            nx=float(left["nx"]); ny=float(left["ny"])
+            ls,le=float(left["start"]),float(left["end"])
+            rs,re=_projection_interval(right["line"],ux,uy)
+            ro=_line_offset(right["line"],nx,ny)
+            lo=float(left["offset"])
+            separation=abs(ro-lo)
+            if separation<min_separation or separation>max_separation:
+                continue
+
+            overlap_start=max(ls,rs)
+            overlap_end=min(le,re)
+            span=overlap_end-overlap_start
+            if span<min_length or span>max_length:
+                continue
+            shorter=max(1.0,min(le-ls,re-rs))
+            if span/shorter<.68:
+                continue
+            if span/separation<2.35:
+                continue
+
+            support=0
+            support_offsets=[]
+            corridor_low=min(lo,ro)-max(4.0,separation*.18)
+            corridor_high=max(lo,ro)+max(4.0,separation*.18)
+            for probe in usable:
+                if _angle_difference(left["line"],probe["line"])>2.0:
+                    continue
+                ps,pe=_projection_interval(probe["line"],ux,uy)
+                shared=max(0.0,min(pe,overlap_end)-max(ps,overlap_start))
+                if shared<span*.44:
+                    continue
+                po=_line_offset(probe["line"],nx,ny)
+                if corridor_low<=po<=corridor_high:
+                    support+=1
+                    support_offsets.append(po)
+            if support<3:
+                continue
+
+            offset_a=min(support_offsets) if support_offsets else min(lo,ro)
+            offset_b=max(support_offsets) if support_offsets else max(lo,ro)
+            total_separation=offset_b-offset_a
+            if total_separation>max_separation*1.20 or total_separation<min_separation:
+                offset_a=min(lo,ro)
+                offset_b=max(lo,ro)
+                total_separation=offset_b-offset_a
+
+            bbox=_vector_window_source_bbox(
+                overlap_start,overlap_end,offset_a,offset_b,ux,uy,
+            )
+            box_width=bbox[2]-bbox[0]
+            box_height=bbox[3]-bbox[1]
+            if box_width<4 or box_height<4:
+                continue
+            aspect=max(box_width,box_height)/max(1.0,min(box_width,box_height))
+            if aspect<2.2:
+                continue
+
+            center_offset=(offset_a+offset_b)/2
+            a=_point_from_frame(overlap_start,center_offset,ux,uy)
+            b=_point_from_frame(overlap_end,center_offset,ux,uy)
+
+            host_id=""
+            best_host=None
+            cx=(float(a["x"])+float(b["x"]))/2
+            cy=(float(a["y"])+float(b["y"]))/2
+            for wall in walls:
+                if _angle_difference(wall,{"a":a,"b":b})>6.0:
+                    continue
+                distance,t=_point_line_metrics({"x":cx,"y":cy},wall)
+                tolerance=max(
+                    18.0,
+                    float(wall.get("thicknessPx",4.0) or 4.0)*3.0,
+                    total_separation*2.0,
+                )
+                if distance>tolerance or t<-.18 or t>1.18:
+                    continue
+                if best_host is None or distance<best_host[0]:
+                    best_host=(distance,str(wall["id"]))
+            if best_host is not None:
+                host_id=best_host[1]
+
+            confidence=min(.96,.76+.035*min(5,support))
+            raw.append({
+                "id":"",
+                "kind":"window",
+                "wallId":host_id,
+                "a":a,
+                "b":b,
+                "sourceBBox":[round(value,3) for value in bbox],
+                "confidence":round(confidence,3),
+                "reviewed":False,
+                "provenance":"pdf-vector",
+                "_vectorSupport":support,
+            })
+
+    accepted=[]
+    for candidate in sorted(
+        raw,
+        key=lambda item:(
+            int(item.get("_vectorSupport",0)),
+            float(item.get("confidence",0.0)),
+            math.hypot(
+                float(item["b"]["x"])-float(item["a"]["x"]),
+                float(item["b"]["y"])-float(item["a"]["y"]),
+            ),
+        ),
+        reverse=True,
+    ):
+        bbox=list(map(float,candidate["sourceBBox"]))
+        if any(
+            _vector_bbox_iou(bbox,list(map(float,item["sourceBBox"])))>=.42
+            for item in accepted
+        ):
+            continue
+        candidate=dict(candidate)
+        candidate.pop("_vectorSupport",None)
+        candidate["id"]=f"window-vector-{len(accepted)+1}"
+        accepted.append(candidate)
+    return accepted
+
+
+def fuse_pdf_vector_windows(
+    walls:list[dict],
+    windows:list[dict],
+    vector_lines:list[dict],
+    width:int,
+    height:int,
+)->list[dict]:
+    result=[dict(item) for item in windows]
+    for candidate in detect_pdf_vector_windows(vector_lines,walls,width,height):
+        if _opening_duplicate(candidate,result):
+            continue
+        result.append(candidate)
+    return result
+
+
 _AI_OPENING_CLASSES={
     "door":("door","unknown"),
     "door2":("door","unknown"),
