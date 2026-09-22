@@ -144,3 +144,16 @@ Each licensed AEC workflow run retains, per selected sheet:
 
 The canonical JSON and overlay are diagnostic artifacts only; they do not alter
 the official scoring input.
+
+
+## Parallel AEC-15 execution
+
+The `Stages 2-5 Validation` workflow exports the licensed test ONNX model once,
+then runs AEC-Geometric-Bench-15 as five parallel shards of three sheets each.
+The shard artifacts are merged and scored once with the official scorer, so the
+aggregate and per-sheet metrics still represent the complete 15-sheet set.
+
+The analyzer also prefers embedded PDF text when it contains enough useful room
+or dimension labels. In that case Tesseract is limited to numeric and rotated
+dimension passes. Set `PDF_NATIVE_TEXT_FASTPATH=0` to force the full OCR path
+for troubleshooting.
