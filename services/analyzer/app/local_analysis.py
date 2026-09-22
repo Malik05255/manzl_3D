@@ -141,7 +141,7 @@ def analyze_document_bytes_local(
     if ai_detections:
         doors,windows=fuse_ai_opening_detections(
             topology_walls,doors,windows,ai_detections,
-            min_confidence=max(.50,min(.99,float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78"))),
+            min_confidence=max(.15,min(.99,float(os.getenv("OPENING_ONNX_MIN_CONFIDENCE",".35") or ".35"))),
         )
     walls,doors,windows=normalize_opening_hosts(walls,doors,windows)
     topology_walls=[
