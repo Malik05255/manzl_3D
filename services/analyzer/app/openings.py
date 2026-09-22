@@ -681,7 +681,10 @@ def _vector_window_candidates(
         offsets=[float(item[3]) for item in group]
         start=float(np.median(np.asarray(starts,dtype=np.float32)))
         end=float(np.median(np.asarray(ends,dtype=np.float32)))
-        offset=float(np.median(np.asarray(offsets,dtype=np.float32)))
+        # Window glazing strokes span the full opening depth but duplicate CAD
+        # commands often bias the median toward one face. The envelope midpoint
+        # is a better geometric centre and matches the native window box.
+        offset=(min(offsets)+max(offsets))/2.0
         span=end-start
         if span<min_length or span>max_length:
             continue
