@@ -1,0 +1,166 @@
+name: Synthetic Fixture Threshold Sweep
+
+on:
+  push:
+    branches: [exp/synthetic-threshold-sweep]
+    paths:
+      - .github/workflows/experiment-synthetic-threshold-sweep.yml
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install scorer dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely
+
+      - name: Download Full V2 canonical artifacts
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35774442005
+          pattern: synthetic-policy-v2-sheet-*
+          path: benchmark-input
+          merge-multiple: true
+
+      - name: Sweep per-class confidence thresholds
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import copy, json, os
+          from pathlib import Path
+          from app.aec_benchmark import plan_to_aec_prediction, run_official_scorer
+
+          root=Path("../..")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          manifest_by={str(item["sheet"]):item for item in manifest["sheets"]}
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+
+          canonical_candidates=list((root/"benchmark-input").rglob("_canonical"))
+          if not canonical_candidates:
+              raise SystemExit("Canonical folder not found")
+          canonical_dir=canonical_candidates[0]
+          sheets=sorted(path.stem for path in canonical_dir.glob("sheet_*.json"))
+          if len(sheets)!=4:
+              raise SystemExit(f"Expected 4 representative sheets, found {len(sheets)}: {sheets}")
+
+          classes={
+              "Sink":"sink",
+              "Toilet":"toilet",
+              "Bathtub":"bathtub",
+              "Shower":"shower",
+              "Cooktops":"cooktop",
+          }
+          thresholds=[
+              .05,.08,.10,.12,.15,.18,.20,.25,.30,.35,.40,.45,
+              .50,.55,.60,.65,.70,.75,.80,.85,.90,.95,
+          ]
+
+          report={"sheets":sheets,"classes":{}}
+          for aec_class,kind in classes.items():
+              rows=[]
+              for threshold in thresholds:
+                  target=root/f"benchmark-output/threshold-sweep/{kind}/{threshold:.2f}"
+                  target.mkdir(parents=True,exist_ok=True)
+
+                  for sheet in sheets:
+                      plan=json.loads((canonical_dir/f"{sheet}.json").read_text())
+                      plan=copy.deepcopy(plan)
+                      plan["symbols"]=[
+                          item for item in plan.get("symbols",[])
+                          if item.get("kind")==kind
+                          and float(item.get("confidence",0.0))>=threshold
+                      ]
+                      spec=manifest_by[sheet]
+                      pred=plan_to_aec_prediction(
+                          plan,
+                          sheet=sheet,
+                          width=int(spec["width"]),
+                          height=int(spec["height"]),
+                      )
+                      (target/f"{sheet}.json").write_text(
+                          json.dumps(pred,separators=(",",":")),
+                          encoding="utf-8",
+                      )
+
+                  code,output,scored=run_official_scorer(
+                      scorer,
+                      target,
+                      dataset,
+                      sheet_names=sheets,
+                      include_per_sheet=True,
+                  )
+                  if code!=0 or scored is None:
+                      print(output)
+                      raise SystemExit(code or 1)
+                  item=scored.get("classes",{}).get(aec_class,{})
+                  row={
+                      "threshold":threshold,
+                      "tp":int(item.get("tp",0)),
+                      "fp":int(item.get("fp",0)),
+                      "fn":int(item.get("fn",0)),
+                      "precision":float(item.get("precision",0)),
+                      "recall":float(item.get("recall",0)),
+                      "f1":float(item.get("f1",0)),
+                  }
+                  rows.append(row)
+                  print(aec_class,json.dumps(row,sort_keys=True))
+
+              rows.sort(
+                  key=lambda row:(
+                      row["f1"],
+                      row["precision"],
+                      row["recall"],
+                      -row["threshold"],
+                  ),
+                  reverse=True,
+              )
+              report["classes"][aec_class]={
+                  "best":rows[0],
+                  "rows":rows,
+              }
+
+          target=root/"benchmark-output/threshold-sweep/report.json"
+          target.parent.mkdir(parents=True,exist_ok=True)
+          target.write_text(json.dumps(report,indent=2),encoding="utf-8")
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Synthetic fixture threshold sweep — 4 AEC sheets\n\n")
+              out.write("| Class | Best threshold | TP | FP | FN | Precision | Recall | F1 |\n")
+              out.write("|---|---:|---:|---:|---:|---:|---:|---:|\n")
+              for cls,item in report["classes"].items():
+                  best=item["best"]
+                  out.write(
+                      f"| {cls} | {best['threshold']:.2f} | {best['tp']} | {best['fp']} | "
+                      f"{best['fn']} | {best['precision']:.3f} | {best['recall']:.3f} | "
+                      f"{best['f1']:.3f} |\n"
+                  )
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-threshold-sweep-${{ github.sha }}
+          path: benchmark-output/threshold-sweep/report.json
+          retention-days: 7
