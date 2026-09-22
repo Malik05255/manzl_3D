@@ -52,6 +52,13 @@ def _outlined_wall_bands(ink: np.ndarray) -> np.ndarray:
         cv2.MORPH_OPEN,
         cv2.getStructuringElement(cv2.MORPH_RECT, (run, 1)),
     )
+
+    # A lone dimension rule also survives a long directional opening. Require
+    # the closed band to have real wall-width interior. Double-line wall
+    # outlines become a filled band here; single 1-2 px rules disappear.
+    band_half=max(2.2,min(4.5,short*0.0020))
+    vertical=_thick_core(vertical,band_half)
+    horizontal=_thick_core(horizontal,band_half)
     return cv2.bitwise_or(vertical, horizontal)
 
 
