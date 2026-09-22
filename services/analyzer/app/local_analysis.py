@@ -133,7 +133,12 @@ def analyze_document_bytes_local(
         )
     ]
     scale,scale_confidence,scale_warnings=estimate_scale_with_diagnostics(dimensions,w,h)
-    doors=detect_doors(image,topology_walls,scale)
+    doors=detect_doors(
+        image,
+        topology_walls,
+        scale,
+        vector_lines=vector_lines if vector_lines else None,
+    )
     windows=detect_windows(
         image,topology_walls,scale,
         vector_lines=vector_lines if vector_lines else None,
