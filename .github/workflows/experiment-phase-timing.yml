@@ -9,9 +9,52 @@ on:
   workflow_dispatch:
 
 jobs:
-  profile-sheet-15:
+  prepare-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ONNX export dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
+      - name: Export FloorCAD ONNX
+        run: |
+          python - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          from huggingface_hub import hf_hub_download
+          from ultralytics import YOLO
+
+          source=hf_hub_download(
+              "mudasir13cs/floorcad-yolov8n-detect",
+              "floorcad-yolov8n-detect.pt",
+          )
+          model=YOLO(source)
+          exported=model.export(format="onnx",imgsz=640,opset=12,simplify=False,dynamic=False)
+          target=Path("benchmark-model")
+          target.mkdir(exist_ok=True)
+          shutil.copy2(exported,target/"floorcad-symbols.onnx")
+          classes=[str(model.names[index]) for index in sorted(model.names)]
+          (target/"classes.json").write_text(json.dumps(classes),encoding="utf-8")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase-floorcad-${{ github.sha }}
+          path: benchmark-model/*
+          retention-days: 2
+
+  profile:
+    needs: prepare-model
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        offset: [3, 8, 14]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -30,27 +73,10 @@ jobs:
           sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
           python -m pip install --upgrade pip
           pip install -r services/analyzer/requirements.txt
-          pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
-      - name: Export FloorCAD ONNX
-        env:
-          HF_REPO: mudasir13cs/floorcad-yolov8n-detect
-          HF_FILE: floorcad-yolov8n-detect.pt
-        run: |
-          python - <<'PY'
-          import json, os, shutil
-          from pathlib import Path
-          from huggingface_hub import hf_hub_download
-          from ultralytics import YOLO
-
-          source=hf_hub_download(os.environ["HF_REPO"],os.environ["HF_FILE"])
-          model=YOLO(source)
-          exported=model.export(format="onnx",imgsz=640,opset=12,simplify=False,dynamic=False)
-          target=Path("benchmark-model")
-          target.mkdir(exist_ok=True)
-          shutil.copy2(exported,target/"floorcad-symbols.onnx")
-          classes=[str(model.names[index]) for index in sorted(model.names)]
-          (target/"classes.json").write_text(json.dumps(classes),encoding="utf-8")
-          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: phase-floorcad-${{ github.sha }}
+          path: benchmark-model
       - name: Configure detector
         run: |
           python - <<'PY'
@@ -63,35 +89,40 @@ jobs:
               env.write("SYMBOL_MIN_CONFIDENCE=0.55\n")
               env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
           PY
-      - name: Profile sheet 15
+      - name: Profile representative slow sheet
         working-directory: services/analyzer
         env:
           PYTHONPATH: .
         run: |
-          mkdir -p ../../benchmark-output/phase-profile
+          OUT="../../benchmark-output/phase-${{ matrix.offset }}"
+          mkdir -p "$OUT"
           python -m app.aec_benchmark \
             --dataset ../../external/aec-geometric-bench/dataset \
-            --output ../../benchmark-output/phase-profile \
-            --offset 14 \
+            --output "$OUT" \
+            --offset "${{ matrix.offset }}" \
             --limit 1
           python - <<'PY'
           import json, os
           from pathlib import Path
-          plan=json.loads(Path("../../benchmark-output/phase-profile/_canonical/sheet_15.json").read_text())
+
+          out=Path("../../benchmark-output/phase-${{ matrix.offset }}")
+          canonical=next((out/"_canonical").glob("sheet_*.json"))
+          plan=json.loads(canonical.read_text(encoding="utf-8"))
+          sheet=canonical.stem
           timings=plan.get("analysis",{}).get("phaseTimingsSeconds",{})
-          print("PHASE_TIMINGS",json.dumps(timings,sort_keys=True))
-          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
-              out.write("## Sheet 15 analyzer phase timing\n\n")
-              out.write("| Phase | Seconds |\n|---|---:|\n")
+          print("PHASE_TIMINGS",sheet,json.dumps(timings,sort_keys=True))
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
+              summary.write(f"## {sheet} analyzer phase timing\n\n")
+              summary.write("| Phase | Seconds |\n|---|---:|\n")
               for name,value in sorted(timings.items(),key=lambda item:item[1],reverse=True):
-                  out.write(f"| {name} | {float(value):.2f} |\n")
+                  summary.write(f"| {name} | {float(value):.2f} |\n")
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: analyzer-phase-sheet15-${{ github.sha }}
+          name: analyzer-phase-${{ matrix.offset }}-${{ github.sha }}
           path: |
-            benchmark-output/phase-profile/_canonical/sheet_15.json
-            benchmark-output/phase-profile/_timings/sheet_15.json
+            benchmark-output/phase-${{ matrix.offset }}/_canonical/*.json
+            benchmark-output/phase-${{ matrix.offset }}/_timings/*.json
           if-no-files-found: warn
           retention-days: 3
