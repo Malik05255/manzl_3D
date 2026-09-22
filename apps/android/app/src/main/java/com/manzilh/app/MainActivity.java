@@ -12,30 +12,12 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
-
 public class MainActivity extends Activity {
     private static final String APP_URL = "https://manzil-h-malik05255.pages.dev";
     private WebView webView;
     private ValueCallback<Uri[]> pendingFiles;
 
-    private final ActivityResultLauncher<Intent> filePicker =
-        registerForActivityResult(
-            new ActivityResultContracts.StartActivityForResult(),
-            result -> {
-                Uri[] files = null;
-                if (result.getResultCode() == RESULT_OK) {
-                    files = WebChromeClient.FileChooserParams.parseResult(
-                        result.getResultCode(), result.getData()
-                    );
-                }
-                if (pendingFiles != null) {
-                    pendingFiles.onReceiveValue(files);
-                    pendingFiles = null;
-                }
-            }
-        );
+    private static final int FILE_CHOOSER_REQUEST = 1207;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -87,7 +69,7 @@ public class MainActivity extends Activity {
                 try {
                     Intent intent = fileChooserParams.createIntent();
                     intent.addCategory(Intent.CATEGORY_OPENABLE);
-                    filePicker.launch(intent);
+                    startActivityForResult(intent, FILE_CHOOSER_REQUEST);
                     return true;
                 } catch (Exception error) {
                     pendingFiles = null;
@@ -101,6 +83,22 @@ public class MainActivity extends Activity {
         } else {
             webView.restoreState(savedInstanceState);
         }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == FILE_CHOOSER_REQUEST) {
+            Uri[] files = null;
+            if (resultCode == RESULT_OK) {
+                files = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+            }
+            if (pendingFiles != null) {
+                pendingFiles.onReceiveValue(files);
+                pendingFiles = null;
+            }
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     @Override
