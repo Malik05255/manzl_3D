@@ -1,8 +1,8 @@
-name: Synthetic Object Detector Small Scale
+name: Contextual Synthetic Object Detector
 
 on:
   push:
-    branches: [exp/synthetic-object-detector-smallscale]
+    branches: [exp/contextual-object-detector]
     paths:
       - services/analyzer/tools/generate_synthetic_symbol_dataset.py
       - .github/workflows/experiment-synthetic-object-detector.yml
