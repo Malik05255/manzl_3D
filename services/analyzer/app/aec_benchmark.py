@@ -61,6 +61,23 @@ def _opening_bbox(opening:dict,sx:float,sy:float,padding_px:float)->list[float]:
     ]
 
 
+def _detector_opening_bbox(opening:dict,sx:float,sy:float)->list[float]|None:
+    if str(opening.get("detectorSource",""))!="mit-floorplan":
+        return None
+    value=opening.get("detectorBBox")
+    if not isinstance(value,(list,tuple)) or len(value)!=4:
+        return None
+    try:
+        x1,y1,x2,y2=map(float,value)
+    except (TypeError,ValueError):
+        return None
+    x1,x2=min(x1,x2),max(x1,x2)
+    y1,y2=min(y1,y2),max(y1,y2)
+    if x2-x1<2 or y2-y1<2:
+        return None
+    return [x1*sx,y1*sy,x2*sx,y2*sy]
+
+
 def _window_bbox(window:dict,sx:float,sy:float,padding_px:float)->list[float]:
     """Use vector glazing depth when available instead of generic wall padding."""
     try:
@@ -154,12 +171,18 @@ def plan_to_aec_prediction(plan:dict,*,sheet:str,width:int,height:int)->dict:
         object_class="Double Swing Door" if subtype=="double_swing" else "Single Swing Door"
         objects.append({
             "class":object_class,
-            "bbox":_door_bbox(door,sx,sy,padding),
+            "bbox":(
+                _detector_opening_bbox(door,sx,sy)
+                or _door_bbox(door,sx,sy,padding)
+            ),
         })
     for window in plan.get("windows",[]):
         objects.append({
             "class":"Window",
-            "bbox":_window_bbox(window,sx,sy,padding),
+            "bbox":(
+                _detector_opening_bbox(window,sx,sy)
+                or _window_bbox(window,sx,sy,padding)
+            ),
         })
 
     symbol_classes={

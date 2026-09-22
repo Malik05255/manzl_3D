@@ -590,3 +590,55 @@ def test_vector_window_rejects_parallel_group_far_from_wall():
     ]
     windows=detect_windows(image,walls,None,vector_lines=vectors)
     assert windows==[]
+
+
+def test_dedicated_opening_model_can_preserve_unhosted_detector_bbox():
+    detections=[
+        {
+            "class":"Door",
+            "bbox":[100.0,120.0,180.0,220.0],
+            "confidence":.91,
+        },
+        {
+            "class":"Window",
+            "bbox":[260.0,140.0,380.0,190.0],
+            "confidence":.72,
+        },
+    ]
+    doors,windows=fuse_ai_opening_detections(
+        [],
+        [],
+        [],
+        detections,
+        min_confidence=.10,
+        min_confidence_by_kind={"door":.30,"window":.10},
+        allow_unhosted=True,
+        preserve_detector_bbox=True,
+        detector_source="mit-floorplan",
+    )
+    assert len(doors)==1
+    assert len(windows)==1
+    assert doors[0]["wallId"] is None
+    assert doors[0]["detectorBBox"]==[100.0,120.0,180.0,220.0]
+    assert doors[0]["detectorSource"]=="mit-floorplan"
+    assert windows[0]["detectorBBox"]==[260.0,140.0,380.0,190.0]
+
+
+def test_dedicated_opening_model_uses_per_kind_thresholds():
+    detections=[
+        {"class":"Door","bbox":[10,10,60,80],"confidence":.20},
+        {"class":"Window","bbox":[100,10,160,50],"confidence":.20},
+    ]
+    doors,windows=fuse_ai_opening_detections(
+        [],
+        [],
+        [],
+        detections,
+        min_confidence=.10,
+        min_confidence_by_kind={"door":.30,"window":.10},
+        allow_unhosted=True,
+        preserve_detector_bbox=True,
+        detector_source="mit-floorplan",
+    )
+    assert doors==[]
+    assert len(windows)==1
