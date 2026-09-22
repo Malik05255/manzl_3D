@@ -228,3 +228,11 @@ def test_configured_symbol_policy_is_shared_and_sink_specific(monkeypatch):
         ("toilet",.65),
         ("sink",.12),
     ]
+
+
+def test_tile_window_default_candidate_geometry():
+    windows=_tile_windows(5200,5200,1200,.18)
+    assert len(windows)>1
+    assert all(0<=x1<x2<=5200 and 0<=y1<y2<=5200 for x1,y1,x2,y2 in windows)
+    assert max(x2-x1 for x1,_,x2,_ in windows)<=1200
+    assert max(y2-y1 for _,y1,_,y2 in windows)<=1200
