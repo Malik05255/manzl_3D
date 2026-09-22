@@ -20,5 +20,9 @@ services:
         value: "12"
       - key: PDF_RENDER_SCALE
         value: "1.55"
+      - key: ANALYZER_RECONSTRUCTION_V2
+        value: "1"
+      - key: OCR_MULTISCALE
+        value: "1"
       - key: ANALYZER_PIPELINE_VERSION
-        value: render-free-v1
+        value: reconstruction-v2
