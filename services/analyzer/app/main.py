@@ -96,6 +96,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
 
     native_labels=[]
     used_pdf_text=False
+    used_pdf_vector=False
     if req.mime_type=="application/pdf":
         try:
             native_lines=extract_pdf_text_lines(data,source_page)
@@ -139,8 +140,15 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
             try:
                 detections=await asyncio.to_thread(extract_local_onnx_detections,image)
                 min_confidence=float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78")
+                sink_min=float(os.getenv("SYMBOL_SINK_MIN_CONFIDENCE",".10") or ".10")
                 symbols=normalize_symbol_response(
-                    detections,w,h,max(.50,min(.99,min_confidence)),
+                    detections,
+                    w,
+                    h,
+                    max(.50,min(.99,min_confidence)),
+                    per_kind_min_confidence={
+                        "sink":max(.05,min(.99,sink_min)),
+                    },
                 )
                 return symbols,detections
             except Exception:
@@ -191,7 +199,12 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     ]
     scale,scale_confidence,scale_warnings=estimate_scale_with_diagnostics(dimensions,w,h)
     doors=detect_doors(image,topology_walls,scale)
-    windows=detect_windows(image,topology_walls,scale)
+    windows=detect_windows(
+        image,
+        topology_walls,
+        scale,
+        vector_lines=vector_lines if vector_lines else None,
+    )
     if ai_detections:
         doors,windows=fuse_ai_opening_detections(
             topology_walls,doors,windows,ai_detections,
