@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.openings import _door_arc_evidence_details,_door_subtype_from_evidence,detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
+from app.openings import _door_arc_evidence_details,_door_subtype_from_evidence,_nearest_wall_gap_candidates,detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
 
 
 def wall(wall_id,x1,y1,x2,y2):
@@ -530,3 +530,19 @@ def test_double_swing_requires_two_visible_leaf_hinges():
     assert _door_subtype_from_evidence(set(),{"a","b"})=="single_swing"
 
 
+
+
+def test_nearest_gap_candidates_skip_farther_collinear_segments():
+    walls=[
+        wall("a",20,120,100,120),
+        wall("b",150,120,230,120),
+        wall("c",280,120,360,120),
+    ]
+    gaps=_nearest_wall_gap_candidates(
+        walls,min_gap=20,max_gap=220,axis_tol=8,
+    )
+    pairs={
+        tuple(sorted((str(item["gapData"][0]["id"]),str(item["gapData"][1]["id"]))))
+        for item in gaps
+    }
+    assert pairs=={("a","b"),("b","c")}
