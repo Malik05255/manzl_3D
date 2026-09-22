@@ -1,8 +1,8 @@
-name: Synthetic Scale Sweep
+name: Synthetic Long Scale Sweep
 
 on:
   push:
-    branches: [exp/synthetic-scale-sweep]
+    branches: [exp/synthetic-long-scale-sweep]
     paths:
       - .github/workflows/experiment-synthetic-scale-sweep.yml
   workflow_dispatch:
@@ -57,8 +57,8 @@ jobs:
         with:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: 35772651346
-          name: synthetic-object-model-3110e7f36bdee04e45278c7d2da5046fc8e83058
+          run-id: 35771807959
+          name: synthetic-object-model-ce173f1610d70efb74b1c49c1c72ed137d04e57a
           path: synthetic-model
 
       - name: Configure trained detector
