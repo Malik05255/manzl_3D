@@ -181,7 +181,7 @@ def plan_to_aec_prediction(plan:dict,*,sheet:str,width:int,height:int)->dict:
     return {"sheet":sheet,"objects":objects,"areas":areas,"walls":walls}
 
 
-def run_dataset(dataset_dir:Path,output_dir:Path,limit:int|None=None)->list[Path]:
+def run_dataset(dataset_dir:Path,output_dir:Path,limit:int|None=None,offset:int=0)->list[Path]:
     manifest=json.loads((dataset_dir/"manifest.json").read_text(encoding="utf-8"))
     output_dir.mkdir(parents=True,exist_ok=True)
     canonical_dir=output_dir/"_canonical"
@@ -190,6 +190,8 @@ def run_dataset(dataset_dir:Path,output_dir:Path,limit:int|None=None)->list[Path
     debug_dir.mkdir(parents=True,exist_ok=True)
     written=[]
     sheets=manifest.get("sheets",[])
+    start=max(0,int(offset))
+    sheets=sheets[start:]
     if limit is not None:
         sheets=sheets[:max(0,limit)]
 
@@ -361,6 +363,7 @@ def main()->int:
     parser.add_argument("--dataset",required=True,help="Path to AEC benchmark dataset directory")
     parser.add_argument("--output",default="benchmark-output/aec15")
     parser.add_argument("--limit",type=int,default=None)
+    parser.add_argument("--offset",type=int,default=0,help="Zero-based manifest offset for sharded runs")
     parser.add_argument("--scorer",default=None,help="Optional path to the benchmark's official score.py")
     parser.add_argument("--report-json",default=None,help="Optional path for machine-readable official score summary")
     args=parser.parse_args()
@@ -372,7 +375,7 @@ def main()->int:
     if missing:
         raise SystemExit("Missing benchmark files: "+", ".join(missing))
 
-    written=run_dataset(dataset,output,args.limit)
+    written=run_dataset(dataset,output,args.limit,args.offset)
     print(f"Wrote {len(written)} prediction file(s) to {output}")
 
     if args.scorer:
