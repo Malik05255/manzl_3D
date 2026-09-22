@@ -1,0 +1,139 @@
+name: Deploy Manzil H
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      INTERNAL_TOKEN: ${{ secrets.MANZIL_INTERNAL_TOKEN }}
+      D1_DATABASE_ID: ${{ vars.MANZIL_D1_DATABASE_ID }}
+      D1_DATABASE_NAME: ${{ vars.MANZIL_D1_DATABASE_NAME }}
+      R2_BUCKET: ${{ vars.MANZIL_R2_BUCKET }}
+      ANALYZE_QUEUE: ${{ vars.MANZIL_ANALYZE_QUEUE }}
+      ANALYZER_URL: ${{ vars.MANZIL_ANALYZER_URL }}
+      API_PUBLIC_URL: ${{ vars.MANZIL_API_PUBLIC_URL }}
+      WEB_ORIGIN: ${{ vars.MANZIL_WEB_ORIGIN }}
+      PAGES_PROJECT: ${{ vars.MANZIL_PAGES_PROJECT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate deployment configuration
+        run: |
+          set -eu
+          : "${CLOUDFLARE_API_TOKEN:?Missing secret CLOUDFLARE_API_TOKEN}"
+          : "${CLOUDFLARE_ACCOUNT_ID:?Missing secret CLOUDFLARE_ACCOUNT_ID}"
+          : "${INTERNAL_TOKEN:?Missing secret MANZIL_INTERNAL_TOKEN}"
+          : "${D1_DATABASE_ID:?Missing variable MANZIL_D1_DATABASE_ID}"
+          : "${ANALYZER_URL:?Missing variable MANZIL_ANALYZER_URL}"
+          : "${API_PUBLIC_URL:?Missing variable MANZIL_API_PUBLIC_URL}"
+          : "${WEB_ORIGIN:?Missing variable MANZIL_WEB_ORIGIN}"
+          : "${PAGES_PROJECT:?Missing variable MANZIL_PAGES_PROJECT}"
+          echo "D1_DATABASE_NAME=${D1_DATABASE_NAME:-manzil-h}" >> "$GITHUB_ENV"
+          echo "R2_BUCKET=${R2_BUCKET:-manzil-h-assets}" >> "$GITHUB_ENV"
+          echo "ANALYZE_QUEUE=${ANALYZE_QUEUE:-manzil-h-analysis}" >> "$GITHUB_ENV"
+
+      - name: Install workspace dependencies
+        run: npm install
+
+      - name: Generate production Worker config
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          config={
+              "name":"manzil-h-api",
+              "main":"src/index.ts",
+              "compatibility_date":"2026-09-20",
+              "vars":{
+                  "ANALYZER_URL":os.environ["ANALYZER_URL"],
+                  "API_PUBLIC_URL":os.environ["API_PUBLIC_URL"],
+                  "APP_VERSION":os.environ.get("GITHUB_SHA","dev")[:12],
+                  "ALLOWED_ORIGIN":os.environ["WEB_ORIGIN"],
+              },
+              "d1_databases":[{
+                  "binding":"DB",
+                  "database_name":os.environ["D1_DATABASE_NAME"],
+                  "database_id":os.environ["D1_DATABASE_ID"],
+              }],
+              "r2_buckets":[{
+                  "binding":"ASSETS",
+                  "bucket_name":os.environ["R2_BUCKET"],
+              }],
+              "queues":{
+                  "producers":[{
+                      "binding":"ANALYZE_QUEUE",
+                      "queue":os.environ["ANALYZE_QUEUE"],
+                  }],
+                  "consumers":[{
+                      "queue":os.environ["ANALYZE_QUEUE"],
+                      "max_batch_size":1,
+                      "max_batch_timeout":1,
+                  }],
+              },
+          }
+          Path("apps/api/wrangler.deploy.json").write_text(
+              json.dumps(config,indent=2),encoding="utf-8"
+          )
+          PY
+
+      - name: Apply D1 migrations
+        run: npx wrangler d1 migrations apply "$D1_DATABASE_NAME" --remote --config apps/api/wrangler.deploy.json
+
+      - name: Configure Worker internal token
+        run: printf '%s' "$INTERNAL_TOKEN" | npx wrangler secret put INTERNAL_TOKEN --config apps/api/wrangler.deploy.json
+
+      - name: Deploy API Worker
+        run: npx wrangler deploy --config apps/api/wrangler.deploy.json
+
+      - name: Build web application
+        env:
+          VITE_API_BASE_URL: ${{ env.API_PUBLIC_URL }}
+        run: npm run build:web
+
+      - name: Deploy web to Cloudflare Pages
+        run: npx wrangler pages deploy apps/web/dist --project-name "$PAGES_PROJECT" --branch production
+
+      - name: Verify deployed services
+        run: |
+          curl --fail --show-error --silent --retry 8 --retry-delay 4 "$API_PUBLIC_URL/health"
+          curl --fail --show-error --silent --retry 8 --retry-delay 4 "$API_PUBLIC_URL/ready"
+
+      - name: Generate remote E2E fixture
+        run: |
+          pip install PyMuPDF==1.26.4
+          python services/analyzer/tools/generate_e2e_fixture.py /tmp/manzil-e2e.pdf
+
+      - name: Run upload-to-restore E2E
+        env:
+          MANZIL_API_URL: ${{ env.API_PUBLIC_URL }}
+          MANZIL_E2E_SOURCE: /tmp/manzil-e2e.pdf
+          MANZIL_E2E_TIMEOUT_MS: "240000"
+        run: node scripts/e2e_remote.mjs
+
+      - name: Publish deployment summary
+        if: always()
+        run: |
+          {
+            echo "## Manzil H deployment"
+            echo
+            echo "- Web: $WEB_ORIGIN"
+            echo "- API: $API_PUBLIC_URL"
+            echo "- Analyzer: $ANALYZER_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
