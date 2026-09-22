@@ -62,3 +62,26 @@ def test_detects_small_valid_room_on_low_resolution_plan():
         max(point["x"] for point in room["polygon"])-min(point["x"] for point in room["polygon"])<70
         for room in rooms
     )
+
+
+
+def test_large_sheet_keeps_small_bathroom_sized_enclosure():
+    mask=np.zeros((4000,6000),dtype=np.uint8)
+    cv2.rectangle(mask,(400,400),(1050,1050),255,18)
+    cv2.rectangle(mask,(1500,400),(5200,3300),255,18)
+    rooms=detect_rooms(mask,[],meters_per_pixel=.01)
+    assert len(rooms)>=2
+    small=min(
+        rooms,
+        key=lambda room:(
+            max(point["x"] for point in room["polygon"])
+            -min(point["x"] for point in room["polygon"])
+        )*(
+            max(point["y"] for point in room["polygon"])
+            -min(point["y"] for point in room["polygon"])
+        ),
+    )
+    width=max(point["x"] for point in small["polygon"])-min(point["x"] for point in small["polygon"])
+    height=max(point["y"] for point in small["polygon"])-min(point["y"] for point in small["polygon"])
+    assert width<900
+    assert height<900
