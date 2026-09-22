@@ -590,3 +590,73 @@ def test_vector_window_rejects_parallel_group_far_from_wall():
     ]
     windows=detect_windows(image,walls,None,vector_lines=vectors)
     assert windows==[]
+
+
+def test_direct_vector_door_recovers_leaf_from_wall_endpoint():
+    image=np.full((500,800,3),255,dtype=np.uint8)
+    walls=[wall("host",80,250,300,250)]
+    vectors=[
+        {
+            "a":{"x":300.0,"y":250.0},
+            "b":{"x":345.0,"y":205.0},
+            "widthPx":1.2,
+        },
+    ]
+    doors=detect_doors(
+        image,
+        walls,
+        meters_per_pixel=.02,
+        vector_lines=vectors,
+    )
+    direct=[item for item in doors if item.get("provenance")=="pdf-vector-direct"]
+    assert len(direct)==1
+    assert direct[0]["doorSubtype"]=="single_swing"
+    assert direct[0]["wallId"]=="host"
+    assert direct[0]["doorSwingDepthPx"]>35
+
+
+def test_direct_vector_door_rejects_collinear_wall_continuation():
+    image=np.full((500,800,3),255,dtype=np.uint8)
+    walls=[
+        wall("left",80,250,300,250),
+        wall("continuation",300,250,520,250),
+    ]
+    vectors=[
+        {
+            "a":{"x":300.0,"y":250.0},
+            "b":{"x":345.0,"y":205.0},
+            "widthPx":1.2,
+        },
+    ]
+    doors=detect_doors(
+        image,
+        walls,
+        meters_per_pixel=.02,
+        vector_lines=vectors,
+    )
+    assert not any(
+        item.get("provenance")=="pdf-vector-direct"
+        for item in doors
+    )
+
+
+def test_direct_vector_door_rejects_parallel_vector_stroke():
+    image=np.full((500,800,3),255,dtype=np.uint8)
+    walls=[wall("host",80,250,300,250)]
+    vectors=[
+        {
+            "a":{"x":300.0,"y":250.0},
+            "b":{"x":365.0,"y":250.0},
+            "widthPx":1.2,
+        },
+    ]
+    doors=detect_doors(
+        image,
+        walls,
+        meters_per_pixel=.02,
+        vector_lines=vectors,
+    )
+    assert not any(
+        item.get("provenance")=="pdf-vector-direct"
+        for item in doors
+    )
