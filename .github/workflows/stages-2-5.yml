@@ -179,6 +179,7 @@ jobs:
           retention-days: 2
 
   benchmark-score:
+    if: always()
     needs: benchmark-shard
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -231,24 +232,38 @@ jobs:
           predictions=root/"benchmark-output/aec15/predictions"
           dataset=root/"external/aec-geometric-bench/dataset"
           scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          manifest=json.loads((dataset/"manifest.json").read_text(encoding="utf-8"))
+          expected=[str(item["sheet"]) for item in manifest.get("sheets",[])[:15]]
           selected=sorted(path.stem for path in predictions.glob("sheet_*.json"))
-          if len(selected)!=15:
-              raise SystemExit(f"Expected 15 prediction sheets, found {len(selected)}: {selected}")
+          missing=sorted(set(expected)-set(selected))
+          target=root/"benchmark-output/aec15"
+          target.mkdir(parents=True,exist_ok=True)
+          if not selected:
+              (target/"score.txt").write_text(
+                  "No AEC prediction sheets were produced.\n",encoding="utf-8"
+              )
+              raise SystemExit("No AEC prediction sheets were produced")
           code,output,report=run_official_scorer(
               scorer,predictions,dataset,
               sheet_names=selected,
               include_per_sheet=True,
           )
-          target=root/"benchmark-output/aec15"
-          target.mkdir(parents=True,exist_ok=True)
           (target/"score.txt").write_text(output,encoding="utf-8")
           print(output,end="" if output.endswith("\n") else "\n")
           if report is not None:
+              report["expectedSheets"]=expected
+              report["missingSheets"]=missing
+              report["complete"]=not missing and len(selected)==len(expected)
               (target/"report.json").write_text(
                   json.dumps(report,ensure_ascii=False,indent=2),
                   encoding="utf-8",
               )
-          raise SystemExit(code)
+          if code:
+              raise SystemExit(code)
+          if missing:
+              raise SystemExit(
+                  f"Partial AEC-15 benchmark: missing {len(missing)} sheet(s): {missing}"
+              )
           PY
 
       - name: Publish AEC summary
@@ -265,6 +280,11 @@ jobs:
                   item=report.get(key,{})
                   out.write(f"- {key}: P {item.get('precision',0):.3f} / R {item.get('recall',0):.3f} / F1 {item.get('f1',0):.3f}\n")
               out.write(f"- macroF1: {report.get('macroF1',0):.3f}\n")
+              missing=report.get("missingSheets",[])
+              if missing:
+                  out.write(f"- incomplete: missing {len(missing)} sheet(s): {', '.join(missing)}\n")
+              else:
+                  out.write("- complete: all expected sheets scored\n")
               classes=report.get("classes",{})
               if classes:
                   out.write("\n### Object classes\n\n")
