@@ -537,7 +537,12 @@ def test_scaled_single_leaf_skips_expensive_arc_scan(monkeypatch):
     image=np.full((260,320,3),255,dtype=np.uint8)
     cv2.line(image,(30,130),(120,130),(0,0,0),5)
     cv2.line(image,(170,130),(290,130),(0,0,0),5)
-    cv2.line(image,(120,130),(165,88),(0,0,0),4)
+
+    monkeypatch.setattr(
+        openings_module,
+        "_door_leaf_evidence_details",
+        lambda *args,**kwargs:(1,{"a"},"negative",42.0),
+    )
 
     def fail_arc(*args,**kwargs):
         raise AssertionError("arc scan should be skipped when leaf evidence is already sufficient")
@@ -556,14 +561,17 @@ def test_unscaled_single_leaf_still_checks_arc_when_needed_for_threshold(monkeyp
     image=np.full((260,320,3),255,dtype=np.uint8)
     cv2.line(image,(30,130),(120,130),(0,0,0),5)
     cv2.line(image,(170,130),(290,130),(0,0,0),5)
-    cv2.line(image,(120,130),(165,88),(0,0,0),4)
 
+    monkeypatch.setattr(
+        openings_module,
+        "_door_leaf_evidence_details",
+        lambda *args,**kwargs:(1,{"a"},"negative",42.0),
+    )
     called={"value":False}
-    original=openings_module._door_arc_evidence_details
 
     def track_arc(*args,**kwargs):
         called["value"]=True
-        return original(*args,**kwargs)
+        return 0,set(),"unknown",0.0
 
     monkeypatch.setattr(openings_module,"_door_arc_evidence_details",track_arc)
     detect_doors(
