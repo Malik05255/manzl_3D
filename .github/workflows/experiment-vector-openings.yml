@@ -32,7 +32,7 @@ jobs:
         working-directory: services/analyzer
         env:
           PYTHONPATH: .
-        run: pytest -q tests/test_document.py
+        run: pytest -q tests/test_document.py tests/test_openings.py
       - name: Probe vector opening geometry
         working-directory: services/analyzer
         env:
@@ -43,9 +43,31 @@ jobs:
             --dataset ../../external/aec-geometric-bench/dataset \
             --sheet sheet_05 \
             --output ../../benchmark-output/vector-probe/sheet_05.json
+      - name: Score vector-window extraction on sheet 05
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+          PDF_NATIVE_TEXT_FASTPATH: "1"
+        run: |
+          mkdir -p ../../benchmark-output/vector-window-score
+          python -m app.aec_benchmark \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --output ../../benchmark-output/vector-window-score \
+            --offset 4 \
+            --limit 1 \
+            --scorer ../../external/aec-geometric-bench/scoring/score.py \
+            --report-json ../../benchmark-output/vector-window-score/report.json \
+            | tee ../../benchmark-output/vector-window-score/score.txt
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: vector-opening-probe-${{ github.sha }}
-          path: benchmark-output/vector-probe/sheet_05.json
-          if-no-files-found: error
+          path: |
+            benchmark-output/vector-probe/sheet_05.json
+            benchmark-output/vector-window-score/sheet_05.json
+            benchmark-output/vector-window-score/_canonical/sheet_05.json
+            benchmark-output/vector-window-score/_timings/sheet_05.json
+            benchmark-output/vector-window-score/report.json
+            benchmark-output/vector-window-score/score.txt
+          if-no-files-found: warn
           retention-days: 3
