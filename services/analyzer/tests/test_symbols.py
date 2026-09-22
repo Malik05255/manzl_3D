@@ -258,3 +258,48 @@ def test_secondary_onnx_detections_are_optional(monkeypatch):
     monkeypatch.delenv("SYMBOL_SECONDARY_ONNX_CLASSES",raising=False)
     image=np.full((50,50,3),255,dtype=np.uint8)
     assert symbols_module.extract_secondary_onnx_detections(image)==[]
+
+
+def test_secondary_onnx_uses_small_tile_defaults(monkeypatch):
+    image=np.full((2400,2400,3),255,dtype=np.uint8)
+    monkeypatch.setenv("SYMBOL_SECONDARY_ONNX_MODEL","secondary.onnx")
+    monkeypatch.setenv(
+        "SYMBOL_SECONDARY_ONNX_CLASSES",
+        '["single_swing_door","toilet"]',
+    )
+    captured={}
+
+    def fake_extract(_image,**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(symbols_module,"_extract_onnx_detections",fake_extract)
+    symbols_module.extract_secondary_onnx_detections(image)
+
+    assert captured["tile_trigger"]==1200
+    assert captured["tile_size"]==960
+    assert captured["tile_overlap"]==.22
+
+
+def test_secondary_onnx_allows_tile_overrides(monkeypatch):
+    image=np.full((2400,2400,3),255,dtype=np.uint8)
+    monkeypatch.setenv("SYMBOL_SECONDARY_ONNX_MODEL","secondary.onnx")
+    monkeypatch.setenv(
+        "SYMBOL_SECONDARY_ONNX_CLASSES",
+        '["single_swing_door","toilet"]',
+    )
+    monkeypatch.setenv("SYMBOL_SECONDARY_ONNX_TILE_TRIGGER","900")
+    monkeypatch.setenv("SYMBOL_SECONDARY_ONNX_TILE_SIZE","800")
+    monkeypatch.setenv("SYMBOL_SECONDARY_ONNX_TILE_OVERLAP",".30")
+    captured={}
+
+    def fake_extract(_image,**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(symbols_module,"_extract_onnx_detections",fake_extract)
+    symbols_module.extract_secondary_onnx_detections(image)
+
+    assert captured["tile_trigger"]==900
+    assert captured["tile_size"]==800
+    assert captured["tile_overlap"]==.30
