@@ -632,8 +632,6 @@ def _vector_window_candidates(
             if peer_index==seed_index:
                 continue
             peer=features[peer_index]
-            if abs(float(peer["center"])-seed_center)>max_center_delta:
-                continue
             if _angle_delta_degrees(float(peer["angle"]),float(seed["angle"]))>4.0:
                 continue
             peer_length=float(peer["length"])
@@ -645,6 +643,9 @@ def _vector_window_candidates(
             p1=pax*sux+pay*suy
             p2=pbx*sux+pby*suy
             pstart=min(p1,p2); pend=max(p1,p2)
+            pcenter=(pstart+pend)/2
+            if abs(pcenter-seed_center)>max_center_delta:
+                continue
             overlap=max(0.0,min(seed_end,pend)-max(seed_start,pstart))
             if overlap<min(seed_length,peer_length)*.64:
                 continue
