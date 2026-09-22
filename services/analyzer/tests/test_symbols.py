@@ -303,3 +303,39 @@ def test_secondary_onnx_allows_tile_overrides(monkeypatch):
     assert captured["tile_trigger"]==900
     assert captured["tile_size"]==800
     assert captured["tile_overlap"]==.30
+
+
+def test_configured_symbols_support_cooktop_specific_threshold(monkeypatch):
+    monkeypatch.setenv("SYMBOL_MIN_CONFIDENCE",".55")
+    monkeypatch.setenv("SYMBOL_COOKTOP_MIN_CONFIDENCE",".50")
+    payload=[
+        {"class":"cooktop","bbox":[10,10,60,60],"confidence":.526},
+        {"class":"toilet","bbox":[80,10,130,60],"confidence":.526},
+    ]
+    result=symbols_module.normalize_configured_symbols(payload,200,100)
+    assert [item["kind"] for item in result]==["cooktop"]
+
+
+def test_secondary_detector_can_filter_allowed_classes(monkeypatch):
+    image=np.full((100,100,3),255,dtype=np.uint8)
+    monkeypatch.setenv("SYMBOL_SECONDARY_ONNX_MODEL","secondary.onnx")
+    monkeypatch.setenv(
+        "SYMBOL_SECONDARY_ONNX_CLASSES",
+        '["cooktop","toilet","sink"]',
+    )
+    monkeypatch.setenv(
+        "SYMBOL_SECONDARY_ONNX_ALLOWED_CLASSES",
+        "cooktop",
+    )
+
+    monkeypatch.setattr(
+        symbols_module,
+        "_extract_onnx_detections",
+        lambda _image,**kwargs:[
+            {"class":"cooktop","bbox":[10,10,40,40],"confidence":.7},
+            {"class":"toilet","bbox":[50,10,80,40],"confidence":.8},
+        ],
+    )
+    result=symbols_module.extract_secondary_onnx_detections(image)
+    assert len(result)==1
+    assert result[0]["class"]=="cooktop"
