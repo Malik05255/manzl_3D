@@ -1,0 +1,256 @@
+name: Synthetic Object Detector
+
+on:
+  push:
+    branches: [exp/synthetic-object-detector]
+    paths:
+      - services/analyzer/tools/generate_synthetic_symbol_dataset.py
+      - .github/workflows/experiment-synthetic-object-detector.yml
+  workflow_dispatch:
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+
+      - name: Install training dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt
+          pip install "ultralytics==8.3.249" "onnx>=1.17,<2" "pyyaml>=6,<7"
+
+      - name: Generate synthetic architectural symbols
+        working-directory: services/analyzer
+        run: |
+          python tools/generate_synthetic_symbol_dataset.py             --output ../../synthetic-symbols             --train 1400             --val 280             --size 384             --seed 240922
+
+      - name: Train compact detector
+        run: |
+          python - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          from ultralytics import YOLO
+
+          model=YOLO("yolov8n.pt")
+          result=model.train(
+              data="synthetic-symbols/data.yaml",
+              epochs=8,
+              imgsz=384,
+              batch=16,
+              device="cpu",
+              workers=2,
+              cache=False,
+              patience=4,
+              project="synthetic-runs",
+              name="objects",
+              exist_ok=True,
+              verbose=False,
+              plots=False,
+              seed=240922,
+          )
+          best=Path(result.save_dir)/"weights"/"best.pt"
+          trained=YOLO(str(best))
+          metrics=trained.val(
+              data="synthetic-symbols/data.yaml",
+              imgsz=384,
+              batch=16,
+              device="cpu",
+              workers=2,
+              verbose=False,
+              plots=False,
+          )
+          summary={
+              "map50":float(metrics.box.map50),
+              "map":float(metrics.box.map),
+              "names":trained.names,
+          }
+          Path("synthetic-runs/metrics.json").write_text(
+              json.dumps(summary,indent=2),
+              encoding="utf-8",
+          )
+          print("SYNTHETIC_METRICS",json.dumps(summary,sort_keys=True))
+
+          exported=trained.export(
+              format="onnx",
+              imgsz=640,
+              opset=12,
+              simplify=False,
+              dynamic=False,
+          )
+          target=Path("synthetic-model")
+          target.mkdir(exist_ok=True)
+          shutil.copy2(exported,target/"synthetic-objects.onnx")
+          classes=[str(trained.names[index]) for index in sorted(trained.names)]
+          (target/"classes.json").write_text(json.dumps(classes),encoding="utf-8")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-object-model-${{ github.sha }}
+          path: |
+            synthetic-model/
+            synthetic-runs/metrics.json
+          retention-days: 5
+
+  benchmark:
+    needs: train
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [4, 9, 13, 14]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+
+      - name: Install analyzer dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt pytest shapely
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: synthetic-object-model-${{ github.sha }}
+          path: synthetic-model-artifact
+
+      - name: Configure custom detector
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          classes=json.loads(Path("synthetic-model-artifact/synthetic-model/classes.json").read_text())
+          with Path(os.environ["GITHUB_ENV"]).open("a") as env:
+              env.write("SYMBOL_ONNX_MODEL="+str(Path("synthetic-model-artifact/synthetic-model/synthetic-objects.onnx").resolve())+"\n")
+              env.write("SYMBOL_ONNX_CLASSES="+json.dumps(classes,separators=(",",":"))+"\n")
+              env.write("SYMBOL_ONNX_RAW_MIN_CONFIDENCE=0.15\n")
+              env.write("SYMBOL_MIN_CONFIDENCE=0.25\n")
+              env.write("SYMBOL_SINK_MIN_CONFIDENCE=0.15\n")
+              env.write("OPENING_ONNX_MIN_CONFIDENCE=0.25\n")
+              env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
+          print("Synthetic classes:",classes)
+          PY
+
+      - name: Run AEC representative sheet
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p "../../benchmark-output/synthetic-${{ matrix.shard }}"
+          python -m app.aec_benchmark             --dataset ../../external/aec-geometric-bench/dataset             --output "../../benchmark-output/synthetic-${{ matrix.shard }}"             --offset "${{ matrix.shard }}"             --limit 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-object-sheet-${{ matrix.shard }}-${{ github.sha }}
+          path: |
+            benchmark-output/synthetic-${{ matrix.shard }}/*.json
+            benchmark-output/synthetic-${{ matrix.shard }}/_canonical/*.json
+            benchmark-output/synthetic-${{ matrix.shard }}/_timings/*.json
+          if-no-files-found: error
+          retention-days: 4
+
+  score:
+    if: always()
+    needs: benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/analyzer/requirements.txt shapely
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: synthetic-object-sheet-*-${{ github.sha }}
+          path: benchmark-output/synthetic/predictions
+          merge-multiple: true
+
+      - name: Score custom object detector
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from app.aec_benchmark import run_official_scorer
+
+          root=Path("../..")
+          pred=root/"benchmark-output/synthetic/predictions"
+          dataset=root/"external/aec-geometric-bench/dataset"
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          sheets=sorted(p.stem for p in pred.glob("sheet_*.json"))
+          if not sheets:
+              raise SystemExit("No custom detector predictions found")
+          code,output,report=run_official_scorer(
+              scorer,pred,dataset,sheet_names=sheets,include_per_sheet=True,
+          )
+          target=root/"benchmark-output/synthetic"
+          target.mkdir(exist_ok=True)
+          (target/"score.txt").write_text(output,encoding="utf-8")
+          if report is not None:
+              (target/"report.json").write_text(
+                  json.dumps(report,ensure_ascii=False,indent=2),
+                  encoding="utf-8",
+              )
+              with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+                  out.write("## Synthetic custom object detector\n\n")
+                  out.write("| Class | TP | FP | FN | F1 |\n")
+                  out.write("|---|---:|---:|---:|---:|\n")
+                  for cls in (
+                      "Single Swing Door","Double Swing Door","Window","Sink",
+                      "Toilet","Bathtub","Shower","Cooktops",
+                  ):
+                      item=report.get("classes",{}).get(cls,{})
+                      out.write(
+                          f"| {cls} | {item.get('tp',0)} | {item.get('fp',0)} | "
+                          f"{item.get('fn',0)} | {float(item.get('f1',0)):.3f} |\n"
+                      )
+                  out.write(
+                      f"\nObject micro F1: {float(report.get('objectMicro',{}).get('f1',0)):.3f}\n"
+                  )
+                  out.write(
+                      f"macroF1: {float(report.get('macroF1',0)):.3f}\n"
+                  )
+          print(output)
+          raise SystemExit(code)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synthetic-object-score-${{ github.sha }}
+          path: |
+            benchmark-output/synthetic/score.txt
+            benchmark-output/synthetic/report.json
+          if-no-files-found: warn
+          retention-days: 7
