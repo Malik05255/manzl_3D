@@ -18,7 +18,7 @@ from .openings import detect_doors,detect_windows,fuse_ai_opening_detections,nor
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
-from .symbols import extract_local_onnx_detections,extract_symbol_detections,normalize_symbol_response
+from .symbols import extract_local_onnx_detections,extract_symbol_detections,normalize_configured_symbols
 from .topology import classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,quarantine_dimension_aligned_walls,rasterize_wall_mask
 
@@ -99,17 +99,7 @@ def analyze_document_bytes_local(
     if onnx_model_configured:
         try:
             ai_detections=extract_local_onnx_detections(image)
-            min_confidence=float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78")
-            sink_min=float(os.getenv("SYMBOL_SINK_MIN_CONFIDENCE",".10") or ".10")
-            symbols=normalize_symbol_response(
-                ai_detections,
-                w,
-                h,
-                max(.50,min(.99,min_confidence)),
-                per_kind_min_confidence={
-                    "sink":max(.05,min(.99,sink_min)),
-                },
-            )
+            symbols=normalize_configured_symbols(ai_detections,w,h)
         except Exception:
             ai_detections=[]
             symbols=[]

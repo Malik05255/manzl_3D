@@ -209,6 +209,23 @@ def normalize_symbol_response(
 
 
 
+def normalize_configured_symbols(
+    payload:object,
+    width:int,
+    height:int,
+)->list[dict]:
+    """Apply the same production/benchmark symbol confidence policy."""
+    global_min=_env_confidence("SYMBOL_MIN_CONFIDENCE",.78,.50)
+    sink_min=_env_confidence("SYMBOL_SINK_MIN_CONFIDENCE",.10,.05)
+    return normalize_symbol_response(
+        payload,
+        width,
+        height,
+        global_min,
+        per_kind_min_confidence={"sink":sink_min},
+    )
+
+
 
 _ONNX_CACHE:dict[tuple[str,int],object]={}
 

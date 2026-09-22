@@ -18,7 +18,7 @@ from .openings import detect_doors,detect_windows,fuse_ai_opening_detections,nor
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
-from .symbols import extract_local_onnx_detections,extract_symbol_detections,normalize_symbol_response
+from .symbols import extract_local_onnx_detections,extract_symbol_detections,normalize_configured_symbols
 from .topology import canonicalize_plan,classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
 from .semantic import normalize_edit_semantics
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,quarantine_dimension_aligned_walls,rasterize_wall_mask
@@ -138,10 +138,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
         if os.getenv("SYMBOL_ONNX_MODEL","").strip():
             try:
                 detections=await asyncio.to_thread(extract_local_onnx_detections,image)
-                min_confidence=float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78")
-                symbols=normalize_symbol_response(
-                    detections,w,h,max(.50,min(.99,min_confidence)),
-                )
+                symbols=normalize_configured_symbols(detections,w,h)
                 return symbols,detections
             except Exception:
                 return [],[]
@@ -191,7 +188,12 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     ]
     scale,scale_confidence,scale_warnings=estimate_scale_with_diagnostics(dimensions,w,h)
     doors=detect_doors(image,topology_walls,scale)
-    windows=detect_windows(image,topology_walls,scale)
+    windows=detect_windows(
+        image,
+        topology_walls,
+        scale,
+        vector_lines=vector_lines if vector_lines else None,
+    )
     if ai_detections:
         doors,windows=fuse_ai_opening_detections(
             topology_walls,doors,windows,ai_detections,
