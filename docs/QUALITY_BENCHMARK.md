@@ -149,9 +149,12 @@ the official scoring input.
 ## Parallel AEC-15 execution
 
 The `Stages 2-5 Validation` workflow exports the licensed test ONNX model once,
-then runs AEC-Geometric-Bench-15 as five parallel shards of three sheets each.
-The shard artifacts are merged and scored once with the official scorer, so the
-aggregate and per-sheet metrics still represent the complete 15-sheet set.
+then runs AEC-Geometric-Bench-15 as fifteen isolated parallel shards, one sheet
+per job. This prevents one unusually expensive drawing from consuming the time
+budget of two neighboring sheets and makes runtime failures attributable to one
+specific drawing. The fifteen shard artifacts are merged and scored once with
+the official scorer, so the aggregate and per-sheet metrics still represent the
+complete 15-sheet set.
 
 The analyzer also prefers embedded PDF text when it contains enough useful room
 or dimension labels. In that case Tesseract is limited to numeric and rotated
