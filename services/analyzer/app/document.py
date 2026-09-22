@@ -340,11 +340,17 @@ def extract_pdf_vector_lines(data:bytes,page_number:int,render_scale:float=PDF_R
                     if length<24:
                         continue
                     if dx>=max(3.0,dy*8.0):
-                        y=(a["y"]+b["y"])/2
-                        a={"x":min(a["x"],b["x"]),"y":y}; b={"x":max(a["x"],b["x"]),"y":y}
+                        ax=float(a["x"]); ay=float(a["y"])
+                        bx=float(b["x"]); by=float(b["y"])
+                        y=(ay+by)/2
+                        x0,x1=sorted((ax,bx))
+                        a={"x":x0,"y":y}; b={"x":x1,"y":y}
                     elif dy>=max(3.0,dx*8.0):
-                        x=(a["x"]+b["x"])/2
-                        a={"x":x,"y":min(a["y"],b["y"])}; b={"x":x,"y":max(a["y"],b["y"])}
+                        ax=float(a["x"]); ay=float(a["y"])
+                        bx=float(b["x"]); by=float(b["y"])
+                        x=(ax+bx)/2
+                        y0,y1=sorted((ay,by))
+                        a={"x":x,"y":y0}; b={"x":x,"y":y1}
                     # Keep genuine diagonal CAD strokes too. Wall extraction decides
                     # later whether a line is wall evidence, so dimension/guide lines
                     # are not promoted here merely because they are diagonal.
