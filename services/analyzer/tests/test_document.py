@@ -97,6 +97,35 @@ def test_pdf_native_vector_lines_are_scaled_to_render_coordinates():
     assert horizontal["widthPx"]>=5*PDF_RENDER_SCALE
 
 
+def test_pdf_native_vector_lines_preserve_reversed_axis_directions():
+    document=fitz.open()
+    page=document.new_page(width=400,height=300)
+    shape=page.new_shape()
+    # PDF drawing order is not guaranteed to be left-to-right/top-to-bottom.
+    shape.draw_line((350,80),(50,80))
+    shape.draw_line((200,260),(200,40))
+    shape.finish(width=4,color=(0,0,0))
+    shape.commit()
+    data=document.tobytes()
+    document.close()
+
+    lines=extract_pdf_vector_lines(data,1)
+    horizontal=next(
+        item for item in lines
+        if abs(item["a"]["y"]-item["b"]["y"])<1
+        and item["b"]["x"]-item["a"]["x"]>500
+    )
+    vertical=next(
+        item for item in lines
+        if abs(item["a"]["x"]-item["b"]["x"])<1
+        and item["b"]["y"]-item["a"]["y"]>350
+    )
+    assert horizontal["a"]["x"]==50*PDF_RENDER_SCALE
+    assert horizontal["b"]["x"]==350*PDF_RENDER_SCALE
+    assert vertical["a"]["y"]==40*PDF_RENDER_SCALE
+    assert vertical["b"]["y"]==260*PDF_RENDER_SCALE
+
+
 def test_pdf_can_render_explicit_selected_page():
     document=fitz.open()
     first=document.new_page(width=300,height=300)
