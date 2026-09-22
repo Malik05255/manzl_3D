@@ -18,7 +18,7 @@ from .openings import detect_doors,detect_windows,fuse_ai_opening_detections,nor
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
-from .symbols import extract_local_onnx_detections,extract_symbol_detections,normalize_configured_symbols
+from .symbols import extract_local_onnx_detections,extract_remote_symbols,extract_symbol_detections,merge_symbol_sets,normalize_configured_symbols,symbol_detector_mode
 from .topology import canonicalize_plan,classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
 from .semantic import normalize_edit_semantics
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,quarantine_dimension_aligned_walls,rasterize_wall_mask
@@ -139,8 +139,16 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
         if os.getenv("SYMBOL_ONNX_MODEL","").strip():
             try:
                 detections=await asyncio.to_thread(extract_local_onnx_detections,image)
-                symbols=normalize_configured_symbols(detections,w,h)
-                return symbols,detections
+                local_symbols=normalize_configured_symbols(detections,w,h)
+                mode=symbol_detector_mode()
+                if mode=="local" or not os.getenv("SYMBOL_DETECTOR_URL","").strip():
+                    return local_symbols,detections
+                remote_symbols=await extract_remote_symbols(image)
+                if mode=="remote":
+                    return remote_symbols,detections
+                if mode=="augment":
+                    return merge_symbol_sets(local_symbols,remote_symbols),detections
+                return local_symbols or remote_symbols,detections
             except Exception:
                 return [],[]
         try:
