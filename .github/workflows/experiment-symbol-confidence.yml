@@ -5,6 +5,7 @@ on:
     branches: [exp/symbol-confidence]
     paths:
       - services/analyzer/app/symbols.py
+      - services/analyzer/app/local_analysis.py
       - services/analyzer/tests/test_symbols.py
       - .github/workflows/experiment-symbol-confidence.yml
   workflow_dispatch:
