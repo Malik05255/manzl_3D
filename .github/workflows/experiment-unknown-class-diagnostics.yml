@@ -1,0 +1,178 @@
+name: Unknown FloorCAD Class Diagnostics
+
+on:
+  push:
+    branches: [exp/unknown-class-diagnostics]
+    paths:
+      - .github/workflows/experiment-unknown-class-diagnostics.yml
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt
+          pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
+      - name: Export FloorCAD ONNX
+        run: |
+          python - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          from huggingface_hub import hf_hub_download
+          from ultralytics import YOLO
+
+          source=hf_hub_download(
+              "mudasir13cs/floorcad-yolov8n-detect",
+              "floorcad-yolov8n-detect.pt",
+          )
+          model=YOLO(source)
+          exported=model.export(format="onnx",imgsz=640,opset=12,simplify=False,dynamic=False)
+          target=Path("benchmark-model")
+          target.mkdir(exist_ok=True)
+          shutil.copy2(exported,target/"floorcad.onnx")
+          classes=[str(model.names[index]) for index in sorted(model.names)]
+          (target/"classes.json").write_text(json.dumps(classes),encoding="utf-8")
+          PY
+      - name: Match unknown classes against GT
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+          SYMBOL_ONNX_MODEL: ../../benchmark-model/floorcad.onnx
+          SYMBOL_ONNX_RAW_MIN_CONFIDENCE: "0.10"
+          PDF_NATIVE_TEXT_FASTPATH: "1"
+        run: |
+          python - <<'PY'
+          import json, os, xml.etree.ElementTree as ET
+          from collections import defaultdict
+          from pathlib import Path
+
+          from app.document import decode_document_with_page
+          from app.symbols import extract_local_onnx_detections
+
+          root=Path("../..")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          classes=json.loads((root/"benchmark-model/classes.json").read_text())
+          os.environ["SYMBOL_ONNX_CLASSES"]=json.dumps(classes,separators=(",",":"))
+
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          xml=ET.parse(dataset/"annotations_15_scoring_ready.xml").getroot()
+          images={Path(str(node.get("name"))).stem:node for node in xml.findall("image")}
+
+          unknown={"class 31","class 32","class 34","class 35"}
+          targets=[
+              "Sink","Toilet","Bathtub","Shower","Cooktops",
+              "Single Swing Door","Double Swing Door","Window",
+          ]
+
+          def norm(v):
+              return " ".join(str(v or "").strip().lower().replace("_"," ").replace("-"," ").split())
+
+          def iou(a,b):
+              ax1,ay1,ax2,ay2=a; bx1,by1,bx2,by2=b
+              iw=max(0.0,min(ax2,bx2)-max(ax1,bx1))
+              ih=max(0.0,min(ay2,by2)-max(ay1,by1))
+              inter=iw*ih
+              if inter<=0: return 0.0
+              aa=max(0.0,ax2-ax1)*max(0.0,ay2-ay1)
+              bb=max(0.0,bx2-bx1)*max(0.0,by2-by1)
+              return inter/max(1e-9,aa+bb-inter)
+
+          result={"classes":{},"perSheet":{}}
+          global_rows=defaultdict(list)
+
+          for item in manifest["sheets"]:
+              sheet=str(item["sheet"])
+              data=(dataset/str(item["pdf"])).read_bytes()
+              image,_=decode_document_with_page(data,"application/pdf")
+              h,w=image.shape[:2]
+              sx=w/float(item["width"]); sy=h/float(item["height"])
+
+              gt=defaultdict(list)
+              for box in images[sheet].findall("box"):
+                  label=str(box.get("label") or "")
+                  if label not in targets: continue
+                  gt[label].append([
+                      float(box.get("xtl"))*sx,float(box.get("ytl"))*sy,
+                      float(box.get("xbr"))*sx,float(box.get("ybr"))*sy,
+                  ])
+
+              raw=extract_local_onnx_detections(image)
+              rows=[]
+              for det in raw:
+                  label=norm(det.get("class"))
+                  if label not in unknown: continue
+                  box=list(map(float,det["bbox"]))
+                  best_label=None; best_iou=0.0
+                  for target in targets:
+                      score=max((iou(box,truth) for truth in gt[target]),default=0.0)
+                      if score>best_iou:
+                          best_iou=score; best_label=target
+                  row={
+                      "sheet":sheet,
+                      "unknownClass":label,
+                      "confidence":float(det.get("confidence",0.0)),
+                      "bestTarget":best_label,
+                      "bestIoU":round(best_iou,4),
+                      "bbox":box,
+                  }
+                  rows.append(row)
+                  global_rows[label].append(row)
+              result["perSheet"][sheet]=rows
+              print(sheet,"unknown",len(rows))
+
+          for label,rows in global_rows.items():
+              summary={}
+              for threshold in (.10,.20,.30,.40,.50):
+                  subset=[r for r in rows if r["confidence"]>=threshold]
+                  counts={}
+                  for target in targets:
+                      counts[target]={
+                          "iou50":sum(1 for r in subset if r["bestTarget"]==target and r["bestIoU"]>=.50),
+                          "iou30":sum(1 for r in subset if r["bestTarget"]==target and r["bestIoU"]>=.30),
+                          "iou10":sum(1 for r in subset if r["bestTarget"]==target and r["bestIoU"]>=.10),
+                      }
+                  summary[f"{threshold:.2f}"]={"count":len(subset),"targets":counts}
+              result["classes"][label]=summary
+
+          target=root/"benchmark-output/unknown-class-diagnostics.json"
+          target.parent.mkdir(exist_ok=True)
+          target.write_text(json.dumps(result,indent=2),encoding="utf-8")
+
+          for label,summary in result["classes"].items():
+              print("UNKNOWN",label,json.dumps(summary,sort_keys=True))
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Unknown FloorCAD classes vs AEC GT\n\n")
+              out.write("| Unknown | conf>=.10 | Sink IoU50 | Toilet | Bathtub | Shower | Cooktops | Single Door | Double Door | Window |\n")
+              out.write("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+              for label,summary in result["classes"].items():
+                  row=summary["0.10"]
+                  t=row["targets"]
+                  out.write(
+                      f"| {label} | {row['count']} | {t['Sink']['iou50']} | {t['Toilet']['iou50']} | "
+                      f"{t['Bathtub']['iou50']} | {t['Shower']['iou50']} | {t['Cooktops']['iou50']} | "
+                      f"{t['Single Swing Door']['iou50']} | {t['Double Swing Door']['iou50']} | {t['Window']['iou50']} |\n"
+                  )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unknown-class-diagnostics-${{ github.sha }}
+          path: benchmark-output/unknown-class-diagnostics.json
+          retention-days: 5
