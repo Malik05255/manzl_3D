@@ -521,3 +521,20 @@ def test_real_swing_arc_still_blocks_window_even_with_parallel_strokes():
         meters_per_pixel=.02,
     )
     assert windows==[]
+
+
+
+def test_two_arcs_without_two_visible_leaves_stay_single_swing():
+    image=np.full((320,420,3),255,dtype=np.uint8)
+    cv2.line(image,(30,160),(120,160),(0,0,0),5)
+    cv2.line(image,(260,160),(390,160),(0,0,0),5)
+    cv2.ellipse(image,(120,160),(92,92),0,270,360,(0,0,0),3)
+    cv2.ellipse(image,(260,160),(92,92),0,180,270,(0,0,0),3)
+
+    doors=detect_doors(
+        image,
+        [wall("left",30,160,120,160),wall("right",260,160,390,160)],
+        meters_per_pixel=.02,
+    )
+    assert len(doors)==1
+    assert doors[0]["doorSubtype"]=="single_swing"
