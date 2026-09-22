@@ -276,3 +276,29 @@ def test_quarantined_wall_candidate_is_not_emitted_to_aec():
     assert len(prediction["walls"])==1
     ys={round(point[1]) for point in prediction["walls"][0]}
     assert min(ys)<120<max(ys) or 120 in ys
+
+
+
+def test_elevator_symbol_maps_to_aec_area():
+    source={
+        "widthPx":500,
+        "heightPx":400,
+        "walls":[],
+        "rooms":[],
+        "doors":[],
+        "windows":[],
+        "symbols":[{
+            "id":"elevator-1","kind":"elevator",
+            "a":{"x":120.0,"y":100.0},
+            "b":{"x":220.0,"y":260.0},
+            "confidence":.94,
+        }],
+    }
+    prediction=plan_to_aec_prediction(source,sheet="sheet",width=1000,height=800)
+    assert prediction["objects"]==[]
+    assert prediction["areas"]==[[
+        [240.0,200.0],
+        [440.0,200.0],
+        [440.0,520.0],
+        [240.0,520.0],
+    ]]
