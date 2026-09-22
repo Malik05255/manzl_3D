@@ -1,0 +1,178 @@
+name: AEC Object Envelope Diagnostic
+
+on:
+  push:
+    branches: [exp/object-envelope-diagnostics]
+    paths:
+      - .github/workflows/experiment-object-envelope.yml
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely
+          pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
+      - name: Export FloorCAD ONNX
+        run: |
+          python - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          from huggingface_hub import hf_hub_download
+          from ultralytics import YOLO
+          source=hf_hub_download(
+              "mudasir13cs/floorcad-yolov8n-detect",
+              "floorcad-yolov8n-detect.pt",
+          )
+          model=YOLO(source)
+          exported=model.export(format="onnx",imgsz=640,opset=12,simplify=False,dynamic=False)
+          target=Path("benchmark-model")
+          target.mkdir(exist_ok=True)
+          shutil.copy2(exported,target/"floorcad.onnx")
+          classes=[str(model.names[index]) for index in sorted(model.names)]
+          (target/"classes.json").write_text(json.dumps(classes),encoding="utf-8")
+          PY
+      - name: Configure detector
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          classes=json.loads(Path("benchmark-model/classes.json").read_text())
+          with Path(os.environ["GITHUB_ENV"]).open("a") as env:
+              env.write("SYMBOL_ONNX_MODEL="+str(Path("benchmark-model/floorcad.onnx").resolve())+"\n")
+              env.write("SYMBOL_ONNX_CLASSES="+json.dumps(classes,separators=(",",":"))+"\n")
+              env.write("SYMBOL_MIN_CONFIDENCE=0.55\n")
+              env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
+          PY
+      - name: Analyze sheet 05 once
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p ../../benchmark-output/object-envelope/base
+          python -m app.aec_benchmark \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --output ../../benchmark-output/object-envelope/base \
+            --offset 4 \
+            --limit 1
+      - name: Score bbox envelope variants
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import copy, json, os
+          from pathlib import Path
+          from app.aec_benchmark import (
+              _door_bbox,_opening_bbox,_scale_point,_wall_polygon,
+              run_official_scorer,
+          )
+
+          root=Path("../..")
+          base_dir=root/"benchmark-output/object-envelope/base"
+          plan=json.loads((base_dir/"_canonical/sheet_05.json").read_text(encoding="utf-8"))
+          manifest=json.loads((root/"external/aec-geometric-bench/dataset/manifest.json").read_text(encoding="utf-8"))
+          item=next(x for x in manifest["sheets"] if x["sheet"]=="sheet_05")
+          width,height=int(item["width"]),int(item["height"])
+          source_w=max(1.0,float(plan["widthPx"]))
+          source_h=max(1.0,float(plan["heightPx"]))
+          sx=width/source_w
+          sy=height/source_h
+          thicknesses=sorted(max(1.0,float(w.get("thicknessPx",4.0))) for w in plan.get("walls",[]))
+          median=thicknesses[len(thicknesses)//2] if thicknesses else 4.0
+
+          base_prediction=json.loads((base_dir/"sheet_05.json").read_text(encoding="utf-8"))
+          symbol_objects=[
+              obj for obj in base_prediction.get("objects",[])
+              if obj.get("class") not in {"Single Swing Door","Double Swing Door","Window"}
+          ]
+
+          dataset=root/"external/aec-geometric-bench/dataset"
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          variants=[]
+          for factor in (1.25,2.0,3.0,4.0,6.0):
+              for door_mode in ("swing","line"):
+                  padding=max(3.0,median*factor)
+                  objects=list(symbol_objects)
+                  for door in plan.get("doors",[]):
+                      subtype=door.get("doorSubtype")
+                      if subtype=="sliding":
+                          continue
+                      cls="Double Swing Door" if subtype=="double_swing" else "Single Swing Door"
+                      bbox=(
+                          _door_bbox(door,sx,sy,padding)
+                          if door_mode=="swing"
+                          else _opening_bbox(door,sx,sy,padding)
+                      )
+                      objects.append({"class":cls,"bbox":bbox})
+                  for window in plan.get("windows",[]):
+                      objects.append({
+                          "class":"Window",
+                          "bbox":_opening_bbox(window,sx,sy,padding),
+                      })
+
+                  out_dir=root/f"benchmark-output/object-envelope/f{factor:g}-{door_mode}"
+                  out_dir.mkdir(parents=True,exist_ok=True)
+                  pred=copy.deepcopy(base_prediction)
+                  pred["objects"]=objects
+                  (out_dir/"sheet_05.json").write_text(
+                      json.dumps(pred,ensure_ascii=False),encoding="utf-8"
+                  )
+                  code,output,report=run_official_scorer(
+                      scorer,out_dir,dataset,
+                      sheet_names=["sheet_05"],
+                      include_per_sheet=False,
+                  )
+                  if code!=0 or report is None:
+                      raise SystemExit(f"scorer failed for {factor}/{door_mode}: {output}")
+                  row={"factor":factor,"doorMode":door_mode}
+                  for cls in ("Single Swing Door","Double Swing Door","Window"):
+                      row[cls]=report.get("classes",{}).get(cls,{})
+                  variants.append(row)
+
+          target=root/"benchmark-output/object-envelope"
+          (target/"variants.json").write_text(
+              json.dumps(variants,ensure_ascii=False,indent=2),encoding="utf-8"
+          )
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a",encoding="utf-8") as out:
+              out.write("## AEC object envelope diagnostic — sheet_05\n\n")
+              out.write("| Padding× | Door mode | Single TP/FP/FN | Double TP/FP/FN | Window TP/FP/FN |\n")
+              out.write("|---:|---|---:|---:|---:|\n")
+              for row in variants:
+                  def cell(name):
+                      x=row[name]
+                      return f"{x.get('tp',0)}/{x.get('fp',0)}/{x.get('fn',0)}"
+                  out.write(
+                      f"| {row['factor']:.2f} | {row['doorMode']} | "
+                      f"{cell('Single Swing Door')} | {cell('Double Swing Door')} | "
+                      f"{cell('Window')} |\n"
+                  )
+          print(json.dumps(variants,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: object-envelope-diagnostic-${{ github.sha }}
+          path: |
+            benchmark-output/object-envelope/variants.json
+            benchmark-output/object-envelope/base/_canonical/sheet_05.json
+            benchmark-output/object-envelope/base/_timings/sheet_05.json
+          if-no-files-found: warn
+          retention-days: 7
