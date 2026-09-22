@@ -667,9 +667,38 @@ def _embedded_window_candidates(
             "confidence":round(confidence,3),
             "reviewed":False,
             "provenance":"opencv",
+            "_embeddedCandidate":True,
         })
 
     return candidates
+
+
+def filter_embedded_windows_by_host_role(
+    walls:list[dict],
+    windows:list[dict],
+)->list[dict]:
+    """Reject embedded-window candidates hosted by known interior walls.
+
+    The embedded detector intentionally has high recall and runs before room
+    topology is available. Once wall roles are classified, interior-hosted
+    embedded candidates are strong false-positive evidence. Gap/AI windows are
+    preserved unchanged.
+    """
+    roles={
+        str(wall.get("id","")):str(wall.get("role") or "unknown")
+        for wall in walls
+    }
+    kept=[]
+    for window in windows:
+        item=dict(window)
+        embedded=bool(item.pop("_embeddedCandidate",False))
+        wall_id=str(item.get("wallId") or "")
+        if embedded and roles.get(wall_id)=="interior":
+            continue
+        kept.append(item)
+    for index,item in enumerate(kept,start=1):
+        item["id"]=f"window-{index}"
+    return kept
 
 
 def detect_windows(
