@@ -1,0 +1,176 @@
+name: MIT Floorplan Detector Experiment
+
+on:
+  push:
+    branches: [exp/mit-floorplan-detector]
+    paths:
+      - .github/workflows/experiment-mit-floorplan-detector.yml
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        imgsz: [640, 1280]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/checkout@v4
+        with:
+          repository: sanatladkat/floor-plan-object-detection
+          ref: main
+          path: external/mit-floorplan-detector
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely
+          pip install "ultralytics==8.3.249"
+
+      - name: Run detector and threshold sweep
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+          TEST_IMGSZ: ${{ matrix.imgsz }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from ultralytics import YOLO
+          from app.document import decode_document_with_page
+          from app.aec_benchmark import run_official_scorer
+
+          root=Path("../..")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          model_path=root/"external/mit-floorplan-detector/best.pt"
+          model=YOLO(str(model_path))
+          print("MODEL_NAMES",model.names)
+
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          thresholds=[.10,.20,.30,.40,.50,.60]
+          imgsz=int(os.environ["TEST_IMGSZ"])
+          raw_by_sheet={}
+
+          for item in manifest["sheets"]:
+              sheet=str(item["sheet"])
+              data=(dataset/str(item["pdf"])).read_bytes()
+              image,_=decode_document_with_page(data,"application/pdf")
+              h,w=image.shape[:2]
+              result=model.predict(
+                  source=image,
+                  conf=.05,
+                  iou=.45,
+                  imgsz=imgsz,
+                  verbose=False,
+                  device="cpu",
+              )[0]
+              rows=[]
+              for box in result.boxes:
+                  cls=int(box.cls.item())
+                  name=str(model.names[cls])
+                  conf=float(box.conf.item())
+                  x1,y1,x2,y2=map(float,box.xyxy[0].tolist())
+                  rows.append({
+                      "class":name,
+                      "confidence":conf,
+                      "bbox":[x1,y1,x2,y2],
+                  })
+              raw_by_sheet[sheet]={
+                  "sourceSize":[w,h],
+                  "targetSize":[int(item["width"]),int(item["height"])],
+                  "detections":rows,
+              }
+              print(sheet,"detections",len(rows))
+
+          def norm(value):
+              return " ".join(str(value or "").strip().lower().replace("_"," ").replace("-"," ").split())
+
+          class_map={
+              "door":"Single Swing Door",
+              "single door":"Single Swing Door",
+              "window":"Window",
+          }
+
+          summary=[]
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          sheets=sorted(raw_by_sheet)
+          for threshold in thresholds:
+              target=root/f"benchmark-output/mit-detector/{imgsz}/{threshold:.2f}"
+              target.mkdir(parents=True,exist_ok=True)
+              for sheet,item in raw_by_sheet.items():
+                  sw,sh=item["sourceSize"]
+                  tw,th=item["targetSize"]
+                  sx=tw/max(1.0,float(sw)); sy=th/max(1.0,float(sh))
+                  objects=[]
+                  for det in item["detections"]:
+                      if det["confidence"]<threshold:
+                          continue
+                      mapped=class_map.get(norm(det["class"]))
+                      if not mapped:
+                          continue
+                      x1,y1,x2,y2=det["bbox"]
+                      objects.append({
+                          "class":mapped,
+                          "bbox":[x1*sx,y1*sy,x2*sx,y2*sy],
+                      })
+                  payload={"sheet":sheet,"objects":objects,"areas":[],"walls":[]}
+                  (target/f"{sheet}.json").write_text(
+                      json.dumps(payload,separators=(",",":")),encoding="utf-8"
+                  )
+
+              code,output,report=run_official_scorer(
+                  scorer,target,dataset,sheet_names=sheets,include_per_sheet=True,
+              )
+              if code!=0 or report is None:
+                  print(output)
+                  raise SystemExit(code or 1)
+              single=report.get("classes",{}).get("Single Swing Door",{})
+              window=report.get("classes",{}).get("Window",{})
+              row={
+                  "imgsz":imgsz,
+                  "threshold":threshold,
+                  "single":single,
+                  "window":window,
+                  "objectMicro":report.get("objectMicro",{}),
+              }
+              summary.append(row)
+              print("RESULT",json.dumps(row,sort_keys=True))
+
+          out=root/f"benchmark-output/mit-detector/summary-{imgsz}.json"
+          out.parent.mkdir(parents=True,exist_ok=True)
+          out.write_text(json.dumps(summary,indent=2),encoding="utf-8")
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write(f"## MIT floorplan detector — imgsz {imgsz}\n\n")
+              out.write("| Threshold | Door TP | FP | FN | F1 | Window TP | FP | FN | F1 |\n")
+              out.write("|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+              for row in summary:
+                  d=row["single"]; w=row["window"]
+                  out.write(
+                      f"| {row['threshold']:.2f} | {d.get('tp',0)} | {d.get('fp',0)} | "
+                      f"{d.get('fn',0)} | {float(d.get('f1',0)):.3f} | "
+                      f"{w.get('tp',0)} | {w.get('fp',0)} | {w.get('fn',0)} | "
+                      f"{float(w.get('f1',0)):.3f} |\n"
+                  )
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mit-floorplan-detector-${{ matrix.imgsz }}-${{ github.sha }}
+          path: benchmark-output/mit-detector/summary-${{ matrix.imgsz }}.json
+          retention-days: 5
