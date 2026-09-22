@@ -354,3 +354,55 @@ def test_run_dataset_honors_manifest_offset(tmp_path,monkeypatch):
     assert timing["counts"]=={
         "walls":0,"rooms":0,"doors":0,"windows":0,"symbols":0,"dimensions":0,
     }
+
+
+def test_pdf_vector_window_uses_native_depth_for_aec_bbox():
+    source={
+        "widthPx":500,
+        "heightPx":400,
+        "walls":[],
+        "rooms":[],
+        "doors":[],
+        "windows":[{
+            "id":"w1",
+            "kind":"window",
+            "provenance":"pdf-vector",
+            "windowDepthPx":20.0,
+            "a":{"x":100.0,"y":200.0},
+            "b":{"x":200.0,"y":200.0},
+            "confidence":.9,
+        }],
+        "symbols":[],
+    }
+    prediction=plan_to_aec_prediction(source,sheet="sheet",width=500,height=400)
+    x1,y1,x2,y2=prediction["objects"][0]["bbox"]
+    assert prediction["objects"][0]["class"]=="Window"
+    assert 98.0<=x1<100.0
+    assert 200.0<x2<=202.0
+    assert 189.0<=y1<=191.0
+    assert 209.0<=y2<=211.0
+
+
+def test_raster_window_keeps_generic_padding():
+    source={
+        "widthPx":500,
+        "heightPx":400,
+        "walls":[],
+        "rooms":[],
+        "doors":[],
+        "windows":[{
+            "id":"w1",
+            "kind":"window",
+            "provenance":"opencv",
+            "a":{"x":100.0,"y":200.0},
+            "b":{"x":200.0,"y":200.0},
+            "confidence":.9,
+        }],
+        "symbols":[],
+    }
+    prediction=plan_to_aec_prediction(source,sheet="sheet",width=500,height=400)
+    x1,y1,x2,y2=prediction["objects"][0]["bbox"]
+    assert x1==95.0
+    assert y1==195.0
+    assert x2==205.0
+    assert y2==205.0
