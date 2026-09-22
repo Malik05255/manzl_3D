@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import math
 import os
@@ -537,13 +538,138 @@ def extract_local_onnx_symbols(image:np.ndarray)->list[dict]:
     )
 
 
+def _normalize_roboflow_fixture_response(
+    payload:object,
+    width:int,
+    height:int,
+    min_confidence:float,
+)->list[dict]:
+    if not isinstance(payload,dict):
+        return []
+    predictions=payload.get("predictions",[])
+    if not isinstance(predictions,list):
+        return []
+
+    converted=[]
+    for item in predictions:
+        if not isinstance(item,dict):
+            continue
+        try:
+            cx=float(item["x"])
+            cy=float(item["y"])
+            box_width=float(item["width"])
+            box_height=float(item["height"])
+        except (KeyError,TypeError,ValueError):
+            continue
+        converted.append({
+            "class":item.get("class",item.get("class_name",item.get("label"))),
+            "bbox":[cx,cy,box_width,box_height],
+            "bbox_format":"cxcywh",
+            "confidence":item.get("confidence",item.get("score",0.0)),
+        })
+    return normalize_symbol_response(
+        converted,width,height,min_confidence,
+    )
+
+
+async def extract_roboflow_fixture_symbols(
+    image:np.ndarray,
+)->list[dict]|None:
+    """Use an optional Roboflow fixture model without exposing its API key.
+
+    Returns None when the provider is not configured or the request fails,
+    allowing the local detector to remain the automatic fallback.
+    """
+    api_key=os.getenv("ROBOFLOW_API_KEY","").strip()
+    model_id=os.getenv(
+        "ROBOFLOW_FIXTURE_MODEL_ID",
+        "floorplan-details-fork-2uqql/1",
+    ).strip()
+    if not api_key or not model_id:
+        return None
+
+    base_url=os.getenv(
+        "ROBOFLOW_API_URL",
+        "https://serverless.roboflow.com",
+    ).strip().rstrip("/")
+    try:
+        min_confidence=float(
+            os.getenv("ROBOFLOW_FIXTURE_MIN_CONFIDENCE",".35") or ".35"
+        )
+    except ValueError:
+        min_confidence=.35
+    min_confidence=max(.10,min(.95,min_confidence))
+
+    ok,encoded=cv2.imencode(".png",image)
+    if not ok:
+        return None
+    body=base64.b64encode(encoded.tobytes()).decode("ascii")
+    timeout=float(os.getenv("ROBOFLOW_TIMEOUT_SECONDS","45") or "45")
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=max(5.0,min(120.0,timeout))
+        ) as client:
+            response=await client.post(
+                f"{base_url}/{model_id}",
+                params={"api_key":api_key},
+                headers={"content-type":"application/x-www-form-urlencoded"},
+                content=body,
+            )
+            response.raise_for_status()
+            payload=response.json()
+    except Exception:
+        return None
+
+    h,w=image.shape[:2]
+    return _normalize_roboflow_fixture_response(
+        payload,w,h,min_confidence,
+    )
+
+
+def _merge_symbol_results(*groups:list[dict])->list[dict]:
+    accepted=[]
+    for item in sorted(
+        [item for group in groups for item in group],
+        key=lambda value:float(value.get("confidence",0.0)),
+        reverse=True,
+    ):
+        if any(
+            existing.get("kind")==item.get("kind")
+            and _iou(existing,item)>=.55
+            for existing in accepted
+        ):
+            continue
+        if any(
+            existing.get("kind")!=item.get("kind")
+            and _iou(existing,item)>=.78
+            for existing in accepted
+        ):
+            continue
+        accepted.append(dict(item))
+    for index,item in enumerate(accepted,start=1):
+        item["id"]=f"symbol-{index}"
+    return accepted
+
+
 async def extract_symbol_detections(image:np.ndarray)->list[dict]:
-    # Prefer an in-process ONNX model when configured. This removes network
-    # latency and keeps plan images inside the Analyzer boundary.
+    # The in-process ONNX path is always available as the privacy-preserving
+    # fallback. When Roboflow is configured, use it for fixture classes while
+    # retaining local stairs/elevator detections that the fixture model does
+    # not cover.
     try:
         local=extract_local_onnx_symbols(image)
     except Exception:
         local=[]
+
+    roboflow=await extract_roboflow_fixture_symbols(image)
+    if roboflow is not None:
+        vertical=[
+            item for item in local
+            if item.get("kind") in {"stairs","elevator"}
+        ]
+        return _merge_symbol_results(roboflow,vertical)
+
     if local:
         return local
 
