@@ -208,6 +208,10 @@ def _env_confidence(name:str,default:float,minimum:float=.10)->float:
     return max(minimum,min(.99,value))
 
 
+def _symbol_min_confidence(default:float=.78)->float:
+    return _env_confidence("SYMBOL_MIN_CONFIDENCE",default,.30)
+
+
 def _local_class_names()->list[str]:
     raw=os.getenv("SYMBOL_ONNX_CLASSES","").strip()
     if not raw:
@@ -529,8 +533,7 @@ def extract_local_onnx_detections(image:np.ndarray)->list[dict]:
 
 def extract_local_onnx_symbols(image:np.ndarray)->list[dict]:
     h,w=image.shape[:2]
-    confidence=float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78")
-    confidence=max(.50,min(.99,confidence))
+    confidence=_symbol_min_confidence(.78)
     return normalize_symbol_response(
         extract_local_onnx_detections(image),
         w,h,confidence,
@@ -551,11 +554,7 @@ async def extract_symbol_detections(image:np.ndarray)->list[dict]:
     if not url:
         return []
     token=os.getenv("SYMBOL_DETECTOR_TOKEN","").strip()
-    try:
-        min_confidence=float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78")
-    except ValueError:
-        min_confidence=.78
-    min_confidence=max(.50,min(.99,min_confidence))
+    min_confidence=_symbol_min_confidence(.78)
 
     ok,encoded=cv2.imencode(".png",image)
     if not ok:
