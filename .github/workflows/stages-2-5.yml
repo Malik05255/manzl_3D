@@ -104,7 +104,11 @@ jobs:
   benchmark-shard:
     needs: prepare-model
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    # sheet_15 requires ~23 minutes on the hosted CPU runner and sheet_10
+    # exceeded the previous 35-minute cap. Keep per-sheet isolation, but allow
+    # enough headroom to produce a complete AEC-15 score while profiling work
+    # targets the underlying bottleneck.
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       max-parallel: 15
