@@ -110,3 +110,27 @@ def test_common_architectural_room_vocabulary_is_classified():
         "مخزن","مكتب","غرفة ملابس","سفرة",
     ]:
         assert classify_text(text)=="room_name"
+
+
+
+def test_native_pdf_text_fastpath_requires_useful_text():
+    useful=[
+        {
+            "text":f"NOTE {index}",
+            "kind":"unknown",
+            "center":{"x":float(index),"y":10.0},
+            "confidence":.99,
+        }
+        for index in range(24)
+    ]
+    useful[0]["text"]="BEDROOM"; useful[0]["kind"]="room_name"
+    useful[1]["text"]="KITCHEN"; useful[1]["kind"]="room_name"
+    assert native_pdf_text_is_sufficient(useful)
+
+    noisy=[dict(item) for item in useful]
+    noisy[0]["kind"]="unknown"
+    noisy[1]["kind"]="unknown"
+    assert not native_pdf_text_is_sufficient(noisy)
+
+    sparse=useful[:10]
+    assert not native_pdf_text_is_sufficient(sparse)
