@@ -439,13 +439,26 @@ def _door_subtype_from_evidence(
     return "double_swing" if {"a","b"}.issubset(leaf_hinges) else "single_swing"
 
 
-def detect_doors(
+def _detect_gap_openings(
     image:np.ndarray,
     walls:list[dict],
     meters_per_pixel:float|None,
-)->list[dict]:
-    min_gap,max_gap,axis_tol=_door_gap_limits(image,meters_per_pixel)
-    candidates=[]
+    *,
+    want_doors:bool,
+    want_windows:bool,
+)->tuple[list[dict],list[dict]]:
+    """Detect door/window gap evidence in one wall-pair pass.
+
+    The legacy path scanned every wall pair independently for doors and then
+    again for windows, repeating expensive leaf/arc Hough work on overlapping
+    gap ranges. This preserves the existing acceptance rules while sharing that
+    evidence whenever both opening types are requested.
+    """
+    door_min,door_max,door_axis_tol=_door_gap_limits(image,meters_per_pixel)
+    window_min,window_max,window_axis_tol=_window_gap_limits(image,meters_per_pixel)
+    axis_tol=max(door_axis_tol,window_axis_tol)
+    door_candidates=[]
+    window_candidates=[]
 
     for index,left in enumerate(walls):
         length,ux,uy,_,_=_segment_geometry(left)
@@ -457,52 +470,146 @@ def detect_doors(
             if gap_data is None:
                 continue
             first,second,fs,fe,ss,se,gap,offset=gap_data
-            if gap<min_gap or gap>max_gap:
+            in_door_range=want_doors and door_min<=gap<=door_max
+            in_window_range=want_windows and window_min<=gap<=window_max
+            if not in_door_range and not in_window_range:
                 continue
+
             a=_point_from_frame(fe,offset,ux,uy)
             b=_point_from_frame(ss,offset,ux,uy)
 
-            leaf_evidence,leaf_hinges,leaf_side,leaf_depth=_door_leaf_evidence_details(image,a,b,gap,wall_angle)
-            arc_evidence,arc_hinges,arc_side,arc_depth=_door_arc_evidence_details(image,a,b,gap)
-            if leaf_evidence<1 and arc_evidence<1:
-                continue
+            # Leaf evidence is needed by both classifiers. Compute the detailed
+            # form once and reuse its count for the window rules.
+            (
+                leaf_evidence,leaf_hinges,leaf_side,leaf_depth,
+            )=_door_leaf_evidence_details(image,a,b,gap,wall_angle)
 
-            evidence=leaf_evidence+arc_evidence
-            # A true double-swing should show two independent leaves or two
-            # independent hinge-centred arcs. Mixing one leaf on one side with
-            # an unrelated arc on the other side caused excessive double-door
-            # classifications on real AEC sheets.
-            door_subtype=_door_subtype_from_evidence(leaf_hinges,arc_hinges)
-            swing_side=leaf_side if leaf_side!="unknown" else arc_side
-            swing_depth=max(leaf_depth,arc_depth)
-            confidence=min(
-                0.95,
-                0.69+0.065*leaf_evidence+0.035*arc_evidence+(0.05 if meters_per_pixel else 0.0),
-            )
-            if confidence<0.76:
-                continue
+            arc_evidence=0
+            arc_hinges:set[str]=set()
+            arc_side="unknown"
+            arc_depth=0.0
+            arc_computed=False
 
-            first_len=abs(fe-fs)
-            second_len=abs(se-ss)
-            wall_id=first["id"] if first_len>=second_len else second["id"]
-            candidates.append({
-                "id":f"door-candidate-{len(candidates)+1}",
-                "kind":"door",
-                "doorSubtype":door_subtype,
-                "doorSwingSide":swing_side,
-                "doorSwingDepthPx":round(swing_depth,2) if swing_depth>0 else None,
-                "wallId":wall_id,
-                "a":a,
-                "b":b,
-                "confidence":round(confidence,3),
-                "reviewed":False,
-                "provenance":"opencv",
-            })
+            if in_door_range:
+                (
+                    arc_evidence,arc_hinges,arc_side,arc_depth,
+                )=_door_arc_evidence_details(image,a,b,gap)
+                arc_computed=True
 
-    result=_dedupe(candidates,max(min_gap*0.6,8.0))
-    for index,item in enumerate(result,start=1):
+                if leaf_evidence>=1 or arc_evidence>=1:
+                    door_subtype=_door_subtype_from_evidence(
+                        leaf_hinges,arc_hinges,
+                    )
+                    swing_side=leaf_side if leaf_side!="unknown" else arc_side
+                    swing_depth=max(leaf_depth,arc_depth)
+                    confidence=min(
+                        0.95,
+                        0.69+0.065*leaf_evidence+0.035*arc_evidence
+                        +(0.05 if meters_per_pixel else 0.0),
+                    )
+                    if confidence>=0.76:
+                        first_len=abs(fe-fs)
+                        second_len=abs(se-ss)
+                        wall_id=(
+                            first["id"]
+                            if first_len>=second_len
+                            else second["id"]
+                        )
+                        door_candidates.append({
+                            "id":f"door-candidate-{len(door_candidates)+1}",
+                            "kind":"door",
+                            "doorSubtype":door_subtype,
+                            "doorSwingSide":swing_side,
+                            "doorSwingDepthPx":(
+                                round(swing_depth,2) if swing_depth>0 else None
+                            ),
+                            "wallId":wall_id,
+                            "a":a,
+                            "b":b,
+                            "confidence":round(confidence,3),
+                            "reviewed":False,
+                            "provenance":"opencv",
+                        })
+
+            if in_window_range:
+                glazing_evidence=_parallel_window_evidence(
+                    image,a,b,gap,wall_angle,
+                )
+                if glazing_evidence<2:
+                    continue
+
+                if not arc_computed:
+                    (
+                        arc_evidence,arc_hinges,arc_side,arc_depth,
+                    )=_door_arc_evidence_details(image,a,b,gap)
+                    arc_computed=True
+
+                if arc_evidence>0 or leaf_evidence>=2:
+                    continue
+                if leaf_evidence==1 and glazing_evidence<3:
+                    continue
+
+                confidence=min(
+                    0.95,
+                    0.70+0.055*glazing_evidence
+                    +(0.04 if meters_per_pixel else 0.0)
+                    -(0.04 if leaf_evidence==1 else 0.0),
+                )
+                if confidence<0.80:
+                    continue
+
+                first_len=abs(fe-fs)
+                second_len=abs(se-ss)
+                wall_id=(
+                    first["id"] if first_len>=second_len else second["id"]
+                )
+                window_candidates.append({
+                    "id":f"window-candidate-{len(window_candidates)+1}",
+                    "kind":"window",
+                    "wallId":wall_id,
+                    "a":a,
+                    "b":b,
+                    "confidence":round(confidence,3),
+                    "reviewed":False,
+                    "provenance":"opencv",
+                })
+
+    doors=(
+        _dedupe(door_candidates,max(door_min*0.6,8.0))
+        if want_doors else []
+    )
+    windows=(
+        _dedupe(window_candidates,max(window_min*0.55,8.0))
+        if want_windows else []
+    )
+    for index,item in enumerate(doors,start=1):
         item["id"]=f"door-{index}"
-    return result
+    for index,item in enumerate(windows,start=1):
+        item["id"]=f"window-{index}"
+    return doors,windows
+
+
+def detect_openings(
+    image:np.ndarray,
+    walls:list[dict],
+    meters_per_pixel:float|None,
+)->tuple[list[dict],list[dict]]:
+    return _detect_gap_openings(
+        image,walls,meters_per_pixel,
+        want_doors=True,want_windows=True,
+    )
+
+
+def detect_doors(
+    image:np.ndarray,
+    walls:list[dict],
+    meters_per_pixel:float|None,
+)->list[dict]:
+    doors,_=_detect_gap_openings(
+        image,walls,meters_per_pixel,
+        want_doors=True,want_windows=False,
+    )
+    return doors
 
 
 def detect_windows(
@@ -510,63 +617,11 @@ def detect_windows(
     walls:list[dict],
     meters_per_pixel:float|None,
 )->list[dict]:
-    min_gap,max_gap,axis_tol=_window_gap_limits(image,meters_per_pixel)
-    candidates=[]
-
-    for index,left in enumerate(walls):
-        length,ux,uy,_,_=_segment_geometry(left)
-        if length<=1e-9:
-            continue
-        wall_angle=math.degrees(math.atan2(uy,ux))%180.0
-        for right in walls[index+1:]:
-            gap_data=_gap_between_walls(left,right,axis_tol)
-            if gap_data is None:
-                continue
-            first,second,fs,fe,ss,se,gap,offset=gap_data
-            if gap<min_gap or gap>max_gap:
-                continue
-            a=_point_from_frame(fe,offset,ux,uy)
-            b=_point_from_frame(ss,offset,ux,uy)
-
-            leaf_evidence=_door_leaf_evidence(image,a,b,gap,wall_angle)
-            evidence=_parallel_window_evidence(image,a,b,gap,wall_angle)
-            if evidence<2:
-                continue
-            arc_evidence=_door_arc_evidence(image,a,b,gap)
-            # Strong glazing evidence can survive one spurious Hough leaf chord
-            # when no swing arc exists. Two leaf hits or any real arc remain
-            # decisive door evidence.
-            if arc_evidence>0 or leaf_evidence>=2:
-                continue
-            if leaf_evidence==1 and evidence<3:
-                continue
-
-            confidence=min(
-                0.95,
-                0.70+0.055*evidence+(0.04 if meters_per_pixel else 0.0)
-                -(0.04 if leaf_evidence==1 else 0.0),
-            )
-            if confidence<0.80:
-                continue
-
-            first_len=abs(fe-fs)
-            second_len=abs(se-ss)
-            wall_id=first["id"] if first_len>=second_len else second["id"]
-            candidates.append({
-                "id":f"window-candidate-{len(candidates)+1}",
-                "kind":"window",
-                "wallId":wall_id,
-                "a":a,
-                "b":b,
-                "confidence":round(confidence,3),
-                "reviewed":False,
-                "provenance":"opencv",
-            })
-
-    result=_dedupe(candidates,max(min_gap*0.55,8.0))
-    for index,item in enumerate(result,start=1):
-        item["id"]=f"window-{index}"
-    return result
+    _,windows=_detect_gap_openings(
+        image,walls,meters_per_pixel,
+        want_doors=False,want_windows=True,
+    )
+    return windows
 
 
 def _same_opening_gap(left:dict,right:dict)->bool:
