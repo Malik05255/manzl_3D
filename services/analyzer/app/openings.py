@@ -106,14 +106,31 @@ def _hough_segments(roi:np.ndarray,gap_px:float)->list[tuple[int,int,int,int]]:
     return [] if raw is None else [tuple(map(int,item)) for item in np.asarray(raw).reshape(-1,4)]
 
 
+def _opening_line_context(
+    image:np.ndarray,
+    a:dict,
+    b:dict,
+    gap_px:float,
+)->tuple[list[tuple[int,int,int,int]],int,int]:
+    roi,offset_x,offset_y=_opening_roi(image,a,b,gap_px)
+    return _hough_segments(roi,gap_px),offset_x,offset_y
+
+
 def _door_leaf_evidence_details(
     image:np.ndarray,
     a:dict,
     b:dict,
     gap_px:float,
     wall_angle_deg:float,
+    *,
+    line_context:tuple[list[tuple[int,int,int,int]],int,int]|None=None,
 )->tuple[int,set[str],str,float]:
-    roi,offset_x,offset_y=_opening_roi(image,a,b,gap_px)
+    if line_context is None:
+        segments,offset_x,offset_y=_opening_line_context(
+            image,a,b,gap_px,
+        )
+    else:
+        segments,offset_x,offset_y=line_context
     evidence=0
     hinges:set[str]=set()
     hinge_tolerance=max(8.0,gap_px*0.28)
@@ -126,7 +143,7 @@ def _door_leaf_evidence_details(
     ny=ux
     accepted=[]
     signed_depths=[]
-    for x1,y1,x2,y2 in _hough_segments(roi,gap_px):
+    for x1,y1,x2,y2 in segments:
         dx=float(x2-x1)
         dy=float(y2-y1)
         length=math.hypot(dx,dy)
@@ -316,8 +333,15 @@ def _parallel_window_evidence(
     b:dict,
     gap_px:float,
     wall_angle_deg:float,
+    *,
+    line_context:tuple[list[tuple[int,int,int,int]],int,int]|None=None,
 )->int:
-    roi,offset_x,offset_y=_opening_roi(image,a,b,gap_px)
+    if line_context is None:
+        segments,offset_x,offset_y=_opening_line_context(
+            image,a,b,gap_px,
+        )
+    else:
+        segments,offset_x,offset_y=line_context
     ax,ay=_point(a)
     bx,by=_point(b)
     vx=bx-ax
@@ -332,7 +356,7 @@ def _parallel_window_evidence(
     wall_offset=(ax+bx)/2*nx+(ay+by)/2*ny
     max_normal_distance=max(8.0,gap_px*.18)
     offsets=[]
-    for x1,y1,x2,y2 in _hough_segments(roi,gap_px):
+    for x1,y1,x2,y2 in segments:
         gx1=float(offset_x+x1); gy1=float(offset_y+y1)
         gx2=float(offset_x+x2); gy2=float(offset_y+y2)
         dx=gx2-gx1
@@ -528,8 +552,13 @@ def detect_windows(
             a=_point_from_frame(fe,offset,ux,uy)
             b=_point_from_frame(ss,offset,ux,uy)
 
-            leaf_evidence=_door_leaf_evidence(image,a,b,gap,wall_angle)
-            evidence=_parallel_window_evidence(image,a,b,gap,wall_angle)
+            line_context=_opening_line_context(image,a,b,gap)
+            leaf_evidence=_door_leaf_evidence_details(
+                image,a,b,gap,wall_angle,line_context=line_context,
+            )[0]
+            evidence=_parallel_window_evidence(
+                image,a,b,gap,wall_angle,line_context=line_context,
+            )
             if evidence<2:
                 continue
             arc_evidence=_door_arc_evidence(image,a,b,gap)
