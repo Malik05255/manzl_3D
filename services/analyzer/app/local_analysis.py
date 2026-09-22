@@ -18,7 +18,7 @@ from .openings import detect_doors,detect_windows,fuse_ai_opening_detections,nor
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
-from .symbols import extract_local_onnx_detections,extract_symbol_detections,normalize_configured_symbols
+from .symbols import extract_local_onnx_detections,extract_opening_onnx_detections,extract_symbol_detections,normalize_configured_symbols
 from .topology import classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,quarantine_dimension_aligned_walls,rasterize_wall_mask
 
@@ -91,7 +91,9 @@ def analyze_document_bytes_local(
 
     symbols=[]
     ai_detections=[]
+    opening_ai_detections=[]
     onnx_model_configured=bool(os.getenv("SYMBOL_ONNX_MODEL","").strip())
+    opening_model_configured=bool(os.getenv("OPENING_ONNX_MODEL","").strip())
     symbol_provider_configured=bool(
         onnx_model_configured
         or os.getenv("SYMBOL_DETECTOR_URL","").strip()
@@ -113,6 +115,14 @@ def analyze_document_bytes_local(
     if ai_detections:
         engines.append("onnx-architectural-detector")
 
+    if opening_model_configured:
+        try:
+            opening_ai_detections=extract_opening_onnx_detections(image)
+        except Exception:
+            opening_ai_detections=[]
+    if opening_ai_detections:
+        engines.append("onnx-opening-detector")
+
     walls,wall_mask=detect_walls(ink)
     if vector_lines:
         walls=enrich_walls_with_vector(walls,vector_lines)
@@ -133,16 +143,35 @@ def analyze_document_bytes_local(
         )
     ]
     scale,scale_confidence,scale_warnings=estimate_scale_with_diagnostics(dimensions,w,h)
-    doors=detect_doors(image,topology_walls,scale)
-    windows=detect_windows(
+    geometry_doors=detect_doors(image,topology_walls,scale)
+    geometry_windows=detect_windows(
         image,topology_walls,scale,
         vector_lines=vector_lines if vector_lines else None,
     )
-    if ai_detections:
-        doors,windows=fuse_ai_opening_detections(
-            topology_walls,doors,windows,ai_detections,
-            min_confidence=max(.15,min(.99,float(os.getenv("OPENING_ONNX_MIN_CONFIDENCE",".35") or ".35"))),
+    if opening_ai_detections:
+        door_min=max(.01,min(.99,float(os.getenv("OPENING_MODEL_DOOR_MIN_CONFIDENCE",".30") or ".30")))
+        window_min=max(.01,min(.99,float(os.getenv("OPENING_MODEL_WINDOW_MIN_CONFIDENCE",".10") or ".10")))
+        model_doors,model_windows=fuse_ai_opening_detections(
+            topology_walls,
+            [],
+            [],
+            opening_ai_detections,
+            min_confidence=.10,
+            min_confidence_by_kind={"door":door_min,"window":window_min},
+            allow_unhosted=True,
+            preserve_detector_bbox=True,
+            detector_source="mit-floorplan",
         )
+        doors=model_doors or geometry_doors
+        windows=model_windows or geometry_windows
+    else:
+        doors=geometry_doors
+        windows=geometry_windows
+        if ai_detections:
+            doors,windows=fuse_ai_opening_detections(
+                topology_walls,doors,windows,ai_detections,
+                min_confidence=max(.15,min(.99,float(os.getenv("OPENING_ONNX_MIN_CONFIDENCE",".35") or ".35"))),
+            )
     walls,doors,windows=normalize_opening_hosts(walls,doors,windows)
     topology_walls=[
         wall for wall in walls
@@ -171,6 +200,12 @@ def analyze_document_bytes_local(
             name=str(detection.get("class","unknown"))
             detector_counts[name]=detector_counts.get(name,0)+1
         analysis["detectorClassCounts"]=detector_counts
+    if opening_ai_detections:
+        opening_counts={}
+        for detection in opening_ai_detections:
+            name=str(detection.get("class","unknown"))
+            opening_counts[name]=opening_counts.get(name,0)+1
+        analysis["openingDetectorClassCounts"]=opening_counts
     return assemble_plan(
         image,project_id,filename,mime_type,labels,walls,rooms,scale,scale_confidence,
         source_page=page,source_page_count=page_count,doors=doors,windows=windows,
