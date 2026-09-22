@@ -464,10 +464,215 @@ def _door_subtype_from_evidence(
     return "double_swing" if {"a","b"}.issubset(leaf_hinges) else "single_swing"
 
 
+def _direct_vector_door_candidates(
+    vector_lines:list[dict]|None,
+    walls:list[dict],
+    image:np.ndarray,
+    meters_per_pixel:float|None,
+)->list[dict]:
+    """Recover single-swing doors directly from native PDF leaf strokes.
+
+    Unlike the gap detector, this path does not require wall extraction to
+    produce two clean collinear fragments around the opening. A candidate must
+    be anchored near a canonical wall endpoint, look like a door leaf rather
+    than wall continuation, and project into free space beyond that endpoint.
+    """
+    if not vector_lines or not walls:
+        return []
+
+    min_gap,max_gap,_=_door_gap_limits(image,meters_per_pixel)
+    min_leaf=max(12.0,min_gap*.52)
+    max_leaf=max(min_leaf+8.0,max_gap*1.12)
+    endpoint_cell=max(32.0,min(160.0,min_gap*.85))
+    endpoint_cells:dict[tuple[int,int],list[tuple[dict,str,float,float]]]={}
+
+    for wall in walls:
+        length,*_=_segment_geometry(wall)
+        if length<min_gap*.85:
+            continue
+        for name in ("a","b"):
+            try:
+                x,y=_point(wall[name])
+            except (KeyError,TypeError,ValueError):
+                continue
+            key=(
+                int(math.floor(x/endpoint_cell)),
+                int(math.floor(y/endpoint_cell)),
+            )
+            endpoint_cells.setdefault(key,[]).append((wall,name,x,y))
+
+    if not endpoint_cells:
+        return []
+
+    candidates=[]
+    seen=set()
+    for raw in vector_lines:
+        try:
+            lax,lay=_point(raw["a"])
+            lbx,lby=_point(raw["b"])
+            width_px=float(raw.get("widthPx",1.0) or 1.0)
+        except (KeyError,TypeError,ValueError):
+            continue
+        ldx=lbx-lax
+        ldy=lby-lay
+        leaf_length=math.hypot(ldx,ldy)
+        if leaf_length<min_leaf or leaf_length>max_leaf or width_px>7.0:
+            continue
+        leaf_angle=math.degrees(math.atan2(ldy,ldx))%180.0
+
+        endpoints=((lax,lay,lbx,lby),(lbx,lby,lax,lay))
+        best=None
+        for hx,hy,fx,fy in endpoints:
+            cell_x=int(math.floor(hx/endpoint_cell))
+            cell_y=int(math.floor(hy/endpoint_cell))
+            query=max(1,int(math.ceil(max(10.0,leaf_length*.20)/endpoint_cell)))
+            for gx in range(cell_x-query,cell_x+query+1):
+                for gy in range(cell_y-query,cell_y+query+1):
+                    for wall,wall_end,wx,wy in endpoint_cells.get((gx,gy),[]):
+                        hinge_distance=math.hypot(hx-wx,hy-wy)
+                        hinge_tolerance=max(9.0,min(min_gap*.30,leaf_length*.22))
+                        if hinge_distance>hinge_tolerance:
+                            continue
+
+                        wax,way=_point(wall["a"])
+                        wbx,wby=_point(wall["b"])
+                        if wall_end=="a":
+                            odx=wax-wbx
+                            ody=way-wby
+                        else:
+                            odx=wbx-wax
+                            ody=wby-way
+                        wall_length=math.hypot(odx,ody)
+                        if wall_length<=1e-9:
+                            continue
+                        oux=odx/wall_length
+                        ouy=ody/wall_length
+                        wall_angle=math.degrees(math.atan2(ouy,oux))%180.0
+                        delta=_angle_delta_degrees(leaf_angle,wall_angle)
+                        if delta<20.0 or delta>82.0:
+                            continue
+
+                        nx=-ouy
+                        ny=oux
+                        far_dx=fx-wx
+                        far_dy=fy-wy
+                        swing_depth=far_dx*nx+far_dy*ny
+                        if abs(swing_depth)<leaf_length*.28:
+                            continue
+                        if abs(swing_depth)>leaf_length*1.08:
+                            continue
+
+                        opening_length=max(min_gap,min(max_gap,leaf_length))
+                        end={
+                            "x":float(wx+oux*opening_length),
+                            "y":float(wy+ouy*opening_length),
+                        }
+                        start={"x":float(wx),"y":float(wy)}
+                        mid={
+                            "x":(start["x"]+end["x"])/2,
+                            "y":(start["y"]+end["y"])/2,
+                        }
+
+                        # A wall line coincident with the leaf is structural,
+                        # not a swing leaf.
+                        leaf_is_wall=False
+                        for other in walls:
+                            if other is wall:
+                                continue
+                            other_length,*_=_segment_geometry(other)
+                            if other_length<=1e-9:
+                                continue
+                            oax,oay=_point(other["a"])
+                            obx,oby=_point(other["b"])
+                            other_angle=math.degrees(math.atan2(oby-oay,obx-oax))%180.0
+                            if _angle_delta_degrees(leaf_angle,other_angle)>6.0:
+                                continue
+                            distance,t=_point_line_metrics(
+                                {"x":(lax+lbx)/2,"y":(lay+lby)/2},
+                                other,
+                            )
+                            if distance<=max(6.0,float(other.get("thicknessPx",4.0) or 4.0)*1.6) and -.08<=t<=1.08:
+                                leaf_is_wall=True
+                                break
+                        if leaf_is_wall:
+                            continue
+
+                        # Reject segmentation endpoints inside a continuous
+                        # collinear wall. A real opening may have another wall
+                        # fragment near its far end, but not across its middle.
+                        blocked=False
+                        for other in walls:
+                            if other is wall:
+                                continue
+                            olen,oux2,ouy2,_,_=_segment_geometry(other)
+                            if olen<=1e-9:
+                                continue
+                            other_angle=math.degrees(math.atan2(ouy2,oux2))%180.0
+                            if _angle_delta_degrees(wall_angle,other_angle)>6.0:
+                                continue
+                            distance,t=_point_line_metrics(mid,other)
+                            tolerance=max(
+                                6.0,
+                                float(other.get("thicknessPx",4.0) or 4.0)*1.8,
+                            )
+                            if distance<=tolerance and -.05<=t<=1.05:
+                                blocked=True
+                                break
+                        if blocked:
+                            continue
+
+                        score=(
+                            hinge_distance/max(1.0,hinge_tolerance)
+                            +abs(delta-55.0)/90.0
+                            +max(0.0,width_px-2.0)/12.0
+                        )
+                        if best is None or score<best[0]:
+                            best=(
+                                score,
+                                wall,
+                                start,
+                                end,
+                                swing_depth,
+                                leaf_length,
+                            )
+
+        if best is None:
+            continue
+
+        _,host,start,end,swing_depth,leaf_length=best
+        cx=(start["x"]+end["x"])/2
+        cy=(start["y"]+end["y"])/2
+        key=(
+            round(cx/max(10.0,min_gap*.35)),
+            round(cy/max(10.0,min_gap*.35)),
+            str(host.get("id","")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append({
+            "id":f"door-vector-direct-{len(candidates)+1}",
+            "kind":"door",
+            "doorSubtype":"single_swing",
+            "doorSwingSide":"positive" if swing_depth>0 else "negative",
+            "doorSwingDepthPx":round(abs(swing_depth),2),
+            "wallId":str(host["id"]),
+            "a":start,
+            "b":end,
+            "confidence":.80,
+            "reviewed":False,
+            "provenance":"pdf-vector-direct",
+            "vectorLeafLengthPx":round(leaf_length,2),
+        })
+
+    return candidates
+
+
 def detect_doors(
     image:np.ndarray,
     walls:list[dict],
     meters_per_pixel:float|None,
+    vector_lines:list[dict]|None=None,
 )->list[dict]:
     min_gap,max_gap,axis_tol=_door_gap_limits(image,meters_per_pixel)
     candidates=[]
@@ -524,6 +729,12 @@ def detect_doors(
                 "provenance":"opencv",
             })
 
+    if vector_lines:
+        candidates.extend(
+            _direct_vector_door_candidates(
+                vector_lines,walls,image,meters_per_pixel,
+            )
+        )
     result=_dedupe(candidates,max(min_gap*0.6,8.0))
     for index,item in enumerate(result,start=1):
         item["id"]=f"door-{index}"
