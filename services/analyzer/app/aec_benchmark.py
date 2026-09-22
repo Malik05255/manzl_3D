@@ -51,6 +51,14 @@ def _wall_polygon(wall:dict,sx:float,sy:float)->list[list[float]]:
 
 
 def _opening_bbox(opening:dict,sx:float,sy:float,padding_px:float)->list[float]:
+    source_bbox=opening.get("sourceBBox")
+    if isinstance(source_bbox,(list,tuple)) and len(source_bbox)==4:
+        try:
+            x1,y1,x2,y2=map(float,source_bbox)
+            if x2>x1 and y2>y1:
+                return [x1*sx,y1*sy,x2*sx,y2*sy]
+        except (TypeError,ValueError):
+            pass
     xs=[float(opening["a"]["x"]),float(opening["b"]["x"])]
     ys=[float(opening["a"]["y"]),float(opening["b"]["y"])]
     return [
