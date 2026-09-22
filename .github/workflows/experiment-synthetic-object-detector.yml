@@ -1,8 +1,8 @@
-name: Synthetic Object Detector
+name: Synthetic Object Detector Fast
 
 on:
   push:
-    branches: [exp/synthetic-object-detector]
+    branches: [exp/synthetic-object-detector-fast]
     paths:
       - services/analyzer/tools/generate_synthetic_symbol_dataset.py
       - .github/workflows/experiment-synthetic-object-detector.yml
@@ -11,7 +11,7 @@ on:
 jobs:
   train:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -30,7 +30,7 @@ jobs:
       - name: Generate synthetic architectural symbols
         working-directory: services/analyzer
         run: |
-          python tools/generate_synthetic_symbol_dataset.py             --output ../../synthetic-symbols             --train 1400             --val 280             --size 384             --seed 240922
+          python tools/generate_synthetic_symbol_dataset.py             --output ../../synthetic-symbols             --train 420             --val 84             --size 320             --seed 240922
 
       - name: Train compact detector
         run: |
@@ -42,19 +42,20 @@ jobs:
           model=YOLO("yolov8n.pt")
           result=model.train(
               data="synthetic-symbols/data.yaml",
-              epochs=8,
-              imgsz=384,
-              batch=16,
+              epochs=3,
+              imgsz=320,
+              batch=32,
               device="cpu",
               workers=2,
               cache=False,
-              patience=4,
-              project="synthetic-runs",
-              name="objects",
+              patience=2,
+              project="synthetic-runs-fast",
+              name="objects-fast",
               exist_ok=True,
               verbose=False,
               plots=False,
               seed=240922,
+              freeze=10,
           )
           best=Path(result.save_dir)/"weights"/"best.pt"
           trained=YOLO(str(best))
@@ -72,7 +73,7 @@ jobs:
               "map":float(metrics.box.map),
               "names":trained.names,
           }
-          Path("synthetic-runs/metrics.json").write_text(
+          Path("synthetic-runs-fast/metrics.json").write_text(
               json.dumps(summary,indent=2),
               encoding="utf-8",
           )
@@ -97,7 +98,7 @@ jobs:
           name: synthetic-object-model-${{ github.sha }}
           path: |
             synthetic-model/
-            synthetic-runs/metrics.json
+            synthetic-runs-fast/metrics.json
           retention-days: 5
 
   benchmark:
