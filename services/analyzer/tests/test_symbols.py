@@ -1,6 +1,6 @@
 import numpy as np
 
-from app.symbols import _env_confidence,_decode_yolo_output,_dedupe_raw_detections,_prepare_yolo_rows,_tile_windows,normalize_symbol_response
+from app.symbols import _env_confidence,_symbol_min_confidence,_decode_yolo_output,_dedupe_raw_detections,_prepare_yolo_rows,_tile_windows,normalize_symbol_response
 
 
 def test_normalizes_supported_symbol_classes_and_boxes():
@@ -188,3 +188,11 @@ def test_raw_onnx_threshold_can_be_lower_than_fixture_threshold(monkeypatch):
 
     monkeypatch.setenv("SYMBOL_ONNX_RAW_MIN_CONFIDENCE","0.01")
     assert _env_confidence("SYMBOL_ONNX_RAW_MIN_CONFIDENCE",.30,.10)==.10
+
+
+def test_symbol_min_confidence_allows_calibrated_lower_floor(monkeypatch):
+    monkeypatch.setenv("SYMBOL_MIN_CONFIDENCE","0.35")
+    assert _symbol_min_confidence()==.35
+
+    monkeypatch.setenv("SYMBOL_MIN_CONFIDENCE","0.10")
+    assert _symbol_min_confidence()==.30
