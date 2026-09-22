@@ -14,11 +14,11 @@ from .document import (
 )
 from .dimensions import extract_dimension_evidence
 from .ocr import _merge_labels,classify_text,extract_ocr_labels
-from .openings import detect_doors,detect_windows,normalize_opening_hosts
+from .openings import detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
-from .symbols import extract_symbol_detections
+from .symbols import extract_local_onnx_detections,extract_symbol_detections,normalize_symbol_response
 from .topology import classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,quarantine_dimension_aligned_walls,rasterize_wall_mask
 
@@ -76,17 +76,31 @@ def analyze_document_bytes_local(
             engines.append("pdf-vector")
 
     symbols=[]
+    ai_detections=[]
+    onnx_model_configured=bool(os.getenv("SYMBOL_ONNX_MODEL","").strip())
     symbol_provider_configured=bool(
-        os.getenv("SYMBOL_ONNX_MODEL","").strip()
+        onnx_model_configured
         or os.getenv("SYMBOL_DETECTOR_URL","").strip()
     )
-    if symbol_provider_configured:
+    if onnx_model_configured:
+        try:
+            ai_detections=extract_local_onnx_detections(image)
+            min_confidence=float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78")
+            symbols=normalize_symbol_response(
+                ai_detections,w,h,max(.50,min(.99,min_confidence)),
+            )
+        except Exception:
+            ai_detections=[]
+            symbols=[]
+    elif symbol_provider_configured:
         try:
             symbols=asyncio.run(extract_symbol_detections(image))
         except Exception:
             symbols=[]
     if symbols:
         engines.append("symbol-detector")
+    if ai_detections:
+        engines.append("onnx-architectural-detector")
 
     walls,wall_mask=detect_walls(ink)
     if vector_lines:
@@ -110,6 +124,11 @@ def analyze_document_bytes_local(
     scale,scale_confidence,scale_warnings=estimate_scale_with_diagnostics(dimensions,w,h)
     doors=detect_doors(image,topology_walls,scale)
     windows=detect_windows(image,topology_walls,scale)
+    if ai_detections:
+        doors,windows=fuse_ai_opening_detections(
+            topology_walls,doors,windows,ai_detections,
+            min_confidence=max(.50,min(.99,float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78"))),
+        )
     walls,doors,windows=normalize_opening_hosts(walls,doors,windows)
     topology_walls=[
         wall for wall in walls
