@@ -1,6 +1,6 @@
 import numpy as np
 
-from app.symbols import normalize_configured_symbols,_env_confidence,_decode_yolo_output,_dedupe_raw_detections,_prepare_yolo_rows,_tile_windows,normalize_symbol_response
+from app.symbols import _env_class_names,normalize_configured_symbols,_env_confidence,_decode_yolo_output,_dedupe_raw_detections,_prepare_yolo_rows,_tile_windows,normalize_symbol_response
 
 
 def test_normalizes_supported_symbol_classes_and_boxes():
@@ -227,4 +227,14 @@ def test_configured_symbol_policy_is_shared_and_sink_specific(monkeypatch):
     assert [(item["kind"],item["confidence"]) for item in result]==[
         ("toilet",.65),
         ("sink",.12),
+    ]
+
+
+def test_opening_model_class_names_are_loaded_from_dedicated_env(monkeypatch):
+    monkeypatch.setenv(
+        "OPENING_ONNX_CLASSES",
+        '["Column","Door","Sliding Door","Window"]',
+    )
+    assert _env_class_names("OPENING_ONNX_CLASSES")==[
+        "Column","Door","Sliding Door","Window",
     ]
