@@ -316,7 +316,72 @@ def _decode_yolo_output(
     )
 
 
-def extract_local_onnx_symbols(image:np.ndarray)->list[dict]:
+def _decode_yolo_payload(
+    output:np.ndarray,
+    *,
+    class_names:list[str],
+    confidence_threshold:float,
+    original_width:int,
+    original_height:int,
+    input_size:int,
+    scale:float,
+    pad_x:float,
+    pad_y:float,
+)->list[dict]:
+    """Return NMS-filtered raw YOLO boxes without dropping non-symbol classes."""
+    rows=_prepare_yolo_rows(output,len(class_names))
+    if rows.size==0:
+        return []
+    boxes=[]
+    confidences=[]
+    class_ids=[]
+    has_objectness=rows.shape[1]==5+len(class_names)
+    for row in rows:
+        cx,cy,bw,bh=map(float,row[:4])
+        if has_objectness:
+            objectness=float(row[4])
+            scores=np.asarray(row[5:],dtype=np.float32)*objectness
+        else:
+            scores=np.asarray(row[4:],dtype=np.float32)
+        if not len(scores):
+            continue
+        class_id=int(np.argmax(scores))
+        confidence=float(scores[class_id])
+        if confidence<confidence_threshold:
+            continue
+        x1=(cx-bw/2-pad_x)/max(scale,1e-9)
+        y1=(cy-bh/2-pad_y)/max(scale,1e-9)
+        x2=(cx+bw/2-pad_x)/max(scale,1e-9)
+        y2=(cy+bh/2-pad_y)/max(scale,1e-9)
+        x1=max(0.0,min(float(original_width),x1))
+        y1=max(0.0,min(float(original_height),y1))
+        x2=max(0.0,min(float(original_width),x2))
+        y2=max(0.0,min(float(original_height),y2))
+        if x2-x1<4 or y2-y1<4:
+            continue
+        boxes.append([x1,y1,x2-x1,y2-y1])
+        confidences.append(confidence)
+        class_ids.append(class_id)
+    if not boxes:
+        return []
+    indexes=cv2.dnn.NMSBoxes(
+        boxes,confidences,confidence_threshold,
+        float(os.getenv("SYMBOL_ONNX_NMS_IOU",".45") or ".45"),
+    )
+    if indexes is None or len(indexes)==0:
+        return []
+    payload=[]
+    for index in np.asarray(indexes).reshape(-1).tolist():
+        x,y,w,h=boxes[int(index)]
+        payload.append({
+            "class":class_names[class_ids[int(index)]],
+            "bbox":[x,y,x+w,y+h],
+            "confidence":round(float(confidences[int(index)]),4),
+        })
+    return payload
+
+
+def extract_local_onnx_detections(image:np.ndarray)->list[dict]:
     model_path=os.getenv("SYMBOL_ONNX_MODEL","").strip()
     class_names=_local_class_names()
     if not model_path or not class_names:
@@ -342,7 +407,7 @@ def extract_local_onnx_symbols(image:np.ndarray)->list[dict]:
     net.setInput(blob)
     raw=net.forward()
     h,w=image.shape[:2]
-    return _decode_yolo_output(
+    return _decode_yolo_payload(
         raw,
         class_names=class_names,
         confidence_threshold=confidence,
@@ -352,6 +417,16 @@ def extract_local_onnx_symbols(image:np.ndarray)->list[dict]:
         scale=scale,
         pad_x=pad_x,
         pad_y=pad_y,
+    )
+
+
+def extract_local_onnx_symbols(image:np.ndarray)->list[dict]:
+    h,w=image.shape[:2]
+    confidence=float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78")
+    confidence=max(.50,min(.99,confidence))
+    return normalize_symbol_response(
+        extract_local_onnx_detections(image),
+        w,h,confidence,
     )
 
 
