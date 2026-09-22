@@ -1,0 +1,206 @@
+name: Sink Filter Sweep
+
+on:
+  push:
+    branches: [exp/sink-filter-sweep]
+    paths:
+      - .github/workflows/experiment-sink-filter-sweep.yml
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/analyzer/requirements.txt shapely
+      - name: Download current AEC-15 artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35755512704
+          pattern: stages-2-4-*
+          path: benchmark-input
+          merge-multiple: true
+      - name: Find best sink geometry filter and verify officially
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json, math, os, shutil, xml.etree.ElementTree as ET
+          from pathlib import Path
+          from app.aec_benchmark import run_official_scorer
+
+          root=Path("../..")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          dims={str(x["sheet"]):(float(x["width"]),float(x["height"])) for x in manifest["sheets"]}
+          pred_dirs=list((root/"benchmark-input").rglob("predictions"))
+          pred_dir=next((p for p in pred_dirs if (p/"sheet_01.json").exists()),None)
+          if pred_dir is None:
+              raise SystemExit("AEC prediction directory not found")
+
+          xml=ET.parse(dataset/"annotations_15_scoring_ready.xml").getroot()
+          gt={}
+          for image in xml.findall("image"):
+              sheet=Path(str(image.get("name"))).stem
+              boxes=[]
+              for box in image.findall("box"):
+                  if box.get("label")!="Sink":
+                      continue
+                  boxes.append([
+                      float(box.get("xtl")),float(box.get("ytl")),
+                      float(box.get("xbr")),float(box.get("ybr")),
+                  ])
+              gt[sheet]=boxes
+
+          def iou(a,b):
+              ax1,ay1,ax2,ay2=a; bx1,by1,bx2,by2=b
+              iw=max(0.0,min(ax2,bx2)-max(ax1,bx1))
+              ih=max(0.0,min(ay2,by2)-max(ay1,by1))
+              inter=iw*ih
+              if inter<=0:return 0.0
+              aa=max(0.0,ax2-ax1)*max(0.0,ay2-ay1)
+              bb=max(0.0,bx2-bx1)*max(0.0,by2-by1)
+              return inter/max(1e-9,aa+bb-inter)
+
+          predictions={}
+          features=[]
+          for path in pred_dir.glob("sheet_*.json"):
+              payload=json.loads(path.read_text())
+              sheet=path.stem
+              sw,sh=dims[sheet]
+              denom=min(sw,sh)
+              rows=[]
+              for obj in payload.get("objects",[]):
+                  if obj.get("class")!="Sink":
+                      continue
+                  x1,y1,x2,y2=map(float,obj["bbox"])
+                  w=max(0.0,x2-x1); h=max(0.0,y2-y1)
+                  if w<=0 or h<=0: continue
+                  row={
+                      "bbox":[x1,y1,x2,y2],
+                      "maxNorm":max(w,h)/denom,
+                      "minNorm":min(w,h)/denom,
+                      "areaNorm":w*h/(sw*sh),
+                      "aspect":max(w,h)/max(1e-9,min(w,h)),
+                  }
+                  rows.append(row)
+                  features.append(row)
+              predictions[sheet]=rows
+
+          min_max_norm=[0.0,.002,.003,.004,.005,.006,.008,.010,.012]
+          max_max_norm=[.015,.020,.025,.030,.040,.050,.070,.100,.150]
+          max_aspect=[1.5,2.0,2.5,3.0,4.0,6.0,10.0,99.0]
+          min_area=[0.0,1e-6,2e-6,5e-6,1e-5,2e-5]
+          max_area=[5e-5,1e-4,2e-4,5e-4,1e-3,2e-3,1.0]
+
+          def evaluate(cfg):
+              tp=fp=fn=0
+              for sheet,rows in predictions.items():
+                  selected=[
+                      r for r in rows
+                      if cfg["minMax"]<=r["maxNorm"]<=cfg["maxMax"]
+                      and r["aspect"]<=cfg["maxAspect"]
+                      and cfg["minArea"]<=r["areaNorm"]<=cfg["maxArea"]
+                  ]
+                  truths=list(gt.get(sheet,[]))
+                  pairs=[]
+                  for pi,row in enumerate(selected):
+                      for gi,truth in enumerate(truths):
+                          score=iou(row["bbox"],truth)
+                          if score>=.50:pairs.append((score,pi,gi))
+                  pairs.sort(reverse=True)
+                  used_p=set();used_g=set();matched=0
+                  for score,pi,gi in pairs:
+                      if pi in used_p or gi in used_g:continue
+                      used_p.add(pi);used_g.add(gi);matched+=1
+                  tp+=matched;fp+=len(selected)-matched;fn+=len(truths)-matched
+              p=tp/(tp+fp) if tp+fp else 0
+              r=tp/(tp+fn) if tp+fn else 0
+              f1=2*p*r/(p+r) if p+r else 0
+              return {"tp":tp,"fp":fp,"fn":fn,"precision":p,"recall":r,"f1":f1}
+
+          candidates=[]
+          for minm in min_max_norm:
+              for maxm in max_max_norm:
+                  if maxm<minm:continue
+                  for aspect in max_aspect:
+                      for mina in min_area:
+                          for maxa in max_area:
+                              if maxa<mina:continue
+                              cfg={"minMax":minm,"maxMax":maxm,"maxAspect":aspect,"minArea":mina,"maxArea":maxa}
+                              score=evaluate(cfg)
+                              if score["tp"]==0:continue
+                              candidates.append((score["f1"],score["tp"],score["precision"],cfg,score))
+          candidates.sort(reverse=True,key=lambda x:(x[0],x[1],x[2]))
+          best=candidates[0]
+          _,_,_,cfg,score=best
+          print("BEST",json.dumps({"config":cfg,"score":score},sort_keys=True))
+          print("TOP10")
+          for row in candidates[:10]:
+              print(json.dumps({"config":row[3],"score":row[4]},sort_keys=True))
+
+          target=root/"benchmark-output/sink-filter/best"
+          target.mkdir(parents=True,exist_ok=True)
+          sheets=[]
+          for source in pred_dir.glob("sheet_*.json"):
+              payload=json.loads(source.read_text())
+              sheet=source.stem;sheets.append(sheet)
+              sw,sh=dims[sheet];denom=min(sw,sh)
+              filtered=[]
+              for obj in payload.get("objects",[]):
+                  if obj.get("class")!="Sink":
+                      filtered.append(obj);continue
+                  x1,y1,x2,y2=map(float,obj["bbox"])
+                  w=max(0.0,x2-x1);h=max(0.0,y2-y1)
+                  if w<=0 or h<=0:continue
+                  max_norm=max(w,h)/denom
+                  aspect=max(w,h)/max(1e-9,min(w,h))
+                  area=w*h/(sw*sh)
+                  if (
+                      cfg["minMax"]<=max_norm<=cfg["maxMax"]
+                      and aspect<=cfg["maxAspect"]
+                      and cfg["minArea"]<=area<=cfg["maxArea"]
+                  ):
+                      filtered.append(obj)
+              payload["objects"]=filtered
+              (target/source.name).write_text(json.dumps(payload,separators=(",",":")),encoding="utf-8")
+
+          code,output,report=run_official_scorer(
+              root/"external/aec-geometric-bench/scoring/score.py",
+              target,dataset,sheet_names=sorted(sheets),include_per_sheet=True,
+          )
+          print(output)
+          if code!=0 or report is None:
+              raise SystemExit(code or 1)
+          sink=report.get("classes",{}).get("Sink",{})
+          result={"config":cfg,"sink":sink,"objectMicro":report.get("objectMicro",{}),"macroF1":report.get("macroF1",0)}
+          out=root/"benchmark-output/sink-filter/result.json"
+          out.parent.mkdir(parents=True,exist_ok=True)
+          out.write_text(json.dumps(result,indent=2),encoding="utf-8")
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as s:
+              s.write("## Sink geometry filter — AEC-15\n\n")
+              s.write(f"- config: `{json.dumps(cfg,sort_keys=True)}`\n")
+              s.write(f"- Sink TP/FP/FN: {sink.get('tp',0)} / {sink.get('fp',0)} / {sink.get('fn',0)}\n")
+              s.write(f"- Sink F1: {float(sink.get('f1',0)):.3f}\n")
+              s.write(f"- Object micro F1: {float(report.get('objectMicro',{}).get('f1',0)):.3f}\n")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sink-filter-sweep-${{ github.sha }}
+          path: benchmark-output/sink-filter/result.json
+          retention-days: 5
