@@ -753,6 +753,7 @@ def _vector_window_candidates(
             "wallId":str(host["id"]),
             "a":a,
             "b":b,
+            "windowDepthPx":round(max(4.0,normal_span),2),
             "confidence":round(confidence,3),
             "reviewed":False,
             "provenance":"pdf-vector",
