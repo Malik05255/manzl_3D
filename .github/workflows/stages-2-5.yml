@@ -1,6 +1,8 @@
 name: Stages 2-5 Validation
 
 on:
+  push:
+    branches: [feat/cloud-floorplan-editor]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -11,7 +13,7 @@ concurrency:
 
 jobs:
   benchmark-symbols:
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'feat/cloud-floorplan-editor'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.head_ref == 'feat/cloud-floorplan-editor'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
