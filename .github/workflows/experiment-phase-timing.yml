@@ -1,0 +1,97 @@
+name: Analyzer Phase Timing
+
+on:
+  push:
+    branches: [exp/analyzer-phase-timing]
+    paths:
+      - services/analyzer/app/local_analysis.py
+      - .github/workflows/experiment-phase-timing.yml
+  workflow_dispatch:
+
+jobs:
+  profile-sheet-15:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - name: Install OCR and analyzer dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt
+          pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
+      - name: Export FloorCAD ONNX
+        env:
+          HF_REPO: mudasir13cs/floorcad-yolov8n-detect
+          HF_FILE: floorcad-yolov8n-detect.pt
+        run: |
+          python - <<'PY'
+          import json, os, shutil
+          from pathlib import Path
+          from huggingface_hub import hf_hub_download
+          from ultralytics import YOLO
+
+          source=hf_hub_download(os.environ["HF_REPO"],os.environ["HF_FILE"])
+          model=YOLO(source)
+          exported=model.export(format="onnx",imgsz=640,opset=12,simplify=False,dynamic=False)
+          target=Path("benchmark-model")
+          target.mkdir(exist_ok=True)
+          shutil.copy2(exported,target/"floorcad-symbols.onnx")
+          classes=[str(model.names[index]) for index in sorted(model.names)]
+          (target/"classes.json").write_text(json.dumps(classes),encoding="utf-8")
+          PY
+      - name: Configure detector
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          classes=json.loads(Path("benchmark-model/classes.json").read_text())
+          with Path(os.environ["GITHUB_ENV"]).open("a") as env:
+              env.write("SYMBOL_ONNX_MODEL="+str(Path("benchmark-model/floorcad-symbols.onnx").resolve())+"\n")
+              env.write("SYMBOL_ONNX_CLASSES="+json.dumps(classes,separators=(",",":"))+"\n")
+              env.write("SYMBOL_MIN_CONFIDENCE=0.55\n")
+              env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
+          PY
+      - name: Profile sheet 15
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p ../../benchmark-output/phase-profile
+          python -m app.aec_benchmark \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --output ../../benchmark-output/phase-profile \
+            --offset 14 \
+            --limit 1
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          plan=json.loads(Path("../../benchmark-output/phase-profile/_canonical/sheet_15.json").read_text())
+          timings=plan.get("analysis",{}).get("phaseTimingsSeconds",{})
+          print("PHASE_TIMINGS",json.dumps(timings,sort_keys=True))
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Sheet 15 analyzer phase timing\n\n")
+              out.write("| Phase | Seconds |\n|---|---:|\n")
+              for name,value in sorted(timings.items(),key=lambda item:item[1],reverse=True):
+                  out.write(f"| {name} | {float(value):.2f} |\n")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: analyzer-phase-sheet15-${{ github.sha }}
+          path: |
+            benchmark-output/phase-profile/_canonical/sheet_15.json
+            benchmark-output/phase-profile/_timings/sheet_15.json
+          if-no-files-found: warn
+          retention-days: 3
