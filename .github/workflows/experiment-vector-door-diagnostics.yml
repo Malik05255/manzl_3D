@@ -1,0 +1,161 @@
+name: Vector Door Diagnostics
+
+on:
+  push:
+    branches: [exp/vector-door-diagnostics]
+    paths:
+      - .github/workflows/experiment-vector-door-diagnostics.yml
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install analyzer dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt
+      - name: Measure native vector evidence inside GT doors
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json, math, statistics, xml.etree.ElementTree as ET, os
+          from collections import defaultdict
+          from pathlib import Path
+          from app.document import decode_document_with_page, extract_pdf_vector_lines
+
+          root=Path("../..")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          tree=ET.parse(dataset/"annotations_15_scoring_ready.xml")
+          images={Path(str(x.get("name"))).stem:x for x in tree.getroot().findall("image")}
+          target_labels={"Single Swing Door","Double Swing Door"}
+
+          result={}
+          aggregate=defaultdict(list)
+
+          def angle(ax,ay,bx,by):
+              return math.degrees(math.atan2(by-ay,bx-ax))%180.0
+
+          for item in manifest["sheets"]:
+              sheet=str(item["sheet"])
+              data=(dataset/str(item["pdf"])).read_bytes()
+              image,page=decode_document_with_page(data,"application/pdf")
+              h,w=image.shape[:2]
+              sx=w/float(item["width"]); sy=h/float(item["height"])
+              lines=extract_pdf_vector_lines(data,page)
+
+              doors=[]
+              for box in images[sheet].findall("box"):
+                  label=str(box.get("label") or "")
+                  if label not in target_labels:
+                      continue
+                  x1=float(box.get("xtl"))*sx; y1=float(box.get("ytl"))*sy
+                  x2=float(box.get("xbr"))*sx; y2=float(box.get("ybr"))*sy
+                  bw=x2-x1; bh=y2-y1
+                  long=max(bw,bh); short=min(bw,bh)
+                  pad=max(6.0,short*.12)
+
+                  candidates=[]
+                  for line in lines:
+                      ax=float(line["a"]["x"]); ay=float(line["a"]["y"])
+                      bx=float(line["b"]["x"]); by=float(line["b"]["y"])
+                      mx=(ax+bx)/2; my=(ay+by)/2
+                      if not (x1-pad<=mx<=x2+pad and y1-pad<=my<=y2+pad):
+                          continue
+                      length=math.hypot(bx-ax,by-ay)
+                      if length<max(6.0,short*.12) or length>long*1.55:
+                          continue
+                      # Door leaves usually have a hinge endpoint close to the
+                      # GT box perimeter while extending materially into it.
+                      endpoint_perimeter=min(
+                          abs(ax-x1),abs(ax-x2),abs(ay-y1),abs(ay-y2),
+                          abs(bx-x1),abs(bx-x2),abs(by-y1),abs(by-y2),
+                      )
+                      inside_a=x1-pad<=ax<=x2+pad and y1-pad<=ay<=y2+pad
+                      inside_b=x1-pad<=bx<=x2+pad and y1-pad<=by<=y2+pad
+                      candidates.append({
+                          "length":length,
+                          "ratioLong":length/max(1.0,long),
+                          "angle":angle(ax,ay,bx,by),
+                          "endpointPerimeter":endpoint_perimeter,
+                          "bothInside":inside_a and inside_b,
+                      })
+
+                  useful=[
+                      c for c in candidates
+                      if c["bothInside"]
+                      and c["ratioLong"]>=.22
+                      and c["endpointPerimeter"]<=max(12.0,short*.22)
+                  ]
+                  angle_bins={
+                      int(round(c["angle"]/10.0))%18 for c in useful
+                  }
+                  row={
+                      "class":label,
+                      "bbox":[x1,y1,x2,y2],
+                      "longPx":round(long,2),
+                      "shortPx":round(short,2),
+                      "candidateCount":len(candidates),
+                      "usefulLeafLike":len(useful),
+                      "angleBinCount":len(angle_bins),
+                      "lengthRatios":[round(c["ratioLong"],3) for c in useful],
+                  }
+                  doors.append(row)
+                  aggregate[label].append(row)
+
+              result[sheet]={
+                  "vectorLineCount":len(lines),
+                  "doors":doors,
+              }
+              print(sheet,{
+                  label:{
+                      "gt":sum(1 for d in doors if d["class"]==label),
+                      "withLeaf":sum(1 for d in doors if d["class"]==label and d["usefulLeafLike"]>=1),
+                      "with2Leaf":sum(1 for d in doors if d["class"]==label and d["usefulLeafLike"]>=2),
+                  }
+                  for label in sorted(target_labels)
+              })
+
+          summary={}
+          for label,rows in aggregate.items():
+              summary[label]={
+                  "gt":len(rows),
+                  "withLeaf":sum(1 for r in rows if r["usefulLeafLike"]>=1),
+                  "with2Leaf":sum(1 for r in rows if r["usefulLeafLike"]>=2),
+                  "with2Angles":sum(1 for r in rows if r["angleBinCount"]>=2),
+                  "medianUseful":statistics.median([r["usefulLeafLike"] for r in rows]) if rows else 0,
+              }
+          payload={"summary":summary,"sheets":result}
+          target=root/"benchmark-output/vector-door-diagnostics.json"
+          target.parent.mkdir(exist_ok=True)
+          target.write_text(json.dumps(payload,indent=2),encoding="utf-8")
+          print("SUMMARY",json.dumps(summary,sort_keys=True))
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Native PDF-vector evidence inside GT doors\n\n")
+              out.write("| Class | GT | >=1 leaf-like | >=2 leaf-like | >=2 angle bins | Median useful |\n")
+              out.write("|---|---:|---:|---:|---:|---:|\n")
+              for label,row in summary.items():
+                  out.write(
+                      f"| {label} | {row['gt']} | {row['withLeaf']} | "
+                      f"{row['with2Leaf']} | {row['with2Angles']} | {row['medianUseful']} |\n"
+                  )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vector-door-diagnostics-${{ github.sha }}
+          path: benchmark-output/vector-door-diagnostics.json
+          retention-days: 5
