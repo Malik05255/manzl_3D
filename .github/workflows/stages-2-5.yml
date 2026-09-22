@@ -107,8 +107,9 @@ jobs:
     timeout-minutes: 35
     strategy:
       fail-fast: false
+      max-parallel: 15
       matrix:
-        shard: [0, 1, 2, 3, 4]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
     steps:
       - name: Checkout Manzil H
         uses: actions/checkout@v4
@@ -157,13 +158,14 @@ jobs:
         env:
           PYTHONPATH: .
         run: |
-          OFFSET=$(( ${{ matrix.shard }} * 3 ))
+          OFFSET=${{ matrix.shard }}
           mkdir -p "../../benchmark-output/shard-${{ matrix.shard }}"
+          echo "Running AEC-15 sheet offset $OFFSET (1 sheet per isolated job)"
           python -m app.aec_benchmark \
             --dataset ../../external/aec-geometric-bench/dataset \
             --output "../../benchmark-output/shard-${{ matrix.shard }}" \
             --offset "$OFFSET" \
-            --limit 3
+            --limit 1
 
       - name: Upload shard predictions
         uses: actions/upload-artifact@v4
