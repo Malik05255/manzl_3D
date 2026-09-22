@@ -54,7 +54,7 @@ jobs:
           from collections import defaultdict, Counter
           from pathlib import Path
           from app.document import decode_document_with_page
-          from app.symbols import _extract_onnx_detections
+          from app.symbols import extract_local_onnx_detections
 
           root=Path("../..")
           dataset=root/"external/aec-geometric-bench/dataset"
@@ -99,17 +99,15 @@ jobs:
               aa=max(0.0,ax2-ax1)*max(0.0,ay2-ay1); bb=max(0.0,bx2-bx1)*max(0.0,by2-by1)
               return inter/max(1e-9,aa+bb-inter)
 
-          detections=_extract_onnx_detections(
-              image,
-              model_path=str(model),
-              class_names=classes,
-              input_size=640,
-              confidence=.01,
-              tile_trigger=1,
-              tile_size=tile,
-              tile_overlap=.25,
-              nms_iou=.45,
-          )
+          os.environ["SYMBOL_ONNX_MODEL"]=str(model)
+          os.environ["SYMBOL_ONNX_CLASSES"]=json.dumps(classes,separators=(",",":"))
+          os.environ["SYMBOL_ONNX_INPUT_SIZE"]="640"
+          os.environ["SYMBOL_ONNX_RAW_MIN_CONFIDENCE"]="0.01"
+          os.environ["SYMBOL_ONNX_TILE_TRIGGER"]="640"
+          os.environ["SYMBOL_ONNX_TILE_SIZE"]=str(tile)
+          os.environ["SYMBOL_ONNX_TILE_OVERLAP"]="0.25"
+          os.environ["SYMBOL_ONNX_NMS_IOU"]="0.45"
+          detections=extract_local_onnx_detections(image)
           counts=Counter(str(d.get("class")) for d in detections)
           rows={}
           for source,target in target_map.items():
