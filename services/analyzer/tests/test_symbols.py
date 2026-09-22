@@ -348,3 +348,64 @@ def test_configured_symbol_policy_supports_fixture_threshold_overrides(monkeypat
     assert {item["kind"] for item in result}=={
         "toilet","bathtub","cooktop",
     }
+
+
+def test_secondary_source_can_use_low_class_specific_threshold():
+    payload=[
+        {
+            "class":"toilet",
+            "bbox":[10,10,40,40],
+            "confidence":.003,
+            "detectorSource":"secondary",
+        },
+        {
+            "class":"toilet",
+            "bbox":[50,10,80,40],
+            "confidence":.003,
+        },
+    ]
+    result=normalize_symbol_response(
+        payload,
+        100,
+        100,
+        .55,
+        per_source_kind_min_confidence={
+            "secondary":{"toilet":.003},
+        },
+        minimum_threshold=.001,
+    )
+    assert len(result)==1
+    assert result[0]["kind"]=="toilet"
+    assert result[0]["confidence"]==.003
+
+
+def test_secondary_detector_applies_class_thresholds_and_tags_source(monkeypatch):
+    image=np.full((100,100,3),255,dtype=np.uint8)
+    monkeypatch.setenv("SYMBOL_SECONDARY_ONNX_MODEL","secondary.onnx")
+    monkeypatch.setenv(
+        "SYMBOL_SECONDARY_ONNX_CLASSES",
+        '["toilet","cooktop","sink"]',
+    )
+    monkeypatch.setenv(
+        "SYMBOL_SECONDARY_ONNX_ALLOWED_CLASSES",
+        "toilet,cooktop",
+    )
+    monkeypatch.setenv(
+        "SYMBOL_SECONDARY_ONNX_CLASS_THRESHOLDS",
+        '{"toilet":0.003,"cooktop":0.010}',
+    )
+    monkeypatch.setattr(
+        symbols_module,
+        "_extract_onnx_detections",
+        lambda *_args,**_kwargs:[
+            {"class":"toilet","bbox":[1,1,20,20],"confidence":.004},
+            {"class":"toilet","bbox":[21,1,40,20],"confidence":.002},
+            {"class":"cooktop","bbox":[1,30,20,50],"confidence":.012},
+            {"class":"cooktop","bbox":[21,30,40,50],"confidence":.009},
+            {"class":"sink","bbox":[50,50,80,80],"confidence":.50},
+        ],
+    )
+    result=symbols_module.extract_secondary_onnx_detections(image)
+    assert len(result)==2
+    assert {item["class"] for item in result}=={"toilet","cooktop"}
+    assert all(item["detectorSource"]=="secondary" for item in result)
