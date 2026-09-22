@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: stages-2-5-${{ github.ref }}
+  group: stages-2-5-${{ github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
