@@ -124,7 +124,7 @@ jobs:
               processed=processor.post_process_grounded_object_detection(
                   outputs,
                   inputs.input_ids,
-                  box_threshold=threshold,
+                  threshold=threshold,
                   text_threshold=.15,
                   target_sizes=[(pix.height,pix.width)],
               )[0]
