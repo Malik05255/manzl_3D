@@ -1,0 +1,175 @@
+name: Synthetic Fixture Threshold Sweep
+
+on:
+  push:
+    branches: [exp/synthetic-fixture-threshold-sweep]
+    paths:
+      - .github/workflows/experiment-synthetic-fixture-threshold-sweep.yml
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely
+
+      - name: Download full synthetic canonical predictions
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35771807959
+          pattern: synthetic-object-sheet-*
+          path: synthetic-source
+          merge-multiple: true
+
+      - name: Sweep Cooktop and Toilet thresholds with held-out check
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import copy, json, os
+          from pathlib import Path
+          from app.aec_benchmark import plan_to_aec_prediction, run_official_scorer
+
+          root=Path("../..")
+          source=root/"synthetic-source/_canonical"
+          dataset=root/"external/aec-geometric-bench/dataset"
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          by_sheet={str(item["sheet"]):item for item in manifest["sheets"]}
+
+          dev=["sheet_05","sheet_14"]
+          held=["sheet_10","sheet_15"]
+          sheets=dev+held
+          thresholds=[.50,.55,.60,.65,.70,.75,.80,.85,.90,.95]
+          targets={
+              "Cooktops":"cooktop",
+              "Toilet":"toilet",
+          }
+
+          plans={
+              sheet:json.loads((source/f"{sheet}.json").read_text())
+              for sheet in sheets
+          }
+
+          result={"devSheets":dev,"heldoutSheets":held,"classes":{}}
+
+          for aec_class,kind in targets.items():
+              rows=[]
+              for threshold in thresholds:
+                  target=root/f"benchmark-output/threshold-sweep/{kind}/{threshold:.2f}"
+                  target.mkdir(parents=True,exist_ok=True)
+                  for sheet in sheets:
+                      plan=copy.deepcopy(plans[sheet])
+                      plan["doors"]=[]
+                      plan["windows"]=[]
+                      plan["symbols"]=[
+                          item for item in plan.get("symbols",[])
+                          if item.get("kind")==kind
+                          and float(item.get("confidence",0))>=threshold
+                      ]
+                      item=by_sheet[sheet]
+                      pred=plan_to_aec_prediction(
+                          plan,
+                          sheet=sheet,
+                          width=int(item["width"]),
+                          height=int(item["height"]),
+                      )
+                      pred["objects"]=[
+                          obj for obj in pred.get("objects",[])
+                          if obj.get("class")==aec_class
+                      ]
+                      pred["areas"]=[]
+                      pred["walls"]=[]
+                      (target/f"{sheet}.json").write_text(
+                          json.dumps(pred,separators=(",",":")),
+                          encoding="utf-8",
+                      )
+
+                  _,_,dev_report=run_official_scorer(
+                      scorer,target,dataset,
+                      sheet_names=dev,
+                      include_per_sheet=True,
+                  )
+                  _,_,held_report=run_official_scorer(
+                      scorer,target,dataset,
+                      sheet_names=held,
+                      include_per_sheet=True,
+                  )
+                  dev_m=(dev_report or {}).get("classes",{}).get(aec_class,{})
+                  held_m=(held_report or {}).get("classes",{}).get(aec_class,{})
+                  row={
+                      "threshold":threshold,
+                      "dev":dev_m,
+                      "heldout":held_m,
+                  }
+                  rows.append(row)
+                  print(
+                      "SWEEP",aec_class,threshold,
+                      "DEV",json.dumps(dev_m,sort_keys=True),
+                      "HELD",json.dumps(held_m,sort_keys=True),
+                  )
+
+              rows.sort(
+                  key=lambda row:(
+                      float(row["dev"].get("f1",0)),
+                      float(row["dev"].get("precision",0)),
+                      float(row["heldout"].get("f1",0)),
+                      row["threshold"],
+                  ),
+                  reverse=True,
+              )
+              result["classes"][aec_class]={
+                  "best":rows[0],
+                  "rows":rows,
+              }
+
+          target=root/"benchmark-output/threshold-sweep"
+          target.mkdir(parents=True,exist_ok=True)
+          (target/"report.json").write_text(
+              json.dumps(result,indent=2),
+              encoding="utf-8",
+          )
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Fixture confidence sweep\n\n")
+              out.write("| Class | Selected | Dev F1 | Dev P | Dev R | Held-out F1 | Held-out P | Held-out R |\n")
+              out.write("|---|---:|---:|---:|---:|---:|---:|---:|\n")
+              for cls,item in result["classes"].items():
+                  row=item["best"]
+                  d=row["dev"]; h=row["heldout"]
+                  out.write(
+                      f"| {cls} | {row['threshold']:.2f} | "
+                      f"{float(d.get('f1',0)):.3f} | {float(d.get('precision',0)):.3f} | "
+                      f"{float(d.get('recall',0)):.3f} | {float(h.get('f1',0)):.3f} | "
+                      f"{float(h.get('precision',0)):.3f} | {float(h.get('recall',0)):.3f} |\n"
+                  )
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-fixture-threshold-sweep-${{ github.sha }}
+          path: benchmark-output/threshold-sweep/report.json
+          retention-days: 5
