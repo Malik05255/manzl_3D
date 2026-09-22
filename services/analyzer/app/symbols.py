@@ -143,6 +143,8 @@ def normalize_symbol_response(
     min_confidence:float=.78,
     *,
     per_kind_min_confidence:dict[str,float]|None=None,
+    per_source_kind_min_confidence:dict[str,dict[str,float]]|None=None,
+    minimum_threshold:float=.05,
 )->list[dict]:
     if isinstance(payload,dict):
         raw=payload.get("symbols",payload.get("detections",payload.get("predictions",[])))
@@ -163,11 +165,24 @@ def normalize_symbol_response(
         except (TypeError,ValueError):
             continue
         threshold=min_confidence
-        if per_kind_min_confidence and kind in per_kind_min_confidence:
+        source=str(item.get("detectorSource","")).strip().lower()
+        source_thresholds=(
+            per_source_kind_min_confidence.get(source,{})
+            if per_source_kind_min_confidence and source
+            else {}
+        )
+        if kind in source_thresholds:
             try:
-                threshold=max(.05,min(.99,float(per_kind_min_confidence[kind])))
+                threshold=float(source_thresholds[kind])
             except (TypeError,ValueError):
                 threshold=min_confidence
+        elif per_kind_min_confidence and kind in per_kind_min_confidence:
+            try:
+                threshold=float(per_kind_min_confidence[kind])
+            except (TypeError,ValueError):
+                threshold=min_confidence
+        floor=max(.001,min(.99,float(minimum_threshold)))
+        threshold=max(floor,min(.99,threshold))
         if not threshold<=confidence<=1.0:
             continue
         box=_bbox(item,width,height)
@@ -597,7 +612,7 @@ def extract_secondary_onnx_detections(image:np.ndarray)->list[dict]:
     confidence=_env_confidence(
         "SYMBOL_SECONDARY_ONNX_RAW_MIN_CONFIDENCE",
         .15,
-        .05,
+        .001,
     )
     try:
         tile_trigger=int(
@@ -629,23 +644,62 @@ def extract_secondary_onnx_detections(image:np.ndarray)->list[dict]:
         tile_overlap=tile_overlap,
         nms_iou=nms_iou,
     )
+    tagged=[]
+    for item in detections:
+        value=dict(item)
+        value["detectorSource"]="secondary"
+        tagged.append(value)
+    detections=tagged
+
     raw_allowed=os.getenv("SYMBOL_SECONDARY_ONNX_ALLOWED_CLASSES","").strip()
-    if not raw_allowed:
-        return detections
-    allowed={
-        " ".join(
-            item.strip().lower().replace("_"," ").replace("-"," ").split()
-        )
-        for item in raw_allowed.split(",")
-        if item.strip()
-    }
-    return [
-        item for item in detections
-        if " ".join(
-            str(item.get("class","")).strip().lower()
-            .replace("_"," ").replace("-"," ").split()
-        ) in allowed
-    ]
+    if raw_allowed:
+        allowed={
+            " ".join(
+                item.strip().lower().replace("_"," ").replace("-"," ").split()
+            )
+            for item in raw_allowed.split(",")
+            if item.strip()
+        }
+        detections=[
+            item for item in detections
+            if " ".join(
+                str(item.get("class","")).strip().lower()
+                .replace("_"," ").replace("-"," ").split()
+            ) in allowed
+        ]
+
+    raw_thresholds=os.getenv(
+        "SYMBOL_SECONDARY_ONNX_CLASS_THRESHOLDS",
+        "",
+    ).strip()
+    if raw_thresholds:
+        try:
+            parsed=json.loads(raw_thresholds)
+        except Exception:
+            parsed={}
+        if isinstance(parsed,dict):
+            thresholds={}
+            for raw_name,raw_value in parsed.items():
+                key=" ".join(
+                    str(raw_name).strip().lower()
+                    .replace("_"," ").replace("-"," ").split()
+                )
+                try:
+                    thresholds[key]=max(.001,min(.99,float(raw_value)))
+                except (TypeError,ValueError):
+                    continue
+            if thresholds:
+                filtered=[]
+                for item in detections:
+                    key=" ".join(
+                        str(item.get("class","")).strip().lower()
+                        .replace("_"," ").replace("-"," ").split()
+                    )
+                    threshold=thresholds.get(key)
+                    if threshold is None or float(item.get("confidence",0.0))>=threshold:
+                        filtered.append(item)
+                detections=filtered
+    return detections
 
 
 def extract_configured_onnx_detections(image:np.ndarray)->list[dict]:
@@ -689,12 +743,37 @@ def normalize_configured_symbols(
             value=defaults.get(kind,max(.50,min(.99,min_confidence)))
         per_kind_min_confidence[kind]=max(.05,min(.99,value))
 
+    per_source_kind_min_confidence={}
+    raw_secondary_thresholds=os.getenv(
+        "SYMBOL_SECONDARY_ONNX_CLASS_THRESHOLDS",
+        "",
+    ).strip()
+    if raw_secondary_thresholds:
+        try:
+            parsed=json.loads(raw_secondary_thresholds)
+        except Exception:
+            parsed={}
+        if isinstance(parsed,dict):
+            secondary={}
+            for raw_name,raw_value in parsed.items():
+                kind=_normalize_kind(raw_name)
+                if kind not in KINDS:
+                    continue
+                try:
+                    secondary[kind]=max(.001,min(.99,float(raw_value)))
+                except (TypeError,ValueError):
+                    continue
+            if secondary:
+                per_source_kind_min_confidence["secondary"]=secondary
+
     return normalize_symbol_response(
         detections,
         width,
         height,
         max(.50,min(.99,min_confidence)),
         per_kind_min_confidence=per_kind_min_confidence,
+        per_source_kind_min_confidence=per_source_kind_min_confidence,
+        minimum_threshold=.001,
     )
 
 
