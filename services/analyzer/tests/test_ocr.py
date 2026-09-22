@@ -1,4 +1,4 @@
-from app.ocr import _merge_labels,_restore_rotated_labels,classify_text,order_line_words
+from app.ocr import _merge_labels,_restore_rotated_labels,classify_text,native_pdf_text_is_sufficient,order_line_words
 
 
 def test_arabic_line_is_ordered_right_to_left():
