@@ -47,7 +47,7 @@ function manualProvenance(value?:ElementProvenance):ElementProvenance{
 }
 
 function symbolKindLabel(kind:string){
-  return ({sink:"مغسلة",toilet:"مرحاض",bathtub:"بانيو",shower:"دش",cooktop:"موقد",stairs:"درج"} as Record<string,string>)[kind]??kind;
+  return ({sink:"مغسلة",toilet:"مرحاض",bathtub:"بانيو",shower:"دش",cooktop:"موقد",stairs:"درج",elevator:"مصعد"} as Record<string,string>)[kind]??kind;
 }
 
 function openingHostProtected(plan:FloorPlanModel,openingId:string|null){
