@@ -1,0 +1,242 @@
+name: Fixture Tile Size Sweep
+
+on:
+  push:
+    branches: [exp/fixture-tile-sweep]
+    paths:
+      - .github/workflows/experiment-fixture-tile-sweep.yml
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        tile: [640, 800, 960, 1200, 1600]
+        shard: [4, 9, 13, 14]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt
+
+      - name: Download validated FloorCAD ONNX
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35762303613
+          name: floorcad-onnx-64e7743e9794a9b74eb122f469bba3dd3d48d6a5
+          path: benchmark-model
+
+      - name: Evaluate fixture geometry
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+          TILE_SIZE: ${{ matrix.tile }}
+          SHARD: ${{ matrix.shard }}
+          SYMBOL_ONNX_RAW_MIN_CONFIDENCE: "0.10"
+          SYMBOL_ONNX_TILE_TRIGGER: "640"
+          SYMBOL_ONNX_TILE_OVERLAP: "0.18"
+        run: |
+          python - <<'PY'
+          import json, os, time, xml.etree.ElementTree as ET
+          from collections import defaultdict
+          from pathlib import Path
+
+          from app.document import decode_document_with_page
+          from app.symbols import extract_local_onnx_detections
+
+          root=Path("../..")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          info=json.loads((root/"benchmark-model/symbol-model-info.json").read_text())
+          os.environ["SYMBOL_ONNX_MODEL"]=str((root/"benchmark-model/floorcad-symbols.onnx").resolve())
+          os.environ["SYMBOL_ONNX_CLASSES"]=json.dumps(info["classes"],separators=(",",":"))
+          os.environ["SYMBOL_ONNX_TILE_SIZE"]=os.environ["TILE_SIZE"]
+
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          item=manifest["sheets"][int(os.environ["SHARD"])]
+          sheet=str(item["sheet"])
+          annotations=ET.parse(dataset/"annotations_15_scoring_ready.xml").getroot()
+          image_node=next(
+              n for n in annotations.findall("image")
+              if Path(str(n.get("name"))).stem==sheet
+          )
+          targets=["Sink","Toilet","Bathtub","Cooktops"]
+          aliases={
+              "sink":"Sink","basin":"Sink","lavatory":"Sink",
+              "toilet":"Toilet","wc":"Toilet","squat toilet":"Toilet","squat_toilet":"Toilet",
+              "bath":"Bathtub","bath tub":"Bathtub","bath_tub":"Bathtub","bathtub":"Bathtub",
+              "gas stove":"Cooktops","gas_stove":"Cooktops","cooktop":"Cooktops","stove":"Cooktops",
+          }
+          thresholds=[.10,.15,.20,.25,.30,.35,.40,.50,.55]
+
+          def norm(value):
+              return " ".join(str(value or "").strip().lower().replace("_"," ").replace("-"," ").split())
+
+          def iou(a,b):
+              ax1,ay1,ax2,ay2=map(float,a); bx1,by1,bx2,by2=map(float,b)
+              iw=max(0.0,min(ax2,bx2)-max(ax1,bx1))
+              ih=max(0.0,min(ay2,by2)-max(ay1,by1))
+              inter=iw*ih
+              if inter<=0:return 0.0
+              aa=max(0.0,ax2-ax1)*max(0.0,ay2-ay1)
+              bb=max(0.0,bx2-bx1)*max(0.0,by2-by1)
+              return inter/max(1e-9,aa+bb-inter)
+
+          image,_=decode_document_with_page(
+              (dataset/str(item["pdf"])).read_bytes(),
+              "application/pdf",
+          )
+          h,w=image.shape[:2]
+          sx=w/float(item["width"]); sy=h/float(item["height"])
+
+          gt=defaultdict(list)
+          for box in image_node.findall("box"):
+              label=str(box.get("label") or "")
+              if label not in targets:continue
+              gt[label].append([
+                  float(box.get("xtl"))*sx,float(box.get("ytl"))*sy,
+                  float(box.get("xbr"))*sx,float(box.get("ybr"))*sy,
+              ])
+
+          started=time.perf_counter()
+          raw=extract_local_onnx_detections(image)
+          elapsed=time.perf_counter()-started
+          mapped=[]
+          for det in raw:
+              cls=aliases.get(norm(det.get("class")))
+              if cls not in targets:continue
+              mapped.append({
+                  "class":cls,
+                  "confidence":float(det.get("confidence",0)),
+                  "bbox":list(map(float,det["bbox"])),
+              })
+
+          result={
+              "sheet":sheet,
+              "tileSize":int(os.environ["TILE_SIZE"]),
+              "seconds":round(elapsed,3),
+              "rawCount":len(raw),
+              "mappedCount":len(mapped),
+              "thresholds":{},
+          }
+          for threshold in thresholds:
+              metrics={}
+              for cls in targets:
+                  truths=list(gt[cls])
+                  preds=[d for d in mapped if d["class"]==cls and d["confidence"]>=threshold]
+                  pairs=[]
+                  for pi,pred in enumerate(preds):
+                      for gi,truth in enumerate(truths):
+                          score=iou(pred["bbox"],truth)
+                          if score>=.50:pairs.append((score,pi,gi))
+                  pairs.sort(reverse=True)
+                  usedp=set(); usedg=set(); tp=0
+                  for score,pi,gi in pairs:
+                      if pi in usedp or gi in usedg:continue
+                      usedp.add(pi); usedg.add(gi); tp+=1
+                  metrics[cls]={"tp":tp,"fp":len(preds)-tp,"fn":len(truths)-tp}
+              result["thresholds"][f"{threshold:.2f}"]=metrics
+
+          out=root/f"benchmark-output/tile-sweep/{os.environ['TILE_SIZE']}-{sheet}.json"
+          out.parent.mkdir(parents=True,exist_ok=True)
+          out.write_text(json.dumps(result,indent=2),encoding="utf-8")
+          print("RESULT",json.dumps(result,sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tile-${{ matrix.tile }}-sheet-${{ matrix.shard }}-${{ github.sha }}
+          path: benchmark-output/tile-sweep/*.json
+          retention-days: 3
+
+  aggregate:
+    if: always()
+    needs: sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tile-*-${{ github.sha }}
+          path: reports
+          merge-multiple: true
+      - name: Aggregate sweep
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          files=sorted(Path("reports").glob("*.json"))
+          if len(files)<20:
+              raise SystemExit(f"Expected 20 reports, found {len(files)}")
+          reports=[json.loads(p.read_text()) for p in files]
+          targets=["Sink","Toilet","Bathtub","Cooktops"]
+          tiles=sorted({r["tileSize"] for r in reports})
+          thresholds=sorted(reports[0]["thresholds"])
+          output={}
+          for tile in tiles:
+              subset=[r for r in reports if r["tileSize"]==tile]
+              tile_result={"meanSeconds":round(sum(r["seconds"] for r in subset)/len(subset),3),"thresholds":{}}
+              for threshold in thresholds:
+                  row={}
+                  for cls in targets:
+                      tp=sum(r["thresholds"][threshold][cls]["tp"] for r in subset)
+                      fp=sum(r["thresholds"][threshold][cls]["fp"] for r in subset)
+                      fn=sum(r["thresholds"][threshold][cls]["fn"] for r in subset)
+                      p=tp/(tp+fp) if tp+fp else 0.0
+                      rec=tp/(tp+fn) if tp+fn else 0.0
+                      f1=2*p*rec/(p+rec) if p+rec else 0.0
+                      row[cls]={"tp":tp,"fp":fp,"fn":fn,"precision":round(p,4),"recall":round(rec,4),"f1":round(f1,4)}
+                  tile_result["thresholds"][threshold]=row
+              output[str(tile)]=tile_result
+              best=max(
+                  (
+                      (sum(tile_result["thresholds"][t][c]["f1"] for c in targets),t)
+                      for t in thresholds
+                  ),
+                  default=(0,""),
+              )
+              print("TILE",tile,"MEAN_SECONDS",tile_result["meanSeconds"],"BEST",best[1],json.dumps(tile_result["thresholds"][best[1]],sort_keys=True))
+          Path("fixture-tile-sweep.json").write_text(json.dumps(output,indent=2),encoding="utf-8")
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Fixture tile-size sweep\n\n")
+              out.write("| Tile | Mean inference s | Best threshold | Sink F1 | Toilet F1 | Bathtub F1 | Cooktops F1 |\n")
+              out.write("|---:|---:|---:|---:|---:|---:|---:|\n")
+              for tile in tiles:
+                  tr=output[str(tile)]
+                  best=max(
+                      tr["thresholds"],
+                      key=lambda t:sum(tr["thresholds"][t][c]["f1"] for c in targets),
+                  )
+                  m=tr["thresholds"][best]
+                  out.write(
+                      f"| {tile} | {tr['meanSeconds']:.2f} | {best} | "
+                      f"{m['Sink']['f1']:.3f} | {m['Toilet']['f1']:.3f} | "
+                      f"{m['Bathtub']['f1']:.3f} | {m['Cooktops']['f1']:.3f} |\n"
+                  )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fixture-tile-sweep-${{ github.sha }}
+          path: fixture-tile-sweep.json
+          retention-days: 5
