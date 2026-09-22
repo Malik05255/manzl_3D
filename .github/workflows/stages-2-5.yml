@@ -310,6 +310,32 @@ jobs:
                           f"{item.get('areaInstance',{}).get('f1',0):.3f} | "
                           f"{item.get('macroF1',0):.3f} |\n"
                       )
+
+              timing_dir=Path("benchmark-output/aec15/predictions/_timings")
+              timings=[]
+              if timing_dir.exists():
+                  for timing_file in timing_dir.glob("*.json"):
+                      try:
+                          item=json.loads(timing_file.read_text(encoding="utf-8"))
+                      except Exception:
+                          continue
+                      timings.append(item)
+              if timings:
+                  timings.sort(key=lambda item:float(item.get("totalSeconds",0)),reverse=True)
+                  out.write("\n### Slowest extraction sheets\n\n")
+                  out.write("| Sheet | Analysis s | Render s | Total s | Walls | Rooms | Doors | Windows | Symbols |\n")
+                  out.write("|---|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+                  for item in timings[:10]:
+                      counts=item.get("counts",{})
+                      out.write(
+                          f"| {item.get('sheet','')} | "
+                          f"{float(item.get('analysisSeconds',0)):.2f} | "
+                          f"{float(item.get('diagnosticRenderSeconds',0)):.2f} | "
+                          f"{float(item.get('totalSeconds',0)):.2f} | "
+                          f"{counts.get('walls',0)} | {counts.get('rooms',0)} | "
+                          f"{counts.get('doors',0)} | {counts.get('windows',0)} | "
+                          f"{counts.get('symbols',0)} |\n"
+                      )
           PY
           fi
 
