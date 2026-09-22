@@ -126,10 +126,21 @@ jobs:
             fi
           fi
 
-      - name: Verify external Analyzer
+      - name: Verify external Analyzer V2
         run: |
-          echo "Checking free external Analyzer at $ANALYZER_URL"
-          curl --fail --show-error --silent --retry 45 --retry-delay 10 --retry-all-errors "$ANALYZER_URL/health"
+          echo "Checking free external Analyzer V2 at $ANALYZER_URL"
+          curl --fail --show-error --silent --retry 60 --retry-delay 10 --retry-all-errors             "$ANALYZER_URL/health" -o /tmp/analyzer-health.json
+          cat /tmp/analyzer-health.json
+          python - <<'PY'
+          import json
+          payload=json.load(open("/tmp/analyzer-health.json"))
+          assert payload.get("ok") is True, payload
+          assert payload.get("reconstructionV2") is True, (
+              "Render is healthy but still serving the old analyzer build: "
+              +repr(payload)
+          )
+          print("Analyzer V2 readiness confirmed.")
+          PY
 
       - name: Generate production API Worker config
         run: |
