@@ -429,6 +429,16 @@ def _dedupe(openings:list[dict],distance:float)->list[dict]:
     return result
 
 
+def _door_subtype_from_evidence(
+    leaf_hinges:set[str],
+    arc_hinges:set[str],
+)->str:
+    # Double swing is only trusted when two independently visible leaves are
+    # anchored at opposite sides of the opening. Dual arcs without two leaves
+    # are too ambiguous on real architectural drawings.
+    return "double_swing" if {"a","b"}.issubset(leaf_hinges) else "single_swing"
+
+
 def detect_doors(
     image:np.ndarray,
     walls:list[dict],
@@ -462,11 +472,7 @@ def detect_doors(
             # independent hinge-centred arcs. Mixing one leaf on one side with
             # an unrelated arc on the other side caused excessive double-door
             # classifications on real AEC sheets.
-            double_leaf={"a","b"}.issubset(leaf_hinges)
-            # Real double-swing doors require two independently visible leaves.
-            # Arc-only dual circles are too ambiguous on real plans and were
-            # heavily over-classifying windows as double doors.
-            door_subtype="double_swing" if double_leaf else "single_swing"
+            door_subtype=_door_subtype_from_evidence(leaf_hinges,arc_hinges)
             swing_side=leaf_side if leaf_side!="unknown" else arc_side
             swing_depth=max(leaf_depth,arc_depth)
             confidence=min(
