@@ -22,7 +22,7 @@ export interface Opening {
   reviewed?: boolean;
   provenance?: ElementProvenance;
 }
-export type SymbolKind = "sink" | "toilet" | "bathtub" | "shower" | "cooktop" | "stairs";
+export type SymbolKind = "sink" | "toilet" | "bathtub" | "shower" | "cooktop" | "stairs" | "elevator";
 export interface PlanSymbol {
   id: string;
   kind: SymbolKind;
@@ -214,7 +214,7 @@ function fpOpening(value:unknown):value is Opening{
 function fpSymbol(value:unknown):value is PlanSymbol{
   return fpObject(value)
     &&typeof value.id==="string"&&value.id.length>0
-    &&["sink","toilet","bathtub","shower","cooktop","stairs"].includes(String(value.kind))
+    &&["sink","toilet","bathtub","shower","cooktop","stairs","elevator"].includes(String(value.kind))
     &&fpPoint(value.a)&&fpPoint(value.b)
     &&value.b.x>value.a.x&&value.b.y>value.a.y
     &&fpConfidence(value.confidence)
