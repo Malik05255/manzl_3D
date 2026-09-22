@@ -406,3 +406,19 @@ def test_raster_window_keeps_generic_padding():
     assert y1==195.0
     assert x2==205.0
     assert y2==205.0
+
+
+def test_door_bbox_respects_configurable_depth_and_padding(monkeypatch):
+    door={
+        "a":{"x":100.0,"y":100.0},
+        "b":{"x":200.0,"y":100.0},
+        "doorSwingSide":"positive",
+        "doorSwingDepthPx":20.0,
+    }
+    monkeypatch.setenv("DOOR_BBOX_MIN_DEPTH_RATIO","0.80")
+    monkeypatch.setenv("DOOR_BBOX_MAX_DEPTH_RATIO","1.10")
+    monkeypatch.setenv("DOOR_BBOX_PAD_RATIO","0.10")
+    from app.aec_benchmark import _door_bbox
+    x1,y1,x2,y2=_door_bbox(door,1.0,1.0,10.0)
+    assert x1<=99.0 and x2>=201.0
+    assert y2-y1>=80.0
