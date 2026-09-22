@@ -145,3 +145,28 @@ def test_cross_class_partial_overlap_keeps_distinct_fixtures():
         {"label":"sink","bbox":[65,30,125,80],"confidence":.90},
     ],200,160)
     assert {item["kind"] for item in result}=={"toilet","sink"}
+
+
+
+def test_tile_windows_cover_large_page_with_overlap():
+    windows=_tile_windows(6222,4148,1600,.18)
+    assert len(windows)>1
+    assert windows[0]==(0,0,1600,1600)
+    assert windows[-1][2:]==(6222,4148)
+    # Every page corner is covered and adjacent tiles overlap.
+    assert any(x1==0 and y1==0 for x1,y1,_,_ in windows)
+    assert any(x2==6222 and y2==4148 for _,_,x2,y2 in windows)
+    first_row=[item for item in windows if item[1]==0]
+    assert first_row[1][0]<first_row[0][2]
+
+
+def test_raw_tile_dedupe_keeps_best_same_class_detection():
+    result=_dedupe_raw_detections([
+        {"class":"sink","bbox":[100,100,180,180],"confidence":.91},
+        {"class":"sink","bbox":[104,103,181,181],"confidence":.83},
+        {"class":"toilet","bbox":[104,103,181,181],"confidence":.88},
+    ],.45)
+    assert len(result)==2
+    sink=next(item for item in result if item["class"]=="sink")
+    assert sink["confidence"]==.91
+    assert {item["class"] for item in result}=={"sink","toilet"}
