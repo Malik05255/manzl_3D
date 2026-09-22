@@ -150,11 +150,11 @@ def plan_to_aec_prediction(plan:dict,*,sheet:str,width:int,height:int)->dict:
         for room in plan.get("rooms",[])
         if len(room.get("polygon",[]))>=3
     ]
-    # The released AEC benchmark counts stairs as Area rather than an object
-    # class. A symbol detector can therefore recover staircase area even when
-    # room segmentation misses its enclosure.
+    # The released AEC benchmark counts stairs/elevators as Area rather than
+    # object classes. Symbol detections can therefore recover these spaces when
+    # room segmentation misses their enclosures.
     for symbol in plan.get("symbols",[]):
-        if symbol.get("kind")!="stairs":
+        if symbol.get("kind") not in {"stairs","elevator"}:
             continue
         x1=float(symbol["a"]["x"])*sx
         y1=float(symbol["a"]["y"])*sy
