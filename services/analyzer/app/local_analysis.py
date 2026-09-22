@@ -151,6 +151,12 @@ def analyze_document_bytes_local(
         "sourceSha256":hashlib.sha256(data).hexdigest(),
         "engines":list(dict.fromkeys(engines)),
     }
+    if ai_detections:
+        detector_counts={}
+        for detection in ai_detections:
+            name=str(detection.get("class","unknown"))
+            detector_counts[name]=detector_counts.get(name,0)+1
+        analysis["detectorClassCounts"]=detector_counts
     return assemble_plan(
         image,project_id,filename,mime_type,labels,walls,rooms,scale,scale_confidence,
         source_page=page,source_page_count=page_count,doors=doors,windows=windows,
