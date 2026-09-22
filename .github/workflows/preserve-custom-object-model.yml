@@ -1,0 +1,38 @@
+name: Preserve Custom Object Model
+
+on:
+  push:
+    branches: [exp/preserve-custom-model]
+    paths:
+      - .github/workflows/preserve-custom-object-model.yml
+  workflow_dispatch:
+
+jobs:
+  preserve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35771807959
+          name: synthetic-object-model-ce173f1610d70efb74b1c49c1c72ed137d04e57a
+          path: custom-object-model
+
+      - name: Verify preserved model package
+        run: |
+          test -s custom-object-model/synthetic-model/synthetic-objects.onnx
+          test -s custom-object-model/synthetic-model/classes.json
+          sha256sum custom-object-model/synthetic-model/synthetic-objects.onnx
+          cat custom-object-model/synthetic-model/classes.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manzil-custom-object-model-v1
+          path: custom-object-model/synthetic-model/
+          if-no-files-found: error
+          retention-days: 90
