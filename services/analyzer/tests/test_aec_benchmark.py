@@ -406,3 +406,36 @@ def test_raster_window_keeps_generic_padding():
     assert y1==195.0
     assert x2==205.0
     assert y2==205.0
+
+
+def test_pdf_vector_window_bbox_clamps_thin_native_depth_to_wall_scale():
+    source={
+        "widthPx":1000,
+        "heightPx":500,
+        "walls":[{
+            "id":"w",
+            "a":{"x":100.0,"y":100.0},
+            "b":{"x":900.0,"y":100.0},
+            "thicknessPx":32.0,
+        }],
+        "rooms":[],
+        "doors":[],
+        "windows":[{
+            "id":"x",
+            "kind":"window",
+            "wallId":"w",
+            "a":{"x":300.0,"y":100.0},
+            "b":{"x":450.0,"y":100.0},
+            "windowDepthPx":8.0,
+            "provenance":"pdf-vector",
+            "confidence":.9,
+        }],
+        "symbols":[],
+    }
+    prediction=plan_to_aec_prediction(
+        source,sheet="sheet",width=1000,height=500,
+    )
+    x1,y1,x2,y2=prediction["objects"][0]["bbox"]
+    assert 295<=x1<300
+    assert 450<x2<=455
+    assert 60<=(y2-y1)<=70
