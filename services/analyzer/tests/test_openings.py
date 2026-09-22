@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.openings import _door_arc_evidence_details,_door_subtype_from_evidence,detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
+from app.openings import _arc_roi_limit,_door_arc_evidence_details,_door_subtype_from_evidence,detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
 
 
 def wall(wall_id,x1,y1,x2,y2):
@@ -530,3 +530,20 @@ def test_double_swing_requires_two_visible_leaf_hinges():
     assert _door_subtype_from_evidence(set(),{"a","b"})=="single_swing"
 
 
+
+
+def test_arc_roi_limit_defaults_to_640(monkeypatch):
+    monkeypatch.delenv("OPENING_ARC_MAX_ROI",raising=False)
+    assert _arc_roi_limit()==640.0
+
+
+def test_arc_roi_limit_supports_override_and_disable(monkeypatch):
+    monkeypatch.setenv("OPENING_ARC_MAX_ROI","640")
+    assert _arc_roi_limit()==640.0
+    monkeypatch.setenv("OPENING_ARC_MAX_ROI","0")
+    assert _arc_roi_limit()==0.0
+
+
+def test_arc_roi_limit_rejects_invalid_value(monkeypatch):
+    monkeypatch.setenv("OPENING_ARC_MAX_ROI","invalid")
+    assert _arc_roi_limit()==640.0

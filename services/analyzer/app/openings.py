@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 
 import cv2
 import numpy as np
@@ -188,6 +189,14 @@ def _door_leaf_evidence(
     evidence,_,_,_=_door_leaf_evidence_details(image,a,b,gap_px,wall_angle_deg)
     return evidence
 
+def _arc_roi_limit(default:float=640.0)->float:
+    try:
+        value=float(os.getenv("OPENING_ARC_MAX_ROI",str(default)) or str(default))
+    except ValueError:
+        value=default
+    return max(0.0,min(4096.0,value))
+
+
 def _door_arc_evidence_details(
     image:np.ndarray,
     a:dict,
@@ -199,17 +208,38 @@ def _door_arc_evidence_details(
     if roi.size==0:
         return 0,set(),"unknown",0.0
 
-    gray=cv2.cvtColor(roi,cv2.COLOR_BGR2GRAY)
+    max_roi=_arc_roi_limit()
+    roi_h,roi_w=roi.shape[:2]
+    max_dim=max(roi_h,roi_w)
+    work_scale=(
+        min(1.0,max_roi/max(1.0,float(max_dim)))
+        if max_roi>0
+        else 1.0
+    )
+    if work_scale<.999:
+        work=cv2.resize(
+            roi,
+            (
+                max(1,int(round(roi_w*work_scale))),
+                max(1,int(round(roi_h*work_scale))),
+            ),
+            interpolation=cv2.INTER_AREA,
+        )
+    else:
+        work=roi
+
+    gray=cv2.cvtColor(work,cv2.COLOR_BGR2GRAY)
     blurred=cv2.GaussianBlur(gray,(5,5),1.2)
-    min_radius=max(5,int(round(gap_px*.25)))
-    max_radius=max(min_radius+2,int(round(gap_px*1.60)))
+    scaled_gap=max(1.0,gap_px*work_scale)
+    min_radius=max(5,int(round(scaled_gap*.25)))
+    max_radius=max(min_radius+2,int(round(scaled_gap*1.60)))
     circles=cv2.HoughCircles(
         blurred,
         cv2.HOUGH_GRADIENT,
         dp=1.2,
-        minDist=max(10.0,gap_px*.35),
+        minDist=max(10.0,scaled_gap*.35),
         param1=120,
-        param2=max(12.0,min(24.0,gap_px*.20)),
+        param2=max(12.0,min(24.0,scaled_gap*.20)),
         minRadius=min_radius,
         maxRadius=max_radius,
     )
@@ -221,6 +251,7 @@ def _door_arc_evidence_details(
     if not len(edge_x):
         return 0,set(),"unknown",0.0
 
+    inverse_scale=1.0/max(work_scale,1e-9)
     ax,ay=_point(a)
     bx,by=_point(b)
     gap_length=max(1e-9,math.hypot(bx-ax,by-ay))
@@ -229,15 +260,15 @@ def _door_arc_evidence_details(
     nx=-uy
     ny=ux
     hinge_tolerance=max(10.0,gap_px*.30)
-    ring_tolerance=max(3.0,gap_px*.065)
+    ring_tolerance=max(3.0,scaled_gap*.065)
     by_hinge:dict[str,tuple[float,float]]={}
 
     for raw_cx,raw_cy,raw_radius in circles[0]:
         cx=float(raw_cx)
         cy=float(raw_cy)
         radius=float(raw_radius)
-        global_cx=float(offset_x)+cx
-        global_cy=float(offset_y)+cy
+        global_cx=float(offset_x)+cx*inverse_scale
+        global_cy=float(offset_y)+cy*inverse_scale
         distance_a=math.hypot(global_cx-ax,global_cy-ay)
         distance_b=math.hypot(global_cx-bx,global_cy-by)
         nearest=min(distance_a,distance_b)
@@ -260,13 +291,11 @@ def _door_arc_evidence_details(
         angles=np.arctan2(sy-cy,sx-cx)
         angle_bins=np.floor((angles+math.pi)/(math.pi/18.0)).astype(np.int32)
         coverage=len(np.unique(angle_bins))/36.0
-        # A useful swing mark is an arc, not a tiny corner and not a full
-        # circle/furniture symbol.
         if coverage<.10 or coverage>.82:
             continue
 
-        global_x=sx+float(offset_x)
-        global_y=sy+float(offset_y)
+        global_x=float(offset_x)+sx*inverse_scale
+        global_y=float(offset_y)+sy*inverse_scale
         signed=(global_x-hx)*nx+(global_y-hy)*ny
         significant=signed[np.abs(signed)>=gap_px*.10]
         if not len(significant):
@@ -280,9 +309,6 @@ def _door_arc_evidence_details(
             continue
 
         strength=coverage*(1.0-nearest/max(hinge_tolerance,1.0))
-        # Weak secondary circles commonly appear around line corners or the
-        # opposite wall endpoint. A true swing arc has both meaningful angular
-        # coverage and a centre materially close to its hinge.
         if strength<.04:
             continue
         previous=by_hinge.get(hinge)
@@ -303,7 +329,6 @@ def _door_arc_evidence_details(
     depth=max(abs(value) for value in signed)
     hinges=set(by_hinge)
     return len(hinges),hinges,side,float(depth)
-
 
 def _door_arc_evidence(image:np.ndarray,a:dict,b:dict,gap_px:float)->int:
     evidence,_,_,_=_door_arc_evidence_details(image,a,b,gap_px)
