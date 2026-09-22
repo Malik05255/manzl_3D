@@ -145,6 +145,11 @@ Each licensed AEC workflow run retains, per selected sheet:
 The canonical JSON and overlay are diagnostic artifacts only; they do not alter
 the official scoring input.
 
+Each sheet also emits a `_timings/<sheet>.json` diagnostic containing source
+size, analysis/render/export durations, extracted element counts, and active
+engines. The workflow summary lists the slowest sheets so performance work can
+target measured bottlenecks rather than aggregate wall-clock time.
+
 
 ## Parallel AEC-15 execution
 
