@@ -1047,7 +1047,7 @@ def fuse_ai_opening_detections(
     """
     result_doors=[dict(item) for item in doors]
     result_windows=[dict(item) for item in windows]
-    if not walls or not detections:
+    if not detections or (not walls and not allow_unhosted):
         return result_doors,result_windows
 
     for raw in sorted(
