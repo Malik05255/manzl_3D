@@ -1,0 +1,162 @@
+name: Synthetic Fixture Threshold Fast Sweep
+
+on:
+  push:
+    branches: [exp/synthetic-threshold-fast]
+    paths:
+      - .github/workflows/experiment-synthetic-threshold-fast.yml
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/analyzer/requirements.txt shapely
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35774442005
+          pattern: synthetic-policy-v2-sheet-*
+          path: benchmark-input
+          merge-multiple: true
+
+      - name: Score all thresholds in one process
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import copy
+          import importlib.util
+          import json
+          from pathlib import Path
+
+          from app.aec_benchmark import plan_to_aec_prediction
+
+          root=Path("../..")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          scorer_path=root/"external/aec-geometric-bench/scoring/score.py"
+          spec=importlib.util.spec_from_file_location("aec_score",scorer_path)
+          scorer=importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(scorer)
+
+          gt=scorer.load_gt(str(dataset))
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          manifest_by={str(x["sheet"]):x for x in manifest["sheets"]}
+
+          dirs=list((root/"benchmark-input").rglob("_canonical"))
+          if not dirs:
+              raise SystemExit("No canonical folder")
+          canonical_dir=dirs[0]
+          sheets=sorted(p.stem for p in canonical_dir.glob("sheet_*.json"))
+          if len(sheets)!=4:
+              raise SystemExit(f"Expected 4 sheets, got {sheets}")
+
+          plans={
+              sheet:json.loads((canonical_dir/f"{sheet}.json").read_text())
+              for sheet in sheets
+          }
+          classes={
+              "Toilet":"toilet",
+              "Bathtub":"bathtub",
+              "Shower":"shower",
+              "Cooktops":"cooktop",
+              "Sink":"sink",
+          }
+          thresholds=[
+              .05,.08,.10,.12,.15,.18,.20,.25,.30,.35,.40,.45,
+              .50,.55,.60,.65,.70,.75,.80,.85,.90,.95,
+          ]
+
+          rows={}
+          for aec_class,kind in classes.items():
+              class_rows=[]
+              for threshold in thresholds:
+                  total=[0,0,0]
+                  for sheet in sheets:
+                      plan=copy.deepcopy(plans[sheet])
+                      plan["symbols"]=[
+                          x for x in plan.get("symbols",[])
+                          if x.get("kind")==kind
+                          and float(x.get("confidence",0.0))>=threshold
+                      ]
+                      item=manifest_by[sheet]
+                      pred=plan_to_aec_prediction(
+                          plan,
+                          sheet=sheet,
+                          width=int(item["width"]),
+                          height=int(item["height"]),
+                      )
+                      pred_polys=[]
+                      for obj in pred.get("objects",[]):
+                          if obj.get("class")!=aec_class:
+                              continue
+                          b=obj.get("bbox")
+                          if not b or len(b)!=4:
+                              continue
+                          poly=scorer._poly([
+                              (b[0],b[1]),(b[2],b[1]),
+                              (b[2],b[3]),(b[0],b[3]),
+                          ])
+                          if poly is not None:
+                              pred_polys.append(poly)
+                      tp,fp,fn=scorer.match(
+                          pred_polys,
+                          gt[sheet]["objects"][aec_class],
+                          .50,
+                      )
+                      total[0]+=tp; total[1]+=fp; total[2]+=fn
+                  p,r,f=scorer.f1(*total)
+                  class_rows.append({
+                      "threshold":threshold,
+                      "tp":total[0],"fp":total[1],"fn":total[2],
+                      "precision":p,"recall":r,"f1":f,
+                  })
+              class_rows.sort(
+                  key=lambda x:(x["f1"],x["precision"],x["recall"],x["threshold"]),
+                  reverse=True,
+              )
+              rows[aec_class]={
+                  "best":class_rows[0],
+                  "rows":class_rows,
+              }
+              print("BEST",aec_class,json.dumps(class_rows[0],sort_keys=True))
+
+          report={"sheets":sheets,"classes":rows}
+          target=root/"benchmark-output/threshold-fast/report.json"
+          target.parent.mkdir(parents=True,exist_ok=True)
+          target.write_text(json.dumps(report,indent=2),encoding="utf-8")
+
+          import os
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Fast fixture threshold sweep\n\n")
+              out.write("| Class | Threshold | TP | FP | FN | P | R | F1 |\n")
+              out.write("|---|---:|---:|---:|---:|---:|---:|---:|\n")
+              for cls,item in rows.items():
+                  b=item["best"]
+                  out.write(
+                      f"| {cls} | {b['threshold']:.2f} | {b['tp']} | {b['fp']} | "
+                      f"{b['fn']} | {b['precision']:.3f} | {b['recall']:.3f} | "
+                      f"{b['f1']:.3f} |\n"
+                  )
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-threshold-fast-${{ github.sha }}
+          path: benchmark-output/threshold-fast/report.json
+          retention-days: 7
