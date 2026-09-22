@@ -1,0 +1,163 @@
+name: Sink Rescue Experiment
+
+on:
+  push:
+    branches: [exp/sink-rescue]
+    paths:
+      - services/analyzer/app/symbols.py
+      - services/analyzer/app/local_analysis.py
+      - services/analyzer/tests/test_symbols.py
+      - .github/workflows/experiment-sink-rescue.yml
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [8, 10, 13]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt pytest shapely
+          pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
+      - name: Run symbol tests
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_symbols.py
+      - name: Export FloorCAD ONNX
+        run: |
+          python - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          from huggingface_hub import hf_hub_download
+          from ultralytics import YOLO
+          source=hf_hub_download(
+              "mudasir13cs/floorcad-yolov8n-detect",
+              "floorcad-yolov8n-detect.pt",
+          )
+          model=YOLO(source)
+          exported=model.export(format="onnx",imgsz=640,opset=12,simplify=False,dynamic=False)
+          target=Path("benchmark-model")
+          target.mkdir(exist_ok=True)
+          shutil.copy2(exported,target/"floorcad.onnx")
+          classes=[str(model.names[index]) for index in sorted(model.names)]
+          (target/"classes.json").write_text(json.dumps(classes),encoding="utf-8")
+          PY
+      - name: Configure detector
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          classes=json.loads(Path("benchmark-model/classes.json").read_text())
+          with Path(os.environ["GITHUB_ENV"]).open("a") as env:
+              env.write("SYMBOL_ONNX_MODEL="+str(Path("benchmark-model/floorcad.onnx").resolve())+"\n")
+              env.write("SYMBOL_ONNX_CLASSES="+json.dumps(classes,separators=(",",":"))+"\n")
+              env.write("SYMBOL_ONNX_RAW_MIN_CONFIDENCE=0.10\n")
+              env.write("SYMBOL_MIN_CONFIDENCE=0.55\n")
+              env.write("SYMBOL_SINK_MIN_CONFIDENCE=0.10\n")
+              env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
+          PY
+      - name: Run representative sheet
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p "../../benchmark-output/sink-${{ matrix.shard }}"
+          python -m app.aec_benchmark \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --output "../../benchmark-output/sink-${{ matrix.shard }}" \
+            --offset "${{ matrix.shard }}" \
+            --limit 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sink-sheet-${{ matrix.shard }}-${{ github.sha }}
+          path: |
+            benchmark-output/sink-${{ matrix.shard }}/*.json
+            benchmark-output/sink-${{ matrix.shard }}/_canonical/*.json
+            benchmark-output/sink-${{ matrix.shard }}/_timings/*.json
+          if-no-files-found: error
+          retention-days: 3
+
+  score:
+    if: always()
+    needs: benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/analyzer/requirements.txt shapely
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sink-sheet-*-${{ github.sha }}
+          path: benchmark-output/sink/predictions
+          merge-multiple: true
+      - name: Score sink rescue
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from app.aec_benchmark import run_official_scorer
+
+          root=Path("../..")
+          pred=root/"benchmark-output/sink/predictions"
+          dataset=root/"external/aec-geometric-bench/dataset"
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          sheets=sorted(p.stem for p in pred.glob("sheet_*.json"))
+          code,output,report=run_official_scorer(
+              scorer,pred,dataset,sheet_names=sheets,include_per_sheet=True,
+          )
+          target=root/"benchmark-output/sink"
+          target.mkdir(exist_ok=True)
+          (target/"score.txt").write_text(output,encoding="utf-8")
+          if report is not None:
+              (target/"report.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
+              sink=report.get("classes",{}).get("Sink",{})
+              with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+                  out.write("## Sink rescue\n\n")
+                  out.write(
+                      f"- Sink: TP {sink.get('tp',0)} FP {sink.get('fp',0)} "
+                      f"FN {sink.get('fn',0)} F1 {float(sink.get('f1',0)):.3f}\n"
+                  )
+                  out.write(f"- Object micro F1: {float(report.get('objectMicro',{}).get('f1',0)):.3f}\n")
+                  out.write(f"- macroF1: {float(report.get('macroF1',0)):.3f}\n")
+          print(output)
+          raise SystemExit(code)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sink-rescue-score-${{ github.sha }}
+          path: |
+            benchmark-output/sink/score.txt
+            benchmark-output/sink/report.json
+          if-no-files-found: warn
+          retention-days: 5
