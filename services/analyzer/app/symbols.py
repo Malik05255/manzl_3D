@@ -9,7 +9,7 @@ import httpx
 import numpy as np
 
 
-KINDS={"sink","toilet","bathtub","shower","cooktop","stairs"}
+KINDS={"sink","toilet","bathtub","shower","cooktop","stairs","elevator"}
 ALIASES={
     "sink":"sink",
     "basin":"sink",
@@ -38,6 +38,8 @@ ALIASES={
     "stairs":"stairs",
     "stair":"stairs",
     "staircase":"stairs",
+    "elevator":"elevator",
+    "lift":"elevator",
 }
 
 
