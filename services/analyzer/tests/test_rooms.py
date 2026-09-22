@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.rooms import _component_polygon,detect_rooms
+from app.rooms import _component_polygon,detect_rooms,seal_openings_for_room_detection
 
 
 def test_near_rectangle_is_canonicalized_to_four_points():
@@ -85,3 +85,58 @@ def test_large_sheet_keeps_small_bathroom_sized_enclosure():
     height=max(point["y"] for point in small["polygon"])-min(point["y"] for point in small["polygon"])
     assert width<900
     assert height<900
+
+
+def _room_with_large_top_gap():
+    mask=np.zeros((320,320),dtype=np.uint8)
+    cv2.line(mask,(40,40),(120,40),255,8)
+    cv2.line(mask,(200,40),(280,40),255,8)
+    cv2.line(mask,(40,40),(40,280),255,8)
+    cv2.line(mask,(280,40),(280,280),255,8)
+    cv2.line(mask,(40,280),(280,280),255,8)
+    return mask
+
+
+def test_trusted_opening_is_sealed_only_for_room_segmentation():
+    mask=_room_with_large_top_gap()
+    assert detect_rooms(mask,[],meters_per_pixel=.01)==[]
+
+    walls=[{
+        "id":"top-host",
+        "a":{"x":40.0,"y":40.0},
+        "b":{"x":280.0,"y":40.0},
+        "thicknessPx":8.0,
+    }]
+    door={
+        "id":"door-1",
+        "kind":"door",
+        "wallId":"top-host",
+        "a":{"x":120.0,"y":40.0},
+        "b":{"x":200.0,"y":40.0},
+        "confidence":.92,
+    }
+    sealed=seal_openings_for_room_detection(mask,[door],walls)
+    rooms=detect_rooms(sealed,[],meters_per_pixel=.01)
+    assert len(rooms)==1
+    assert np.array_equal(mask,_room_with_large_top_gap())
+
+
+def test_low_confidence_opening_does_not_create_room_barrier():
+    mask=_room_with_large_top_gap()
+    walls=[{
+        "id":"top-host",
+        "a":{"x":40.0,"y":40.0},
+        "b":{"x":280.0,"y":40.0},
+        "thicknessPx":8.0,
+    }]
+    door={
+        "id":"door-1",
+        "kind":"door",
+        "wallId":"top-host",
+        "a":{"x":120.0,"y":40.0},
+        "b":{"x":200.0,"y":40.0},
+        "confidence":.55,
+    }
+    sealed=seal_openings_for_room_detection(mask,[door],walls)
+    assert np.array_equal(sealed,mask)
+    assert detect_rooms(sealed,[],meters_per_pixel=.01)==[]
