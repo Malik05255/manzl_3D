@@ -72,7 +72,12 @@ async def upload_preview(url:HttpUrl|None,image):
 
 @app.get("/health")
 async def health():
-    return {"ok":True}
+    reconstruction_v2=os.getenv("ANALYZER_RECONSTRUCTION_V2","1").strip().lower() not in {"0","false","off","no"}
+    return {
+        "ok":True,
+        "pipelineVersion":PIPELINE_VERSION,
+        "reconstructionV2":reconstruction_v2,
+    }
 
 @app.post("/v1/analyze",response_model=FloorPlan)
 async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=None)):
