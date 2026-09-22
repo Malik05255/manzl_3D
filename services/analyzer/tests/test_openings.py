@@ -533,7 +533,9 @@ def test_double_swing_requires_two_visible_leaf_hinges():
 
 
 def test_pdf_vector_window_requires_repeated_parallel_strokes():
-    walls=[wall("host",20,120,360,120)]
+    host=wall("host",20,120,360,120)
+    host["thicknessPx"]=24.0
+    walls=[host]
     vectors=[
         {"a":{"x":120.0,"y":108.0},"b":{"x":230.0,"y":108.0},"widthPx":1.2},
         {"a":{"x":120.0,"y":120.0},"b":{"x":230.0,"y":120.0},"widthPx":1.2},
@@ -554,7 +556,9 @@ def test_pdf_vector_window_requires_repeated_parallel_strokes():
 
 
 def test_pdf_vector_plain_two_wall_faces_are_not_window():
-    walls=[wall("host",20,120,360,120)]
+    host=wall("host",20,120,360,120)
+    host["thicknessPx"]=24.0
+    walls=[host]
     vectors=[
         {"a":{"x":90.0,"y":108.0},"b":{"x":280.0,"y":108.0},"widthPx":1.2},
         {"a":{"x":90.0,"y":132.0},"b":{"x":280.0,"y":132.0},"widthPx":1.2},
