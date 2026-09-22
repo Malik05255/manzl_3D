@@ -5,7 +5,7 @@ on:
     branches: [exp/sheet10-cap-probe]
     paths:
       - services/analyzer/app/openings.py
-      - .github/workflows/experiment-arc-cap-sweep.yml
+      - .github/workflows/experiment-sheet10-cap-probe.yml
   workflow_dispatch:
 
 jobs:
