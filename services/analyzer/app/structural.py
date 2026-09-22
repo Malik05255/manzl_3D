@@ -93,7 +93,10 @@ def extract_structural_wall_mask(image: np.ndarray, ink: np.ndarray) -> np.ndarr
     value = hsv[:, :, 2]
     colored = np.where((saturation >= 48) & (value <= 248), 255, 0).astype(np.uint8)
     colored = cv2.morphologyEx(colored, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
-    colored = _thick_core(colored, max(1.6, min_half * 0.82))
+    # Colored dimension/extension lines are often 1-3 px while colored wall
+    # bands are materially thicker. Use a stricter core threshold for color
+    # than for monochrome ink so green/blue dimensions never become walls.
+    colored = _thick_core(colored, max(2.8, min_half * 1.30))
 
     outlined = _outlined_wall_bands(ink)
 
