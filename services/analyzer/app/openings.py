@@ -530,6 +530,17 @@ def detect_doors(
     return result
 
 
+def _fallback_window_gap_limits(
+    image:np.ndarray,
+    meters_per_pixel:float|None,
+)->tuple[float,float]:
+    h,w=image.shape[:2]
+    base=float(min(h,w))
+    if meters_per_pixel and meters_per_pixel>0:
+        return 0.35/meters_per_pixel,1.80/meters_per_pixel
+    return base*.008,base*.085
+
+
 def detect_windows(
     image:np.ndarray,
     walls:list[dict],
@@ -555,22 +566,39 @@ def detect_windows(
 
             leaf_evidence=_door_leaf_evidence(image,a,b,gap,wall_angle)
             evidence=_parallel_window_evidence(image,a,b,gap,wall_angle)
-            if evidence<2:
+            fallback_min,fallback_max=_fallback_window_gap_limits(
+                image,meters_per_pixel,
+            )
+            fallback_candidate=(
+                evidence<2
+                and fallback_min<=gap<=fallback_max
+                and leaf_evidence==0
+                and min(abs(fe-fs),abs(se-ss))>=gap*.45
+            )
+            if evidence<2 and not fallback_candidate:
                 continue
+
             arc_evidence=_door_arc_evidence(image,a,b,gap)
             # Strong glazing evidence can survive one spurious Hough leaf chord
             # when no swing arc exists. Two leaf hits or any real arc remain
-            # decisive door evidence.
+            # decisive door evidence. Fallback candidates require no door
+            # evidence at all.
             if arc_evidence>0 or leaf_evidence>=2:
                 continue
-            if leaf_evidence==1 and evidence<3:
+            if fallback_candidate and leaf_evidence>0:
+                continue
+            if not fallback_candidate and leaf_evidence==1 and evidence<3:
                 continue
 
-            confidence=min(
-                0.95,
-                0.70+0.055*evidence+(0.04 if meters_per_pixel else 0.0)
-                -(0.04 if leaf_evidence==1 else 0.0),
-            )
+            if fallback_candidate:
+                confidence=.80+(0.02 if meters_per_pixel else 0.0)
+            else:
+                confidence=min(
+                    0.95,
+                    0.70+0.055*evidence
+                    +(0.04 if meters_per_pixel else 0.0)
+                    -(0.04 if leaf_evidence==1 else 0.0),
+                )
             if confidence<0.80:
                 continue
 
