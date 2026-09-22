@@ -5,6 +5,8 @@ on:
     branches: [exp/analyzer-phase-timing]
     paths:
       - services/analyzer/app/local_analysis.py
+      - services/analyzer/app/openings.py
+      - services/analyzer/tests/test_openings.py
       - .github/workflows/experiment-phase-timing.yml
   workflow_dispatch:
 
@@ -72,7 +74,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
           python -m pip install --upgrade pip
-          pip install -r services/analyzer/requirements.txt
+          pip install -r services/analyzer/requirements.txt pytest
+      - name: Run opening regression tests
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_openings.py
       - uses: actions/download-artifact@v4
         with:
           name: phase-floorcad-${{ github.sha }}
