@@ -1,0 +1,109 @@
+name: Opening Performance Experiment
+
+on:
+  push:
+    branches: [exp/opening-performance]
+    paths:
+      - services/analyzer/app/openings.py
+      - services/analyzer/tests/test_openings.py
+      - .github/workflows/experiment-opening-performance.yml
+  workflow_dispatch:
+
+jobs:
+  sheet-15:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt pytest
+          pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
+      - name: Run opening regression tests
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_openings.py
+      - name: Export FloorCAD ONNX
+        run: |
+          python - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          from huggingface_hub import hf_hub_download
+          from ultralytics import YOLO
+
+          source=hf_hub_download(
+              "mudasir13cs/floorcad-yolov8n-detect",
+              "floorcad-yolov8n-detect.pt",
+          )
+          model=YOLO(source)
+          exported=model.export(format="onnx",imgsz=640,opset=12,simplify=False,dynamic=False)
+          target=Path("benchmark-model")
+          target.mkdir(exist_ok=True)
+          shutil.copy2(exported,target/"floorcad.onnx")
+          classes=[str(model.names[index]) for index in sorted(model.names)]
+          (target/"classes.json").write_text(json.dumps(classes),encoding="utf-8")
+          PY
+      - name: Configure detector
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          classes=json.loads(Path("benchmark-model/classes.json").read_text())
+          with Path(os.environ["GITHUB_ENV"]).open("a") as env:
+              env.write("SYMBOL_ONNX_MODEL="+str(Path("benchmark-model/floorcad.onnx").resolve())+"\n")
+              env.write("SYMBOL_ONNX_CLASSES="+json.dumps(classes,separators=(",",":"))+"\n")
+              env.write("SYMBOL_ONNX_RAW_MIN_CONFIDENCE=0.30\n")
+              env.write("SYMBOL_MIN_CONFIDENCE=0.55\n")
+              env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
+          PY
+      - name: Benchmark sheet 15
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p ../../benchmark-output/opening-performance
+          python -m app.aec_benchmark \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --output ../../benchmark-output/opening-performance \
+            --offset 14 \
+            --limit 1
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          timing=json.loads(Path("../../benchmark-output/opening-performance/_timings/sheet_15.json").read_text())
+          print("OPENING_PERF_TOTAL_SECONDS",timing.get("totalSeconds"))
+          print("OPENING_PERF_ANALYSIS_SECONDS",timing.get("analysisSeconds"))
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Opening performance — sheet_15\n\n")
+              out.write(f"- analysis: {float(timing.get('analysisSeconds',0)):.2f}s\n")
+              out.write(f"- total: {float(timing.get('totalSeconds',0)):.2f}s\n")
+              out.write(f"- baseline total: 1367.04s\n")
+              baseline=1367.0405
+              current=float(timing.get("totalSeconds",0))
+              if current>0:
+                  out.write(f"- speedup: {baseline/current:.2f}x\n")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: opening-performance-sheet15-${{ github.sha }}
+          path: |
+            benchmark-output/opening-performance/sheet_15.json
+            benchmark-output/opening-performance/_canonical/sheet_15.json
+            benchmark-output/opening-performance/_timings/sheet_15.json
+          if-no-files-found: warn
+          retention-days: 5
