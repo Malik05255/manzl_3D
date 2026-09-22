@@ -381,24 +381,65 @@ def _decode_yolo_payload(
     return payload
 
 
-def extract_local_onnx_detections(image:np.ndarray)->list[dict]:
-    model_path=os.getenv("SYMBOL_ONNX_MODEL","").strip()
-    class_names=_local_class_names()
-    if not model_path or not class_names:
-        return []
-    input_size=int(os.getenv("SYMBOL_ONNX_INPUT_SIZE","640") or "640")
-    input_size=max(128,min(2048,input_size))
-    confidence=float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78")
-    confidence=max(.50,min(.99,confidence))
+def _raw_box_iou(left:dict,right:dict)->float:
+    try:
+        ax1,ay1,ax2,ay2=map(float,left["bbox"])
+        bx1,by1,bx2,by2=map(float,right["bbox"])
+    except (KeyError,TypeError,ValueError):
+        return 0.0
+    intersection=max(0.0,min(ax2,bx2)-max(ax1,bx1))*max(0.0,min(ay2,by2)-max(ay1,by1))
+    if intersection<=0:
+        return 0.0
+    area_a=max(0.0,ax2-ax1)*max(0.0,ay2-ay1)
+    area_b=max(0.0,bx2-bx1)*max(0.0,by2-by1)
+    union=area_a+area_b-intersection
+    return intersection/union if union>0 else 0.0
 
-    key=(model_path,input_size)
-    net=_ONNX_CACHE.get(key)
-    if net is None:
-        if not os.path.exists(model_path):
-            return []
-        net=cv2.dnn.readNetFromONNX(model_path)
-        _ONNX_CACHE[key]=net
 
+def _dedupe_raw_detections(items:list[dict],iou_threshold:float=.55)->list[dict]:
+    accepted=[]
+    for item in sorted(items,key=lambda value:float(value.get("confidence",0.0)),reverse=True):
+        label=str(item.get("class",""))
+        if any(
+            str(existing.get("class",""))==label
+            and _raw_box_iou(existing,item)>=iou_threshold
+            for existing in accepted
+        ):
+            continue
+        accepted.append(item)
+    return accepted
+
+
+def _tile_windows(width:int,height:int,tile_size:int,overlap:float)->list[tuple[int,int,int,int]]:
+    if width<=tile_size and height<=tile_size:
+        return [(0,0,width,height)]
+    overlap=max(0.0,min(.45,float(overlap)))
+    step=max(1,int(round(tile_size*(1.0-overlap))))
+
+    def starts(total:int)->list[int]:
+        if total<=tile_size:
+            return [0]
+        values=list(range(0,max(1,total-tile_size+1),step))
+        last=max(0,total-tile_size)
+        if not values or values[-1]!=last:
+            values.append(last)
+        return values
+
+    return [
+        (x,y,min(width,x+tile_size),min(height,y+tile_size))
+        for y in starts(height)
+        for x in starts(width)
+    ]
+
+
+def _run_onnx_payload(
+    image:np.ndarray,
+    *,
+    net,
+    class_names:list[str],
+    input_size:int,
+    confidence:float,
+)->list[dict]:
     boxed,scale,pad_x,pad_y=_letterbox(image,input_size)
     blob=cv2.dnn.blobFromImage(
         boxed,1/255.0,(input_size,input_size),
@@ -417,6 +458,63 @@ def extract_local_onnx_detections(image:np.ndarray)->list[dict]:
         scale=scale,
         pad_x=pad_x,
         pad_y=pad_y,
+    )
+
+
+def extract_local_onnx_detections(image:np.ndarray)->list[dict]:
+    model_path=os.getenv("SYMBOL_ONNX_MODEL","").strip()
+    class_names=_local_class_names()
+    if not model_path or not class_names:
+        return []
+    input_size=int(os.getenv("SYMBOL_ONNX_INPUT_SIZE","640") or "640")
+    input_size=max(128,min(2048,input_size))
+    confidence=float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78")
+    confidence=max(.50,min(.99,confidence))
+
+    key=(model_path,input_size)
+    net=_ONNX_CACHE.get(key)
+    if net is None:
+        if not os.path.exists(model_path):
+            return []
+        net=cv2.dnn.readNetFromONNX(model_path)
+        _ONNX_CACHE[key]=net
+
+    h,w=image.shape[:2]
+    trigger=int(os.getenv("SYMBOL_ONNX_TILE_TRIGGER","1800") or "1800")
+    trigger=max(input_size,min(6000,trigger))
+    if max(h,w)<=trigger:
+        return _run_onnx_payload(
+            image,
+            net=net,
+            class_names=class_names,
+            input_size=input_size,
+            confidence=confidence,
+        )
+
+    tile_size=int(os.getenv("SYMBOL_ONNX_TILE_SIZE","1600") or "1600")
+    tile_size=max(input_size,min(3200,tile_size))
+    overlap=float(os.getenv("SYMBOL_ONNX_TILE_OVERLAP",".18") or ".18")
+    detections=[]
+    for x1,y1,x2,y2 in _tile_windows(w,h,tile_size,overlap):
+        tile=image[y1:y2,x1:x2]
+        if tile.size==0:
+            continue
+        for item in _run_onnx_payload(
+            tile,
+            net=net,
+            class_names=class_names,
+            input_size=input_size,
+            confidence=confidence,
+        ):
+            shifted=dict(item)
+            bx1,by1,bx2,by2=map(float,item["bbox"])
+            shifted["bbox"]=[
+                bx1+x1,by1+y1,bx2+x1,by2+y1,
+            ]
+            detections.append(shifted)
+    return _dedupe_raw_detections(
+        detections,
+        float(os.getenv("SYMBOL_ONNX_NMS_IOU",".45") or ".45"),
     )
 
 
