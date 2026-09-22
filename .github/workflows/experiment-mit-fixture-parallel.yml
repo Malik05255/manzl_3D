@@ -1,0 +1,218 @@
+name: MIT Fixture Detector Parallel
+
+on:
+  push:
+    branches: [exp/mit-fixture-detector-parallel]
+    paths:
+      - .github/workflows/experiment-mit-fixture-parallel.yml
+  workflow_dispatch:
+
+jobs:
+  prepare-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: sanatladkat/floor-plan-object-detection
+          ref: main
+          path: external/mit-floorplan-detector
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip
+          pip install "ultralytics==8.3.249" "onnx>=1.17,<2"
+      - name: Export ONNX once
+        run: |
+          python - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          from ultralytics import YOLO
+          model=YOLO("external/mit-floorplan-detector/best.pt")
+          print("MODEL_NAMES",json.dumps(model.names,sort_keys=True))
+          exported=model.export(format="onnx",imgsz=640,opset=12,simplify=False,dynamic=False)
+          target=Path("benchmark-model"); target.mkdir(exist_ok=True)
+          shutil.copy2(exported,target/"mit-floorplan.onnx")
+          classes=[str(model.names[index]) for index in sorted(model.names)]
+          (target/"classes.json").write_text(json.dumps(classes),encoding="utf-8")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mit-fixture-model-${{ github.sha }}
+          path: benchmark-model/
+          retention-days: 3
+
+  sheet:
+    needs: prepare-model
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix:
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: mit-fixture-model-${{ github.sha }}
+          path: benchmark-model
+      - name: Evaluate one sheet
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+          SYMBOL_ONNX_MODEL: ../../benchmark-model/mit-floorplan.onnx
+          SYMBOL_ONNX_RAW_MIN_CONFIDENCE: "0.10"
+          SHARD: ${{ matrix.shard }}
+        run: |
+          python - <<'PY'
+          import json, os, xml.etree.ElementTree as ET
+          from collections import defaultdict
+          from pathlib import Path
+          from app.document import decode_document_with_page
+          from app.symbols import extract_local_onnx_detections
+
+          root=Path("../..")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          classes=json.loads((root/"benchmark-model/classes.json").read_text())
+          os.environ["SYMBOL_ONNX_CLASSES"]=json.dumps(classes,separators=(",",":"))
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          item=manifest["sheets"][int(os.environ["SHARD"])]
+          sheet=str(item["sheet"])
+          annotations=ET.parse(dataset/"annotations_15_scoring_ready.xml").getroot()
+          image_node=next(
+              node for node in annotations.findall("image")
+              if Path(str(node.get("name"))).stem==sheet
+          )
+
+          targets=["Sink","Toilet","Bathtub","Shower","Cooktops"]
+          aliases={
+              "sink":"Sink","kitchen sink":"Sink","wash basin":"Sink","washbasin":"Sink","basin":"Sink",
+              "toilet":"Toilet","wc":"Toilet","water closet":"Toilet","squat toilet":"Toilet",
+              "bathtub":"Bathtub","bath tub":"Bathtub","bath":"Bathtub",
+              "shower":"Shower","shower room":"Shower",
+              "cooktop":"Cooktops","cook top":"Cooktops","stove":"Cooktops","gas stove":"Cooktops","range":"Cooktops",
+          }
+          thresholds=[.10,.15,.20,.25,.30,.35,.40,.50,.60]
+          def norm(v):
+              return " ".join(str(v or "").strip().lower().replace("_"," ").replace("-"," ").split())
+          def iou(a,b):
+              ax1,ay1,ax2,ay2=a; bx1,by1,bx2,by2=b
+              iw=max(0.0,min(ax2,bx2)-max(ax1,bx1)); ih=max(0.0,min(ay2,by2)-max(ay1,by1))
+              inter=iw*ih
+              if inter<=0:return 0.0
+              aa=max(0.0,ax2-ax1)*max(0.0,ay2-ay1); bb=max(0.0,bx2-bx1)*max(0.0,by2-by1)
+              return inter/max(1e-9,aa+bb-inter)
+
+          image,_=decode_document_with_page((dataset/str(item["pdf"])).read_bytes(),"application/pdf")
+          h,w=image.shape[:2]; sx=w/float(item["width"]); sy=h/float(item["height"])
+          gt=defaultdict(list)
+          for box in image_node.findall("box"):
+              label=str(box.get("label") or "")
+              if label not in targets: continue
+              gt[label].append([
+                  float(box.get("xtl"))*sx,float(box.get("ytl"))*sy,
+                  float(box.get("xbr"))*sx,float(box.get("ybr"))*sy,
+              ])
+          raw=extract_local_onnx_detections(image)
+          mapped=[]
+          for det in raw:
+              cls=aliases.get(norm(det.get("class")))
+              if cls not in targets: continue
+              mapped.append({
+                  "class":cls,
+                  "confidence":float(det.get("confidence",0)),
+                  "bbox":list(map(float,det["bbox"])),
+              })
+
+          result={"sheet":sheet,"classes":classes,"rawCount":len(raw),"mappedCount":len(mapped),"thresholds":{}}
+          for threshold in thresholds:
+              metrics={}
+              for cls in targets:
+                  truths=list(gt[cls]); preds=[d for d in mapped if d["class"]==cls and d["confidence"]>=threshold]
+                  pairs=[]
+                  for pi,pred in enumerate(preds):
+                      for gi,truth in enumerate(truths):
+                          score=iou(pred["bbox"],truth)
+                          if score>=.50:pairs.append((score,pi,gi))
+                  pairs.sort(reverse=True)
+                  usedp=set(); usedg=set(); tp=0
+                  for score,pi,gi in pairs:
+                      if pi in usedp or gi in usedg:continue
+                      usedp.add(pi); usedg.add(gi); tp+=1
+                  metrics[cls]={"tp":tp,"fp":len(preds)-tp,"fn":len(truths)-tp}
+              result["thresholds"][f"{threshold:.2f}"]=metrics
+          out=root/f"benchmark-output/mit-parallel/{sheet}.json"
+          out.parent.mkdir(parents=True,exist_ok=True)
+          out.write_text(json.dumps(result,indent=2),encoding="utf-8")
+          print(sheet,"raw",len(raw),"mapped",len(mapped))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mit-fixture-sheet-${{ matrix.shard }}-${{ github.sha }}
+          path: benchmark-output/mit-parallel/*.json
+          retention-days: 3
+
+  aggregate:
+    if: always()
+    needs: sheet
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mit-fixture-sheet-*-${{ github.sha }}
+          path: sheets
+          merge-multiple: true
+      - name: Aggregate metrics
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          targets=["Sink","Toilet","Bathtub","Shower","Cooktops"]
+          files=sorted(Path("sheets").glob("*.json"))
+          if len(files)!=15:
+              raise SystemExit(f"Expected 15 sheet reports, found {len(files)}")
+          reports=[json.loads(p.read_text()) for p in files]
+          thresholds=sorted(reports[0]["thresholds"])
+          classes=reports[0]["classes"]
+          output={"classes":classes,"sheetCount":len(reports),"thresholds":{}}
+          for threshold in thresholds:
+              row={}
+              for cls in targets:
+                  tp=sum(r["thresholds"][threshold][cls]["tp"] for r in reports)
+                  fp=sum(r["thresholds"][threshold][cls]["fp"] for r in reports)
+                  fn=sum(r["thresholds"][threshold][cls]["fn"] for r in reports)
+                  p=tp/(tp+fp) if tp+fp else 0.0; rec=tp/(tp+fn) if tp+fn else 0.0
+                  f1=2*p*rec/(p+rec) if p+rec else 0.0
+                  row[cls]={"tp":tp,"fp":fp,"fn":fn,"precision":round(p,4),"recall":round(rec,4),"f1":round(f1,4)}
+              output["thresholds"][threshold]=row
+              print("THRESHOLD",threshold,json.dumps(row,sort_keys=True))
+          Path("mit-fixture-parallel-report.json").write_text(json.dumps(output,indent=2),encoding="utf-8")
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## MIT fixture detector — parallel AEC-15\n\n")
+              out.write(f"Classes: {', '.join(classes)}\n\n")
+              out.write("| Threshold | Sink | Toilet | Bathtub | Shower | Cooktops |\n|---:|---:|---:|---:|---:|---:|\n")
+              for threshold in thresholds:
+                  m=output["thresholds"][threshold]
+                  out.write(f"| {threshold} | {m['Sink']['f1']:.3f} | {m['Toilet']['f1']:.3f} | {m['Bathtub']['f1']:.3f} | {m['Shower']['f1']:.3f} | {m['Cooktops']['f1']:.3f} |\n")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mit-fixture-parallel-report-${{ github.sha }}
+          path: mit-fixture-parallel-report.json
+          retention-days: 5
