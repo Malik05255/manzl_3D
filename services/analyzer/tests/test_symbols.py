@@ -170,3 +170,12 @@ def test_raw_tile_dedupe_keeps_best_same_class_detection():
     sink=next(item for item in result if item["class"]=="sink")
     assert sink["confidence"]==.91
     assert {item["class"] for item in result}=={"sink","toilet"}
+
+
+
+def test_normalizes_elevator_symbol_class():
+    result=normalize_symbol_response([
+        {"class":"elevator","bbox":[30,40,130,180],"confidence":.92},
+    ],300,240)
+    assert len(result)==1
+    assert result[0]["kind"]=="elevator"
