@@ -1,0 +1,171 @@
+name: Vector Door Curve Diagnostics
+
+on:
+  push:
+    branches: [exp/vector-door-curve-diagnostics]
+    paths:
+      - .github/workflows/experiment-vector-door-curves.yml
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install PyMuPDF==1.26.4
+      - name: Measure native PDF curves inside GT swing doors
+        run: |
+          python - <<'PY'
+          import json, math, xml.etree.ElementTree as ET, os
+          from collections import Counter
+          from pathlib import Path
+          import fitz
+
+          root=Path(".")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          annotations=ET.parse(dataset/"annotations_15_scoring_ready.xml").getroot()
+          images={Path(str(node.get("name"))).stem:node for node in annotations.findall("image")}
+          labels={"Single Swing Door","Double Swing Door"}
+
+          def points_from_item(item):
+              pts=[]
+              for value in item[1:]:
+                  if hasattr(value,"x") and hasattr(value,"y"):
+                      pts.append((float(value.x),float(value.y)))
+                  elif isinstance(value,(tuple,list)) and len(value)>=2:
+                      try:
+                          pts.append((float(value[0]),float(value[1])))
+                      except (TypeError,ValueError):
+                          pass
+              return pts
+
+          def bbox(points,sx,sy):
+              xs=[p[0]*sx for p in points]
+              ys=[p[1]*sy for p in points]
+              return [min(xs),min(ys),max(xs),max(ys)]
+
+          def intersects(a,b,pad=0.0):
+              return not (
+                  a[2] < b[0]-pad or a[0] > b[2]+pad
+                  or a[3] < b[1]-pad or a[1] > b[3]+pad
+              )
+
+          def center_in(a,b,pad=0.0):
+              cx=(a[0]+a[2])/2; cy=(a[1]+a[3])/2
+              return b[0]-pad<=cx<=b[2]+pad and b[1]-pad<=cy<=b[3]+pad
+
+          result={}
+          total=Counter()
+
+          for item in manifest["sheets"]:
+              sheet=str(item["sheet"])
+              pdf_path=dataset/str(item["pdf"])
+              doc=fitz.open(pdf_path)
+              page=doc[0]
+              sx=float(item["width"])/float(page.rect.width)
+              sy=float(item["height"])/float(page.rect.height)
+
+              curves=[]
+              lines=[]
+              type_counts=Counter()
+              for drawing in page.get_drawings():
+                  for raw in drawing.get("items",[]):
+                      if not raw:
+                          continue
+                      kind=str(raw[0])
+                      type_counts[kind]+=1
+                      pts=points_from_item(raw)
+                      if len(pts)<2:
+                          continue
+                      bb=bbox(pts,sx,sy)
+                      record={
+                          "kind":kind,
+                          "bbox":bb,
+                          "pointCount":len(pts),
+                          "width":float(drawing.get("width",1.0) or 1.0),
+                          "fill":drawing.get("fill") is not None,
+                      }
+                      if kind=="c":
+                          curves.append(record)
+                      elif kind=="l":
+                          lines.append(record)
+
+              door_rows=[]
+              for box in images[sheet].findall("box"):
+                  label=str(box.get("label") or "")
+                  if label not in labels:
+                      continue
+                  gt=[
+                      float(box.get("xtl")),float(box.get("ytl")),
+                      float(box.get("xbr")),float(box.get("ybr")),
+                  ]
+                  short=max(1.0,min(gt[2]-gt[0],gt[3]-gt[1]))
+                  pad=max(6.0,short*.18)
+                  hit_curves=[x for x in curves if center_in(x["bbox"],gt,pad) or intersects(x["bbox"],gt,pad)]
+                  hit_lines=[x for x in lines if center_in(x["bbox"],gt,pad)]
+                  curve_spans=[
+                      max(x["bbox"][2]-x["bbox"][0],x["bbox"][3]-x["bbox"][1])
+                      for x in hit_curves
+                  ]
+                  door_rows.append({
+                      "label":label,
+                      "bbox":gt,
+                      "curveCount":len(hit_curves),
+                      "lineCount":len(hit_lines),
+                      "maxCurveSpan":round(max(curve_spans,default=0.0),2),
+                      "curveKinds":Counter(x["kind"] for x in hit_curves),
+                  })
+
+              summary={
+                  "doors":len(door_rows),
+                  "withCurve":sum(1 for x in door_rows if x["curveCount"]>=1),
+                  "with2Curves":sum(1 for x in door_rows if x["curveCount"]>=2),
+                  "withLine":sum(1 for x in door_rows if x["lineCount"]>=1),
+                  "curveCount":len(curves),
+                  "lineCount":len(lines),
+                  "drawingItemTypes":dict(type_counts),
+              }
+              result[sheet]={"summary":summary,"doors":door_rows}
+              total["doors"]+=summary["doors"]
+              total["withCurve"]+=summary["withCurve"]
+              total["with2Curves"]+=summary["with2Curves"]
+              total["withLine"]+=summary["withLine"]
+              total["curves"]+=summary["curveCount"]
+              total["lines"]+=summary["lineCount"]
+              print(sheet,json.dumps(summary,sort_keys=True))
+
+          result["aggregate"]=dict(total)
+          target=root/"benchmark-output/vector-door-curves.json"
+          target.parent.mkdir(exist_ok=True)
+          target.write_text(json.dumps(result,indent=2,default=dict),encoding="utf-8")
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Native PDF curve coverage inside GT swing doors\n\n")
+              out.write("| Sheet | GT doors | >=1 curve | >=2 curves | >=1 line | PDF curves |\n")
+              out.write("|---|---:|---:|---:|---:|---:|\n")
+              for sheet in sorted(k for k in result if k.startswith("sheet_")):
+                  s=result[sheet]["summary"]
+                  out.write(
+                      f"| {sheet} | {s['doors']} | {s['withCurve']} | {s['with2Curves']} | "
+                      f"{s['withLine']} | {s['curveCount']} |\n"
+                  )
+              out.write(
+                  f"\nAggregate: {total['withCurve']}/{total['doors']} doors with >=1 PDF curve; "
+                  f"{total['with2Curves']}/{total['doors']} with >=2 curves.\n"
+              )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vector-door-curves-${{ github.sha }}
+          path: benchmark-output/vector-door-curves.json
+          retention-days: 5
