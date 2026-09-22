@@ -2,12 +2,12 @@ name: Vector Window Topology Isolation
 
 on:
   push:
-    branches: [exp/topology-isolation-topology-isolation]
+    branches: [exp/vector-window-topology-isolation]
     paths:
       - services/analyzer/app/openings.py
       - services/analyzer/app/local_analysis.py
       - services/analyzer/tests/test_openings.py
-      - .github/workflows/experiment-topology-isolation-topology-isolation.yml
+      - .github/workflows/experiment-vector-window-topology-isolation.yml
   workflow_dispatch:
 
 jobs:
