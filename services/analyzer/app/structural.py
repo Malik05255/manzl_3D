@@ -81,7 +81,7 @@ def extract_structural_wall_mask(image: np.ndarray, ink: np.ndarray) -> np.ndarr
         raise ValueError("STRUCTURAL_MASK_SHAPE")
 
     short = max(1, min(h, w))
-    min_half = max(1.8, min(6.0, short * 0.0022))
+    min_half = max(2.8, min(6.0, short * 0.0026))
 
     # Thick monochrome ink. This rejects most OCR glyphs/dimension strokes.
     solid = _thick_core(ink, min_half)
