@@ -33,7 +33,8 @@ def main()->None:
 
     dataset=Path(args.dataset)
     manifest=json.loads((dataset/"manifest.json").read_text(encoding="utf-8"))
-    meta=next(item for item in manifest if item["sheet"]==args.sheet)
+    sheets=manifest.get("sheets",manifest) if isinstance(manifest,dict) else manifest
+    meta=next(item for item in sheets if item["sheet"]==args.sheet)
     pdf=(dataset/meta["pdf"]).read_bytes()
 
     image,page=decode_document_with_page(pdf,"application/pdf",1)
