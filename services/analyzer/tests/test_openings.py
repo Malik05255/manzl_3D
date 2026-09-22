@@ -532,9 +532,9 @@ def test_double_swing_requires_two_visible_leaf_hinges():
 
 
 
-def test_arc_roi_limit_defaults_to_480(monkeypatch):
+def test_arc_roi_limit_defaults_to_640(monkeypatch):
     monkeypatch.delenv("OPENING_ARC_MAX_ROI",raising=False)
-    assert _arc_roi_limit()==480.0
+    assert _arc_roi_limit()==640.0
 
 
 def test_arc_roi_limit_supports_override_and_disable(monkeypatch):
@@ -546,4 +546,4 @@ def test_arc_roi_limit_supports_override_and_disable(monkeypatch):
 
 def test_arc_roi_limit_rejects_invalid_value(monkeypatch):
     monkeypatch.setenv("OPENING_ARC_MAX_ROI","invalid")
-    assert _arc_roi_limit()==480.0
+    assert _arc_roi_limit()==640.0
