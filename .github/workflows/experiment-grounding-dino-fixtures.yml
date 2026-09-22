@@ -1,0 +1,227 @@
+name: Grounding DINO Fixture Probe
+
+on:
+  push:
+    branches: [exp/grounding-dino-fixtures]
+    paths:
+      - .github/workflows/experiment-grounding-dino-fixtures.yml
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [4, 9, 13, 14]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "torch==2.8.0" "transformers==4.56.2" "pillow==11.3.0" "PyMuPDF==1.26.4"
+
+      - name: Probe compact fixture symbols
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          python - <<'PY'
+          import json, os, xml.etree.ElementTree as ET
+          from collections import defaultdict
+          from pathlib import Path
+
+          import fitz
+          import torch
+          from PIL import Image
+          from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
+
+          root=Path(".")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          item=manifest["sheets"][int(os.environ["SHARD"])]
+          sheet=str(item["sheet"])
+
+          annotations=ET.parse(dataset/"annotations_15_scoring_ready.xml").getroot()
+          image_node=next(
+              node for node in annotations.findall("image")
+              if Path(str(node.get("name"))).stem==sheet
+          )
+
+          doc=fitz.open(dataset/str(item["pdf"]))
+          page=doc[0]
+          pix=page.get_pixmap(matrix=fitz.Matrix(2.4,2.4),alpha=False)
+          image=Image.frombytes("RGB",[pix.width,pix.height],pix.samples)
+          sx=pix.width/float(item["width"])
+          sy=pix.height/float(item["height"])
+
+          targets=["Sink","Toilet","Bathtub","Shower","Cooktops"]
+          prompts={
+              "Sink":"sink symbol",
+              "Toilet":"toilet symbol",
+              "Bathtub":"bathtub symbol",
+              "Shower":"shower symbol",
+              "Cooktops":"gas stove symbol",
+          }
+          prompt_text=". ".join(prompts.values())+"."
+
+          processor=AutoProcessor.from_pretrained("IDEA-Research/grounding-dino-tiny")
+          model=AutoModelForZeroShotObjectDetection.from_pretrained(
+              "IDEA-Research/grounding-dino-tiny"
+          )
+          model.eval()
+
+          inputs=processor(images=image,text=prompt_text,return_tensors="pt")
+          with torch.no_grad():
+              outputs=model(**inputs)
+
+          thresholds=[.10,.15,.20,.25,.30,.35]
+          gt=defaultdict(list)
+          for box in image_node.findall("box"):
+              label=str(box.get("label") or "")
+              if label not in targets:
+                  continue
+              gt[label].append([
+                  float(box.get("xtl"))*sx,
+                  float(box.get("ytl"))*sy,
+                  float(box.get("xbr"))*sx,
+                  float(box.get("ybr"))*sy,
+              ])
+
+          def norm_label(text):
+              text=str(text or "").lower()
+              if "sink" in text:return "Sink"
+              if "toilet" in text:return "Toilet"
+              if "bathtub" in text or "bath tub" in text:return "Bathtub"
+              if "shower" in text:return "Shower"
+              if "stove" in text or "cooktop" in text:return "Cooktops"
+              return None
+
+          def iou(a,b):
+              ax1,ay1,ax2,ay2=map(float,a); bx1,by1,bx2,by2=map(float,b)
+              iw=max(0.0,min(ax2,bx2)-max(ax1,bx1))
+              ih=max(0.0,min(ay2,by2)-max(ay1,by1))
+              inter=iw*ih
+              if inter<=0:return 0.0
+              aa=max(0.0,ax2-ax1)*max(0.0,ay2-ay1)
+              bb=max(0.0,bx2-bx1)*max(0.0,by2-by1)
+              return inter/max(1e-9,aa+bb-inter)
+
+          result={"sheet":sheet,"thresholds":{}}
+          for threshold in thresholds:
+              processed=processor.post_process_grounded_object_detection(
+                  outputs,
+                  inputs.input_ids,
+                  box_threshold=threshold,
+                  text_threshold=.15,
+                  target_sizes=[(pix.height,pix.width)],
+              )[0]
+              detections=[]
+              labels=processed.get("text_labels",processed.get("labels",[]))
+              for box,score,label in zip(
+                  processed["boxes"],
+                  processed["scores"],
+                  labels,
+              ):
+                  cls=norm_label(label)
+                  if cls is None:
+                      continue
+                  detections.append({
+                      "class":cls,
+                      "score":float(score),
+                      "bbox":[float(x) for x in box.tolist()],
+                      "label":str(label),
+                  })
+
+              metrics={}
+              for cls in targets:
+                  preds=[d for d in detections if d["class"]==cls]
+                  truths=list(gt[cls])
+                  pairs=[]
+                  for pi,pred in enumerate(preds):
+                      for gi,truth in enumerate(truths):
+                          score=iou(pred["bbox"],truth)
+                          if score>=.50:
+                              pairs.append((score,pi,gi))
+                  pairs.sort(reverse=True)
+                  usedp=set(); usedg=set(); tp=0
+                  for score,pi,gi in pairs:
+                      if pi in usedp or gi in usedg:
+                          continue
+                      usedp.add(pi); usedg.add(gi); tp+=1
+                  metrics[cls]={"tp":tp,"fp":len(preds)-tp,"fn":len(truths)-tp}
+              result["thresholds"][f"{threshold:.2f}"]=metrics
+              print("THRESHOLD",threshold,json.dumps(metrics,sort_keys=True))
+
+          target=root/f"benchmark-output/gdino/{sheet}.json"
+          target.parent.mkdir(parents=True,exist_ok=True)
+          target.write_text(json.dumps(result,indent=2),encoding="utf-8")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grounding-dino-sheet-${{ matrix.shard }}-${{ github.sha }}
+          path: benchmark-output/gdino/*.json
+          retention-days: 5
+
+  aggregate:
+    if: always()
+    needs: probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: grounding-dino-sheet-*-${{ github.sha }}
+          path: reports
+          merge-multiple: true
+      - name: Aggregate probe
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          files=sorted(Path("reports").glob("*.json"))
+          if not files:
+              raise SystemExit("No reports")
+          reports=[json.loads(p.read_text()) for p in files]
+          targets=["Sink","Toilet","Bathtub","Shower","Cooktops"]
+          thresholds=sorted(reports[0]["thresholds"])
+          output={}
+          for threshold in thresholds:
+              row={}
+              for cls in targets:
+                  tp=sum(r["thresholds"][threshold][cls]["tp"] for r in reports)
+                  fp=sum(r["thresholds"][threshold][cls]["fp"] for r in reports)
+                  fn=sum(r["thresholds"][threshold][cls]["fn"] for r in reports)
+                  p=tp/(tp+fp) if tp+fp else 0.0
+                  rec=tp/(tp+fn) if tp+fn else 0.0
+                  f1=2*p*rec/(p+rec) if p+rec else 0.0
+                  row[cls]={"tp":tp,"fp":fp,"fn":fn,"precision":round(p,4),"recall":round(rec,4),"f1":round(f1,4)}
+              output[threshold]=row
+              print("THRESHOLD",threshold,json.dumps(row,sort_keys=True))
+          Path("grounding-dino-fixture-report.json").write_text(json.dumps(output,indent=2),encoding="utf-8")
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Grounding DINO fixture probe\n\n")
+              out.write("| Threshold | Sink | Toilet | Bathtub | Shower | Cooktops |\n|---:|---:|---:|---:|---:|---:|\n")
+              for threshold,row in output.items():
+                  out.write(
+                      f"| {threshold} | {row['Sink']['f1']:.3f} | {row['Toilet']['f1']:.3f} | "
+                      f"{row['Bathtub']['f1']:.3f} | {row['Shower']['f1']:.3f} | {row['Cooktops']['f1']:.3f} |\n"
+                  )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grounding-dino-fixture-report-${{ github.sha }}
+          path: grounding-dino-fixture-report.json
+          retention-days: 5
