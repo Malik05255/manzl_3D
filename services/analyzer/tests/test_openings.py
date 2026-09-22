@@ -551,9 +551,9 @@ def test_arc_roi_limit_rejects_invalid_value(monkeypatch):
 
 
 def test_window_gap_fallback_accepts_small_gap_without_glazing(monkeypatch):
-    image=np.full((400,600,3),255,dtype=np.uint8)
-    cv2.line(image,(40,200),(220,200),(0,0,0),5)
-    cv2.line(image,(280,200),(560,200),(0,0,0),5)
+    image=np.full((1200,1800,3),255,dtype=np.uint8)
+    cv2.line(image,(120,600),(700,600),(0,0,0),5)
+    cv2.line(image,(760,600),(1680,600),(0,0,0),5)
 
     monkeypatch.setattr(openings_module,"_door_leaf_evidence",lambda *args,**kwargs:0)
     monkeypatch.setattr(openings_module,"_parallel_window_evidence",lambda *args,**kwargs:0)
@@ -561,7 +561,7 @@ def test_window_gap_fallback_accepts_small_gap_without_glazing(monkeypatch):
 
     windows=detect_windows(
         image,
-        [wall("left",40,200,220,200),wall("right",280,200,560,200)],
+        [wall("left",120,600,700,600),wall("right",760,600,1680,600)],
         meters_per_pixel=None,
     )
     assert len(windows)==1
@@ -569,32 +569,32 @@ def test_window_gap_fallback_accepts_small_gap_without_glazing(monkeypatch):
 
 
 def test_window_gap_fallback_rejects_door_leaf_evidence(monkeypatch):
-    image=np.full((400,600,3),255,dtype=np.uint8)
-    cv2.line(image,(40,200),(220,200),(0,0,0),5)
-    cv2.line(image,(280,200),(560,200),(0,0,0),5)
+    image=np.full((1200,1800,3),255,dtype=np.uint8)
+    cv2.line(image,(120,600),(700,600),(0,0,0),5)
+    cv2.line(image,(760,600),(1680,600),(0,0,0),5)
 
     monkeypatch.setattr(openings_module,"_door_leaf_evidence",lambda *args,**kwargs:1)
     monkeypatch.setattr(openings_module,"_parallel_window_evidence",lambda *args,**kwargs:0)
 
     windows=detect_windows(
         image,
-        [wall("left",40,200,220,200),wall("right",280,200,560,200)],
+        [wall("left",120,600,700,600),wall("right",760,600,1680,600)],
         meters_per_pixel=None,
     )
     assert windows==[]
 
 
 def test_window_gap_fallback_rejects_large_unscaled_gap(monkeypatch):
-    image=np.full((400,1000,3),255,dtype=np.uint8)
-    cv2.line(image,(40,200),(220,200),(0,0,0),5)
-    cv2.line(image,(520,200),(960,200),(0,0,0),5)
+    image=np.full((1200,2000,3),255,dtype=np.uint8)
+    cv2.line(image,(120,600),(700,600),(0,0,0),5)
+    cv2.line(image,(1100,600),(1900,600),(0,0,0),5)
 
     monkeypatch.setattr(openings_module,"_door_leaf_evidence",lambda *args,**kwargs:0)
     monkeypatch.setattr(openings_module,"_parallel_window_evidence",lambda *args,**kwargs:0)
 
     windows=detect_windows(
         image,
-        [wall("left",40,200,220,200),wall("right",520,200,960,200)],
+        [wall("left",120,600,700,600),wall("right",1100,600,1900,600)],
         meters_per_pixel=None,
     )
     assert windows==[]
