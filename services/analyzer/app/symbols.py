@@ -495,6 +495,10 @@ def _extract_onnx_detections(
     class_names:list[str],
     input_size:int,
     confidence:float,
+    tile_trigger:int|None=None,
+    tile_size:int|None=None,
+    tile_overlap:float|None=None,
+    nms_iou:float|None=None,
 )->list[dict]:
     if not model_path or not class_names:
         return []
@@ -508,7 +512,11 @@ def _extract_onnx_detections(
         _ONNX_CACHE[key]=net
 
     h,w=image.shape[:2]
-    trigger=int(os.getenv("SYMBOL_ONNX_TILE_TRIGGER","1800") or "1800")
+    trigger=(
+        int(tile_trigger)
+        if tile_trigger is not None
+        else int(os.getenv("SYMBOL_ONNX_TILE_TRIGGER","1800") or "1800")
+    )
     trigger=max(input_size,min(6000,trigger))
     if max(h,w)<=trigger:
         return _run_onnx_payload(
@@ -519,11 +527,19 @@ def _extract_onnx_detections(
             confidence=confidence,
         )
 
-    tile_size=int(os.getenv("SYMBOL_ONNX_TILE_SIZE","1600") or "1600")
-    tile_size=max(input_size,min(3200,tile_size))
-    overlap=float(os.getenv("SYMBOL_ONNX_TILE_OVERLAP",".18") or ".18")
+    resolved_tile_size=(
+        int(tile_size)
+        if tile_size is not None
+        else int(os.getenv("SYMBOL_ONNX_TILE_SIZE","1600") or "1600")
+    )
+    resolved_tile_size=max(input_size,min(3200,resolved_tile_size))
+    overlap=(
+        float(tile_overlap)
+        if tile_overlap is not None
+        else float(os.getenv("SYMBOL_ONNX_TILE_OVERLAP",".18") or ".18")
+    )
     detections=[]
-    for x1,y1,x2,y2 in _tile_windows(w,h,tile_size,overlap):
+    for x1,y1,x2,y2 in _tile_windows(w,h,resolved_tile_size,overlap):
         tile=image[y1:y2,x1:x2]
         if tile.size==0:
             continue
@@ -542,7 +558,9 @@ def _extract_onnx_detections(
             detections.append(shifted)
     return _dedupe_raw_detections(
         detections,
-        float(os.getenv("SYMBOL_ONNX_NMS_IOU",".45") or ".45"),
+        float(nms_iou)
+        if nms_iou is not None
+        else float(os.getenv("SYMBOL_ONNX_NMS_IOU",".45") or ".45"),
     )
 
 
@@ -581,12 +599,35 @@ def extract_secondary_onnx_detections(image:np.ndarray)->list[dict]:
         .15,
         .05,
     )
+    try:
+        tile_trigger=int(
+            os.getenv("SYMBOL_SECONDARY_ONNX_TILE_TRIGGER","1200") or "1200"
+        )
+        tile_size=int(
+            os.getenv("SYMBOL_SECONDARY_ONNX_TILE_SIZE","960") or "960"
+        )
+        tile_overlap=float(
+            os.getenv("SYMBOL_SECONDARY_ONNX_TILE_OVERLAP",".22") or ".22"
+        )
+        nms_iou=float(
+            os.getenv(
+                "SYMBOL_SECONDARY_ONNX_NMS_IOU",
+                os.getenv("SYMBOL_ONNX_NMS_IOU",".45"),
+            )
+            or ".45"
+        )
+    except ValueError:
+        tile_trigger,tile_size,tile_overlap,nms_iou=1200,960,.22,.45
     return _extract_onnx_detections(
         image,
         model_path=model_path,
         class_names=class_names,
         input_size=input_size,
         confidence=confidence,
+        tile_trigger=tile_trigger,
+        tile_size=tile_size,
+        tile_overlap=tile_overlap,
+        nms_iou=nms_iou,
     )
 
 
