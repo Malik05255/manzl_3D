@@ -530,10 +530,225 @@ def detect_doors(
     return result
 
 
+def _vector_window_candidates(
+    vector_lines:list[dict],
+    walls:list[dict],
+    image_shape:tuple[int,...],
+    meters_per_pixel:float|None,
+)->list[dict]:
+    """Recover window glazing from native PDF vector linework.
+
+    Real CAD PDFs often preserve several overlapping/parallel glazing strokes
+    even when the raster Hough pass cannot see them reliably. Candidate lines
+    are bucketed by angle and ordered by projected centre so the search stays
+    local instead of comparing every vector line with every other line.
+    """
+    if not vector_lines or not walls:
+        return []
+
+    h,w=image_shape[:2]
+    base=float(min(h,w))
+    if meters_per_pixel and meters_per_pixel>0:
+        min_length=max(18.0,0.35/meters_per_pixel)
+        max_length=max(min_length+8.0,3.60/meters_per_pixel)
+    else:
+        min_length=max(18.0,base*.010)
+        max_length=max(min_length+8.0,base*.090)
+
+    features=[]
+    buckets:dict[int,list[int]]={}
+    bucket_width=5.0
+    bucket_count=int(round(180.0/bucket_width))
+
+    for raw in vector_lines:
+        try:
+            ax,ay=_point(raw["a"])
+            bx,by=_point(raw["b"])
+            width_px=float(raw.get("widthPx",1.0) or 1.0)
+        except (KeyError,TypeError,ValueError):
+            continue
+        dx=bx-ax
+        dy=by-ay
+        length=math.hypot(dx,dy)
+        if length<min_length or length>max_length:
+            continue
+        if width_px>8.0:
+            continue
+        angle=math.degrees(math.atan2(dy,dx))%180.0
+        ux=math.cos(math.radians(angle))
+        uy=math.sin(math.radians(angle))
+        if ux<0 or (abs(ux)<1e-9 and uy<0):
+            ux=-ux
+            uy=-uy
+        nx=-uy
+        ny=ux
+        t1=ax*ux+ay*uy
+        t2=bx*ux+by*uy
+        start=min(t1,t2)
+        end=max(t1,t2)
+        offset=((ax+bx)/2)*nx+((ay+by)/2)*ny
+        center=(start+end)/2
+        item={
+            "a":{"x":ax,"y":ay},"b":{"x":bx,"y":by},
+            "length":length,"angle":angle,
+            "ux":ux,"uy":uy,"nx":nx,"ny":ny,
+            "start":start,"end":end,"offset":offset,"center":center,
+            "widthPx":width_px,
+        }
+        index=len(features)
+        features.append(item)
+        bucket=int(round(angle/bucket_width))%bucket_count
+        buckets.setdefault(bucket,[]).append(index)
+
+    if len(features)<3:
+        return []
+
+    for values in buckets.values():
+        values.sort(key=lambda idx:features[idx]["center"])
+
+    raw_candidates=[]
+    used_keys=set()
+    max_center_delta=max_length*.42
+
+    for seed_index,seed in enumerate(features):
+        seed_bucket=int(round(seed["angle"]/bucket_width))%bucket_count
+        possible=[]
+        for bucket in (
+            (seed_bucket-1)%bucket_count,
+            seed_bucket,
+            (seed_bucket+1)%bucket_count,
+        ):
+            possible.extend(buckets.get(bucket,[]))
+
+        peers=[]
+        sux=float(seed["ux"]); suy=float(seed["uy"])
+        snx=float(seed["nx"]); sny=float(seed["ny"])
+        seed_start=float(seed["start"]); seed_end=float(seed["end"])
+        seed_length=float(seed["length"])
+        seed_offset=float(seed["offset"])
+        seed_center=float(seed["center"])
+
+        for peer_index in possible:
+            if peer_index==seed_index:
+                continue
+            peer=features[peer_index]
+            if abs(float(peer["center"])-seed_center)>max_center_delta:
+                continue
+            if _angle_delta_degrees(float(peer["angle"]),float(seed["angle"]))>4.0:
+                continue
+            peer_length=float(peer["length"])
+            if min(seed_length,peer_length)/max(seed_length,peer_length)<.64:
+                continue
+
+            pax,pay=_point(peer["a"])
+            pbx,pby=_point(peer["b"])
+            p1=pax*sux+pay*suy
+            p2=pbx*sux+pby*suy
+            pstart=min(p1,p2); pend=max(p1,p2)
+            overlap=max(0.0,min(seed_end,pend)-max(seed_start,pstart))
+            if overlap<min(seed_length,peer_length)*.64:
+                continue
+            poffset=((pax+pbx)/2)*snx+((pay+pby)/2)*sny
+            separation=abs(poffset-seed_offset)
+            max_separation=min(90.0,max(12.0,min(seed_length,peer_length)*.48))
+            if separation>max_separation:
+                continue
+            peers.append((peer_index,pstart,pend,poffset))
+
+        if len(peers)<2:
+            continue
+
+        group=[(seed_index,seed_start,seed_end,seed_offset),*peers]
+        starts=[float(item[1]) for item in group]
+        ends=[float(item[2]) for item in group]
+        offsets=[float(item[3]) for item in group]
+        start=float(np.median(np.asarray(starts,dtype=np.float32)))
+        end=float(np.median(np.asarray(ends,dtype=np.float32)))
+        offset=float(np.median(np.asarray(offsets,dtype=np.float32)))
+        span=end-start
+        if span<min_length or span>max_length:
+            continue
+
+        # Three raw strokes at effectively the same normal offset can be duplicate
+        # PDF drawing commands. Require at least two distinct glazing offsets.
+        clustered=[]
+        for value in sorted(offsets):
+            if not clustered or abs(value-clustered[-1][-1])>2.5:
+                clustered.append([value])
+            else:
+                clustered[-1].append(value)
+        if len(clustered)<2:
+            continue
+        normal_span=max(offsets)-min(offsets)
+        if normal_span>min(90.0,max(14.0,span*.48)):
+            continue
+
+        a=_point_from_frame(start,offset,sux,suy)
+        b=_point_from_frame(end,offset,sux,suy)
+        cx=(a["x"]+b["x"])/2
+        cy=(a["y"]+b["y"])/2
+
+        best=None
+        for wall in walls:
+            wall_length,wux,wuy,wnx,wny=_segment_geometry(wall)
+            if wall_length<=1e-9:
+                continue
+            wall_angle=math.degrees(math.atan2(wuy,wux))%180.0
+            if _angle_delta_degrees(float(seed["angle"]),wall_angle)>6.0:
+                continue
+            normal_distance=_point_infinite_line_distance({"x":cx,"y":cy},wall)
+            tolerance=max(
+                18.0,
+                float(wall.get("thicknessPx",4.0) or 4.0)*4.5,
+                normal_span*1.6,
+            )
+            if normal_distance>tolerance:
+                continue
+            wall_start,wall_end=_projection_interval(wall,sux,suy)
+            if wall_end<start:
+                along_gap=start-wall_end
+            elif end<wall_start:
+                along_gap=wall_start-end
+            else:
+                along_gap=0.0
+            if along_gap>max(36.0,span*.85):
+                continue
+            score=normal_distance/max(1.0,tolerance)+along_gap/max(1.0,span)
+            if best is None or score<best[0]:
+                best=(score,wall)
+
+        if best is None:
+            continue
+
+        _,host=best
+        key=(
+            round(cx/max(8.0,span*.18)),
+            round(cy/max(8.0,span*.18)),
+            round(float(seed["angle"])/5.0),
+        )
+        if key in used_keys:
+            continue
+        used_keys.add(key)
+        confidence=min(.94,.80+.025*min(5,len(group)))
+        raw_candidates.append({
+            "id":f"window-vector-{len(raw_candidates)+1}",
+            "kind":"window",
+            "wallId":str(host["id"]),
+            "a":a,
+            "b":b,
+            "confidence":round(confidence,3),
+            "reviewed":False,
+            "provenance":"pdf-vector",
+        })
+
+    return raw_candidates
+
+
 def detect_windows(
     image:np.ndarray,
     walls:list[dict],
     meters_per_pixel:float|None,
+    vector_lines:list[dict]|None=None,
 )->list[dict]:
     min_gap,max_gap,axis_tol=_window_gap_limits(image,meters_per_pixel)
     candidates=[]
@@ -588,6 +803,12 @@ def detect_windows(
                 "provenance":"opencv",
             })
 
+    if vector_lines:
+        candidates.extend(
+            _vector_window_candidates(
+                vector_lines,walls,image.shape,meters_per_pixel,
+            )
+        )
     result=_dedupe(candidates,max(min_gap*0.55,8.0))
     for index,item in enumerate(result,start=1):
         item["id"]=f"window-{index}"
