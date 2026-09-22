@@ -463,8 +463,10 @@ def detect_doors(
             # an unrelated arc on the other side caused excessive double-door
             # classifications on real AEC sheets.
             double_leaf={"a","b"}.issubset(leaf_hinges)
-            double_arc={"a","b"}.issubset(arc_hinges)
-            door_subtype="double_swing" if (double_leaf or double_arc) else "single_swing"
+            # Real double-swing doors require two independently visible leaves.
+            # Arc-only dual circles are too ambiguous on real plans and were
+            # heavily over-classifying windows as double doors.
+            door_subtype="double_swing" if double_leaf else "single_swing"
             swing_side=leaf_side if leaf_side!="unknown" else arc_side
             swing_depth=max(leaf_depth,arc_depth)
             confidence=min(
