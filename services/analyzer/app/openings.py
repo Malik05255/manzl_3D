@@ -464,10 +464,187 @@ def _door_subtype_from_evidence(
     return "double_swing" if {"a","b"}.issubset(leaf_hinges) else "single_swing"
 
 
+def _vector_endpoint_door_candidates(
+    vector_lines:list[dict]|None,
+    walls:list[dict],
+    image_shape:tuple[int,...],
+    meters_per_pixel:float|None,
+)->list[dict]:
+    """Recover swing doors whose hinge sits on a detected wall endpoint.
+
+    This path is intentionally independent from the paired-wall gap detector.
+    Native PDF linework often preserves the door leaf even when one side of the
+    opening was merged into a longer wall. To avoid promoting furniture and
+    dimension lines, a candidate must terminate very close to a real wall
+    endpoint and form a door-like angle with that wall.
+    """
+    if not vector_lines or not walls:
+        return []
+
+    h,w=image_shape[:2]
+    min_gap,max_gap,axis_tol=_door_gap_limits(
+        np.empty((h,w,3),dtype=np.uint8),
+        meters_per_pixel,
+    )
+    min_leaf=max(12.0,min_gap*.52)
+    max_leaf=max(min_leaf+8.0,max_gap*1.22)
+    cell_size=max(40.0,min(220.0,max_gap*.72))
+
+    endpoints=[]
+    cells:dict[tuple[int,int],list[int]]={}
+    for wall in walls:
+        wall_length,ux,uy,nx,ny=_segment_geometry(wall)
+        if wall_length<min_gap*.70:
+            continue
+        angle=math.degrees(math.atan2(uy,ux))%180.0
+        for endpoint_name in ("a","b"):
+            x,y=_point(wall[endpoint_name])
+            index=len(endpoints)
+            endpoints.append({
+                "wall":wall,
+                "endpoint":endpoint_name,
+                "x":x,
+                "y":y,
+                "length":wall_length,
+                "ux":ux,
+                "uy":uy,
+                "nx":nx,
+                "ny":ny,
+                "angle":angle,
+            })
+            key=(int(math.floor(x/cell_size)),int(math.floor(y/cell_size)))
+            cells.setdefault(key,[]).append(index)
+
+    if not endpoints:
+        return []
+
+    candidates=[]
+    hinge_tolerance=max(7.0,min(axis_tol*1.15,min_gap*.24))
+    cell_radius=max(1,int(math.ceil(hinge_tolerance/cell_size)))
+
+    for raw in vector_lines:
+        try:
+            ax,ay=_point(raw["a"])
+            bx,by=_point(raw["b"])
+            width_px=float(raw.get("widthPx",1.0) or 1.0)
+        except (KeyError,TypeError,ValueError):
+            continue
+        dx=bx-ax
+        dy=by-ay
+        leaf_length=math.hypot(dx,dy)
+        if leaf_length<min_leaf or leaf_length>max_leaf:
+            continue
+        # Door leaf strokes in the source PDFs are thin. Wide strokes are much
+        # more likely to be walls, filled furniture edges, or title graphics.
+        if width_px>7.0:
+            continue
+        leaf_angle=math.degrees(math.atan2(dy,dx))%180.0
+
+        best=None
+        for hinge_label,(hx,hy),far in (
+            ("a",(ax,ay),(bx,by)),
+            ("b",(bx,by),(ax,ay)),
+        ):
+            cell=(
+                int(math.floor(hx/cell_size)),
+                int(math.floor(hy/cell_size)),
+            )
+            nearby=set()
+            for gx in range(cell[0]-cell_radius,cell[0]+cell_radius+1):
+                for gy in range(cell[1]-cell_radius,cell[1]+cell_radius+1):
+                    nearby.update(cells.get((gx,gy),[]))
+
+            for endpoint_index in nearby:
+                endpoint=endpoints[endpoint_index]
+                distance=math.hypot(hx-endpoint["x"],hy-endpoint["y"])
+                if distance>hinge_tolerance:
+                    continue
+                delta=_angle_delta_degrees(leaf_angle,float(endpoint["angle"]))
+                if not 20.0<=delta<=80.0:
+                    continue
+
+                ux=float(endpoint["ux"]); uy=float(endpoint["uy"])
+                nx=float(endpoint["nx"]); ny=float(endpoint["ny"])
+                ex=float(endpoint["x"]); ey=float(endpoint["y"])
+                far_x=float(far[0]); far_y=float(far[1])
+                normal_depth=(far_x-ex)*nx+(far_y-ey)*ny
+                if abs(normal_depth)<leaf_length*.30:
+                    continue
+                if abs(normal_depth)>leaf_length*1.15:
+                    continue
+
+                # At wall.a the wall body extends in +u, so the opening should
+                # continue in -u. At wall.b it should continue in +u.
+                direction=-1.0 if endpoint["endpoint"]=="a" else 1.0
+                opening_length=max(min_gap,min(max_gap,leaf_length))
+                start={"x":ex,"y":ey}
+                end={
+                    "x":ex+ux*opening_length*direction,
+                    "y":ey+uy*opening_length*direction,
+                }
+
+                # A door opening should project materially away from the host
+                # segment rather than fold back over it.
+                host_start,host_end=_projection_interval(
+                    endpoint["wall"],ux,uy,
+                )
+                end_projection=end["x"]*ux+end["y"]*uy
+                if endpoint["endpoint"]=="a":
+                    if end_projection>=host_start-min_gap*.28:
+                        continue
+                elif end_projection<=host_end+min_gap*.28:
+                    continue
+
+                score=(
+                    distance/max(1.0,hinge_tolerance)
+                    +abs(delta-55.0)/55.0*.25
+                    +abs(leaf_length-opening_length)/max(1.0,opening_length)*.15
+                )
+                if best is None or score<best[0]:
+                    best=(
+                        score,
+                        endpoint,
+                        start,
+                        end,
+                        normal_depth,
+                        distance,
+                    )
+
+        if best is None:
+            continue
+
+        score,endpoint,start,end,normal_depth,hinge_distance=best
+        confidence=max(
+            .78,
+            min(
+                .90,
+                .88
+                -.08*(hinge_distance/max(1.0,hinge_tolerance))
+                -.05*min(1.0,score),
+            ),
+        )
+        candidates.append({
+            "id":f"door-vector-{len(candidates)+1}",
+            "kind":"door",
+            "doorSubtype":"single_swing",
+            "doorSwingSide":"positive" if normal_depth>0 else "negative",
+            "doorSwingDepthPx":round(abs(normal_depth),2),
+            "wallId":str(endpoint["wall"]["id"]),
+            "a":start,
+            "b":end,
+            "confidence":round(confidence,3),
+            "reviewed":False,
+            "provenance":"pdf-vector-endpoint",
+        })
+
+    return _dedupe(candidates,max(min_gap*.52,8.0))
+
+
 def detect_doors(
     image:np.ndarray,
     walls:list[dict],
     meters_per_pixel:float|None,
+    vector_lines:list[dict]|None=None,
 )->list[dict]:
     min_gap,max_gap,axis_tol=_door_gap_limits(image,meters_per_pixel)
     candidates=[]
@@ -524,6 +701,12 @@ def detect_doors(
                 "provenance":"opencv",
             })
 
+    if vector_lines:
+        candidates.extend(
+            _vector_endpoint_door_candidates(
+                vector_lines,walls,image.shape,meters_per_pixel,
+            )
+        )
     result=_dedupe(candidates,max(min_gap*0.6,8.0))
     for index,item in enumerate(result,start=1):
         item["id"]=f"door-{index}"
