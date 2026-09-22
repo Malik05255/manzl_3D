@@ -618,7 +618,7 @@ def extract_secondary_onnx_detections(image:np.ndarray)->list[dict]:
         )
     except ValueError:
         tile_trigger,tile_size,tile_overlap,nms_iou=1200,960,.22,.45
-    return _extract_onnx_detections(
+    detections=_extract_onnx_detections(
         image,
         model_path=model_path,
         class_names=class_names,
@@ -629,6 +629,25 @@ def extract_secondary_onnx_detections(image:np.ndarray)->list[dict]:
         tile_overlap=tile_overlap,
         nms_iou=nms_iou,
     )
+    allowed_raw=os.getenv("SYMBOL_SECONDARY_ONNX_ALLOWED_CLASSES","").strip()
+    if not allowed_raw:
+        return detections
+    allowed={
+        " ".join(
+            token.strip().lower().replace("_"," ").replace("-"," ").split()
+        )
+        for token in allowed_raw.split(",")
+        if token.strip()
+    }
+    if not allowed:
+        return detections
+    return [
+        item for item in detections
+        if " ".join(
+            str(item.get("class","")).strip().lower()
+            .replace("_"," ").replace("-"," ").split()
+        ) in allowed
+    ]
 
 
 def extract_configured_onnx_detections(image:np.ndarray)->list[dict]:
@@ -653,17 +672,25 @@ def normalize_configured_symbols(
         min_confidence=float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78")
     except ValueError:
         min_confidence=.78
-    try:
-        sink_min=float(os.getenv("SYMBOL_SINK_MIN_CONFIDENCE",".10") or ".10")
-    except ValueError:
-        sink_min=.10
+    def kind_threshold(kind:str,env_name:str,default:float)->float:
+        try:
+            value=float(os.getenv(env_name,str(default)) or str(default))
+        except ValueError:
+            value=default
+        return max(.05,min(.99,value))
+
+    global_min=max(.50,min(.99,min_confidence))
     return normalize_symbol_response(
         detections,
         width,
         height,
-        max(.50,min(.99,min_confidence)),
+        global_min,
         per_kind_min_confidence={
-            "sink":max(.05,min(.99,sink_min)),
+            "sink":kind_threshold("sink","SYMBOL_SINK_MIN_CONFIDENCE",.10),
+            "toilet":kind_threshold("toilet","SYMBOL_TOILET_MIN_CONFIDENCE",global_min),
+            "bathtub":kind_threshold("bathtub","SYMBOL_BATHTUB_MIN_CONFIDENCE",global_min),
+            "shower":kind_threshold("shower","SYMBOL_SHOWER_MIN_CONFIDENCE",global_min),
+            "cooktop":kind_threshold("cooktop","SYMBOL_COOKTOP_MIN_CONFIDENCE",global_min),
         },
     )
 
