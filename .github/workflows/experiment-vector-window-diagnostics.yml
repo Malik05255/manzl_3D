@@ -1,0 +1,136 @@
+name: Vector Window Diagnostics
+
+on:
+  push:
+    branches: [exp/vector-window-diagnostics]
+    paths:
+      - .github/workflows/experiment-vector-window-diagnostics.yml
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install analyzer dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt
+      - name: Measure vector evidence inside GT windows
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json, math, statistics, xml.etree.ElementTree as ET, os
+          from pathlib import Path
+          from app.document import decode_document_with_page, extract_pdf_vector_lines
+
+          root=Path("../..")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          manifest_by={str(x["sheet"]):x for x in manifest["sheets"]}
+          tree=ET.parse(dataset/"annotations_15_scoring_ready.xml")
+          images={Path(str(x.get("name"))).stem:x for x in tree.getroot().findall("image")}
+          sheets=["sheet_05","sheet_08","sheet_10","sheet_15"]
+          result={}
+
+          def angle(a,b):
+              return math.degrees(math.atan2(b["y"]-a["y"],b["x"]-a["x"]))%180.0
+
+          def adiff(left,right):
+              d=abs((left-right)%180.0)
+              return min(d,180.0-d)
+
+          for sheet in sheets:
+              item=manifest_by[sheet]
+              pdf=dataset/str(item["pdf"])
+              data=pdf.read_bytes()
+              image,page=decode_document_with_page(data,"application/pdf")
+              h,w=image.shape[:2]
+              sx=w/float(item["width"]); sy=h/float(item["height"])
+              lines=extract_pdf_vector_lines(data,page)
+              gt=[]
+              for box in images[sheet].findall("box"):
+                  if box.get("label")!="Window":
+                      continue
+                  gt.append([
+                      float(box.get("xtl"))*sx,float(box.get("ytl"))*sy,
+                      float(box.get("xbr"))*sx,float(box.get("ybr"))*sy,
+                  ])
+
+              windows=[]
+              for x1,y1,x2,y2 in gt:
+                  bw=x2-x1; bh=y2-y1
+                  long_angle=0.0 if bw>=bh else 90.0
+                  pad=max(4.0,min(bw,bh)*1.2)
+                  candidates=[]
+                  for line in lines:
+                      ax=float(line["a"]["x"]); ay=float(line["a"]["y"])
+                      bx=float(line["b"]["x"]); by=float(line["b"]["y"])
+                      mx=(ax+bx)/2; my=(ay+by)/2
+                      if not (x1-pad<=mx<=x2+pad and y1-pad<=my<=y2+pad):
+                          continue
+                      length=math.hypot(bx-ax,by-ay)
+                      a=angle(line["a"],line["b"])
+                      candidates.append({
+                          "length":length,
+                          "angle":a,
+                          "aligned":adiff(a,long_angle)<=8.0,
+                          "width":float(line.get("widthPx",1.0)),
+                          "mid":[mx,my],
+                      })
+                  aligned=[x for x in candidates if x["aligned"]]
+                  windows.append({
+                      "bbox":[round(x1,1),round(y1,1),round(x2,1),round(y2,1)],
+                      "longPx":round(max(bw,bh),1),
+                      "shortPx":round(min(bw,bh),1),
+                      "candidateCount":len(candidates),
+                      "alignedCount":len(aligned),
+                      "alignedLengthRatios":[round(x["length"]/max(1.0,max(bw,bh)),3) for x in aligned],
+                      "alignedWidths":[round(x["width"],2) for x in aligned],
+                  })
+
+              result[sheet]={
+                  "sourceSize":[w,h],
+                  "targetSize":[item["width"],item["height"]],
+                  "vectorLineCount":len(lines),
+                  "windowCount":len(windows),
+                  "windows":windows,
+                  "summary":{
+                      "with1Aligned":sum(1 for x in windows if x["alignedCount"]>=1),
+                      "with2Aligned":sum(1 for x in windows if x["alignedCount"]>=2),
+                      "with3Aligned":sum(1 for x in windows if x["alignedCount"]>=3),
+                      "medianAlignedCount":statistics.median([x["alignedCount"] for x in windows]) if windows else 0,
+                  }
+              }
+              print(sheet,json.dumps(result[sheet]["summary"],sort_keys=True))
+
+          target=root/"benchmark-output/vector-window-diagnostics.json"
+          target.parent.mkdir(exist_ok=True)
+          target.write_text(json.dumps(result,indent=2),encoding="utf-8")
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## PDF vector evidence inside GT windows\n\n")
+              out.write("| Sheet | GT windows | >=1 aligned | >=2 aligned | >=3 aligned | Median aligned |\n")
+              out.write("|---|---:|---:|---:|---:|---:|\n")
+              for sheet,item in result.items():
+                  s=item["summary"]
+                  out.write(
+                      f"| {sheet} | {item['windowCount']} | {s['with1Aligned']} | "
+                      f"{s['with2Aligned']} | {s['with3Aligned']} | {s['medianAlignedCount']} |\n"
+                  )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vector-window-diagnostics-${{ github.sha }}
+          path: benchmark-output/vector-window-diagnostics.json
+          retention-days: 5
