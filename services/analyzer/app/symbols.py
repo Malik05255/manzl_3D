@@ -590,7 +590,7 @@ async def extract_roboflow_fixture_symbols(
 
     base_url=os.getenv(
         "ROBOFLOW_API_URL",
-        "https://serverless.roboflow.com",
+        "https://detect.roboflow.com",
     ).strip().rstrip("/")
     try:
         min_confidence=float(
