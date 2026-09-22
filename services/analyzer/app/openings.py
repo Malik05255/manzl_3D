@@ -991,19 +991,41 @@ def _raw_detection_box(item:dict)->tuple[float,float,float,float]|None:
     return x1,y1,x2,y2
 
 
-def _opening_duplicate(candidate:dict,existing:list[dict])->bool:
+def _matching_opening(candidate:dict,existing:list[dict])->dict|None:
     clen,*_=_segment_geometry(candidate)
     ccx=(float(candidate["a"]["x"])+float(candidate["b"]["x"]))/2
     ccy=(float(candidate["a"]["y"])+float(candidate["b"]["y"]))/2
     for item in existing:
         if _same_opening_gap(candidate,item):
-            return True
+            return item
         ilen,*_=_segment_geometry(item)
         icx=(float(item["a"]["x"])+float(item["b"]["x"]))/2
         icy=(float(item["a"]["y"])+float(item["b"]["y"]))/2
         if math.hypot(ccx-icx,ccy-icy)<=max(10.0,min(clen,ilen)*.30):
-            return True
-    return False
+            return item
+    return None
+
+
+def _opening_duplicate(candidate:dict,existing:list[dict])->bool:
+    return _matching_opening(candidate,existing) is not None
+
+
+def _attach_detector_metadata(
+    target:dict,
+    *,
+    box:tuple[float,float,float,float],
+    confidence:float,
+    detector_class:object,
+    detector_source:str|None,
+):
+    current=float(target.get("detectorConfidence",-1.0) or -1.0)
+    if confidence<current:
+        return
+    target["detectorBBox"]=[round(float(value),3) for value in box]
+    target["detectorConfidence"]=round(float(confidence),4)
+    target["detectorClass"]=str(detector_class or "")
+    if detector_source:
+        target["detectorSource"]=str(detector_source)
 
 
 def fuse_ai_opening_detections(
@@ -1013,6 +1035,10 @@ def fuse_ai_opening_detections(
     detections:list[dict],
     *,
     min_confidence:float=.55,
+    min_confidence_by_kind:dict[str,float]|None=None,
+    allow_unhosted:bool=False,
+    preserve_detector_bbox:bool=False,
+    detector_source:str|None=None,
 )->tuple[list[dict],list[dict]]:
     """Add ONNX door/window detections only when they can be hosted by a wall.
 
@@ -1039,7 +1065,13 @@ def fuse_ai_opening_detections(
             confidence=float(raw.get("confidence",raw.get("score",0.0)))
         except (TypeError,ValueError):
             continue
-        if confidence<min_confidence or confidence>1.0:
+        threshold=min_confidence
+        if min_confidence_by_kind and kind in min_confidence_by_kind:
+            try:
+                threshold=max(.01,min(.99,float(min_confidence_by_kind[kind])))
+            except (TypeError,ValueError):
+                threshold=min_confidence
+        if confidence<threshold or confidence>1.0:
             continue
         box=_raw_detection_box(raw)
         if box is None:
@@ -1065,38 +1097,66 @@ def fuse_ai_opening_detections(
             score=distance/max(1.0,tolerance)
             if best is None or score<best[0]:
                 best=(score,wall,length,ux,uy,nx,ny)
-        if best is None:
-            continue
-
-        _,wall,length,ux,uy,nx,ny=best
-        offset=_line_offset(wall,nx,ny)
-        wall_start,wall_end=_projection_interval(wall,ux,uy)
         corners=((x1,y1),(x2,y1),(x2,y2),(x1,y2))
-        projections=[x*ux+y*uy for x,y in corners]
-        start=max(wall_start,min(projections))
-        end=min(wall_end,max(projections))
-        if end-start<4:
-            continue
-        # Prevent a coarse detector box from becoming an implausibly huge
-        # opening relative to its host wall.
-        if end-start>length*.72:
-            center=(start+end)/2
-            half=length*.36
-            start=max(wall_start,center-half)
-            end=min(wall_end,center+half)
+        if best is None:
+            if not allow_unhosted:
+                continue
+            if (x2-x1)>=(y2-y1):
+                a={"x":x1,"y":cy}
+                b={"x":x2,"y":cy}
+            else:
+                a={"x":cx,"y":y1}
+                b={"x":cx,"y":y2}
+            wall=None
+            nx=0.0
+            ny=1.0
+            offset=cy
+        else:
+            _,wall,length,ux,uy,nx,ny=best
+            offset=_line_offset(wall,nx,ny)
+            wall_start,wall_end=_projection_interval(wall,ux,uy)
+            projections=[x*ux+y*uy for x,y in corners]
+            start=max(wall_start,min(projections))
+            end=min(wall_end,max(projections))
+            if end-start<4:
+                if not allow_unhosted:
+                    continue
+                if (x2-x1)>=(y2-y1):
+                    a={"x":x1,"y":cy}
+                    b={"x":x2,"y":cy}
+                else:
+                    a={"x":cx,"y":y1}
+                    b={"x":cx,"y":y2}
+                wall=None
+            else:
+                # Prevent a coarse detector box from becoming an implausibly
+                # huge hosted opening relative to its wall.
+                if end-start>length*.72:
+                    center=(start+end)/2
+                    half=length*.36
+                    start=max(wall_start,center-half)
+                    end=min(wall_end,center+half)
+                a=_point_from_frame(start,offset,ux,uy)
+                b=_point_from_frame(end,offset,ux,uy)
 
-        a=_point_from_frame(start,offset,ux,uy)
-        b=_point_from_frame(end,offset,ux,uy)
         candidate={
             "id":"",
             "kind":kind,
-            "wallId":str(wall["id"]),
+            "wallId":str(wall["id"]) if wall is not None else None,
             "a":a,
             "b":b,
             "confidence":round(confidence,3),
             "reviewed":False,
             "provenance":"ai",
         }
+        if preserve_detector_bbox:
+            _attach_detector_metadata(
+                candidate,
+                box=box,
+                confidence=confidence,
+                detector_class=raw.get("class",raw.get("label",raw.get("name"))),
+                detector_source=detector_source,
+            )
         if kind=="door":
             normal_depth=max(
                 abs(x*nx+y*ny-offset)
@@ -1111,12 +1171,30 @@ def fuse_ai_opening_detections(
                     else None
                 ),
             })
-            if _opening_duplicate(candidate,result_doors):
+            duplicate=_matching_opening(candidate,result_doors)
+            if duplicate is not None:
+                if preserve_detector_bbox:
+                    _attach_detector_metadata(
+                        duplicate,
+                        box=box,
+                        confidence=confidence,
+                        detector_class=raw.get("class",raw.get("label",raw.get("name"))),
+                        detector_source=detector_source,
+                    )
                 continue
             candidate["id"]=f"door-ai-{len(result_doors)+1}"
             result_doors.append(candidate)
         else:
-            if _opening_duplicate(candidate,result_windows):
+            duplicate=_matching_opening(candidate,result_windows)
+            if duplicate is not None:
+                if preserve_detector_bbox:
+                    _attach_detector_metadata(
+                        duplicate,
+                        box=box,
+                        confidence=confidence,
+                        detector_class=raw.get("class",raw.get("label",raw.get("name"))),
+                        detector_source=detector_source,
+                    )
                 continue
             candidate["id"]=f"window-ai-{len(result_windows)+1}"
             result_windows.append(candidate)
