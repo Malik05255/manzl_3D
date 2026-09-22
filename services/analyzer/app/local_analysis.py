@@ -14,7 +14,7 @@ from .document import (
 )
 from .dimensions import extract_dimension_evidence
 from .ocr import _merge_labels,classify_text,extract_ocr_dimension_labels,extract_ocr_labels,native_pdf_text_is_sufficient
-from .openings import detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts
+from .openings import detect_doors,detect_windows,filter_embedded_windows_by_host_role,fuse_ai_opening_detections,normalize_opening_hosts
 from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
@@ -158,6 +158,7 @@ def analyze_document_bytes_local(
     rooms=filter_nonarchitectural_enclosures(rooms,topology_walls,w,h)
     recalibrate_extracted_room_confidence(rooms,topology_walls,w,h)
     classify_wall_roles(walls,rooms)
+    windows=filter_embedded_windows_by_host_role(walls,windows)
 
     analysis={
         "pipelineVersion":"benchmark-local",
