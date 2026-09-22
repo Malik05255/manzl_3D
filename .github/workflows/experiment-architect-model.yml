@@ -25,9 +25,11 @@ jobs:
           python - <<'PY'
           import json, shutil
           from pathlib import Path
+          from huggingface_hub import hf_hub_download
           from ultralytics import YOLO
 
-          model=YOLO("SamirShabani/Architect")
+          source=hf_hub_download("SamirShabani/Architect","best.pt")
+          model=YOLO(source)
           exported=model.export(format="onnx",imgsz=640,opset=12,simplify=False,dynamic=False)
           target=Path("benchmark-model")
           target.mkdir(exist_ok=True)
