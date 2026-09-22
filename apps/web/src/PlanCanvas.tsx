@@ -14,7 +14,7 @@ export interface PlanLayerVisibility{
 }
 
 export const DEFAULT_PLAN_LAYERS:PlanLayerVisibility={
-  source:true,
+  source:false,
   rooms:true,
   walls:true,
   openings:true,
@@ -545,7 +545,7 @@ export function PlanCanvas({plan,selectedWallId,onSelectWall,selectedRoomId,onSe
             x1={wall.a.x} y1={wall.a.y} x2={wall.b.x} y2={wall.b.y}
             stroke={stroke}
             strokeWidth={Math.max(wall.thicknessPx,selectedWallId===wall.id?5:severity==="critical"?5:3)}
-            strokeLinecap="round" className={readonly||calibrationMode||measureMode?undefined:wall.locked?"editable-wall locked-wall":"editable-wall"}
+            strokeLinecap="butt" className={readonly||calibrationMode||measureMode?undefined:wall.locked?"editable-wall locked-wall":"editable-wall"}
             strokeDasharray={severity&&!selectedWallId?severity==="critical"?"14 6":"10 6":uncertain&&!selectedWallId?"7 5":wall.locked&&!selectedWallId?"5 5":undefined}
             onPointerDown={e=>{if(readonly||calibrationMode||measureMode||drawWallMode||effectivePan)return;onSelectDimension?.(null);onSelectOpening?.(null);onSelectWall?.(wall.id);if(wall.locked)return;e.currentTarget.setPointerCapture(e.pointerId);setDrag({wallId:wall.id,startClient:{x:e.clientX,y:e.clientY},original:wall,basePlan:plan,changed:false});}}
           />;

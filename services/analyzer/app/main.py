@@ -19,6 +19,7 @@ from .pipeline import assemble_plan
 from .rooms import detect_rooms
 from .scale import estimate_scale_with_diagnostics
 from .symbols import extract_local_onnx_detections,extract_symbol_detections,normalize_configured_symbols
+from .structural import extract_structural_wall_mask,filter_walls_by_structural_support,structural_mask_metrics
 from .topology import canonicalize_plan,classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
 from .semantic import normalize_edit_semantics
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,quarantine_dimension_aligned_walls,rasterize_wall_mask
@@ -93,6 +94,9 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     h,w=image.shape[:2]
     await upload_preview(req.preview_url,image)
     _,ink=preprocess(image)
+    reconstruction_v2=os.getenv("ANALYZER_RECONSTRUCTION_V2","1").strip().lower() not in {"0","false","off","no"}
+    structural_mask=extract_structural_wall_mask(image,ink) if reconstruction_v2 else None
+    structural_metrics=structural_mask_metrics(structural_mask) if structural_mask is not None else {}
 
     native_labels=[]
     used_pdf_text=False
@@ -164,7 +168,12 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
         labels=_merge_labels(labels,native_labels,distance)
 
     await progress(req.callback_url,req.project_id,"geometry",58,"استخراج الجدران والهندسة")
-    walls,wall_mask=detect_walls(ink)
+    wall_input=(
+        structural_mask
+        if reconstruction_v2 and structural_mask is not None and cv2.countNonZero(structural_mask)>0
+        else ink
+    )
+    walls,wall_mask=detect_walls(wall_input)
     vector_lines=[]
     if req.mime_type=="application/pdf":
         try:
@@ -179,6 +188,18 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     quarantined_wall_ids=quarantine_dimension_aligned_walls(
         walls,labels,h,w,vector_lines=vector_lines,dimensions=dimensions,
     )
+    rejected_structural_walls=[]
+    if structural_mask is not None and cv2.countNonZero(structural_mask)>0:
+        accepted_walls,rejected_structural_walls=filter_walls_by_structural_support(
+            walls,structural_mask,minimum_support=.34,
+        )
+        minimum_viable=max(3,int(round(len(walls)*.15))) if walls else 0
+        if len(accepted_walls)>=minimum_viable:
+            walls=accepted_walls
+            quarantined_wall_ids={
+                wall_id for wall_id in quarantined_wall_ids
+                if any(str(item.get("id",""))==wall_id for item in walls)
+            }
     topology_walls=[
         wall for wall in walls
         if str(wall.get("id","")) not in quarantined_wall_ids
@@ -209,7 +230,12 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
             and float(wall.get("confidence",0.0))<.70
         )
     ]
-    room_barrier_mask=rasterize_wall_mask(walls,h,w,min_pdf_vector_confidence=.70,excluded_wall_ids=quarantined_wall_ids)
+    room_barrier_mask=rasterize_wall_mask(
+        walls,h,w,
+        base_mask=structural_mask if reconstruction_v2 and structural_mask is not None else None,
+        min_pdf_vector_confidence=.70,
+        excluded_wall_ids=quarantined_wall_ids,
+    )
 
     await progress(req.callback_url,req.project_id,"rooms",78,"فهم الغرف والعلاقات")
     rooms=detect_rooms(room_barrier_mask,labels,scale)
@@ -220,6 +246,8 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
 
     await progress(req.callback_url,req.project_id,"validation",93,"التحقق من جودة النتيجة")
     engines=["opencv","canonical-wall-barrier"]
+    if reconstruction_v2:
+        engines.extend(["structural-wall-mask-v2","clean-vector-reconstruction-v2"])
     if local_labels: engines.append("tesseract-dimensions" if use_native_fastpath else "tesseract")
     if used_cloud_ocr: engines.append("google-vision")
     if used_pdf_text: engines.append("pdf-text")
@@ -232,6 +260,14 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
         "sourceSha256":hashlib.sha256(data).hexdigest(),
         "engines":list(dict.fromkeys(engines)),
     }
+    if reconstruction_v2:
+        analysis["engines"].append(
+            f"structural-components:{int(structural_metrics.get('structuralComponents',0))}"
+        )
+        if rejected_structural_walls:
+            analysis["engines"].append(
+                f"rejected-raster-strokes:{len(rejected_structural_walls)}"
+            )
     result=assemble_plan(
         image,req.project_id,req.filename,req.mime_type,labels,walls,rooms,scale,scale_confidence,
         source_page=source_page,source_page_count=source_page_count,doors=doors,windows=windows,
