@@ -136,7 +136,14 @@ def _iou(left:dict,right:dict)->float:
     return intersection/max(1e-9,area_a+area_b-intersection)
 
 
-def normalize_symbol_response(payload:object,width:int,height:int,min_confidence:float=.78)->list[dict]:
+def normalize_symbol_response(
+    payload:object,
+    width:int,
+    height:int,
+    min_confidence:float=.78,
+    *,
+    per_kind_min_confidence:dict[str,float]|None=None,
+)->list[dict]:
     if isinstance(payload,dict):
         raw=payload.get("symbols",payload.get("detections",payload.get("predictions",[])))
     else:
@@ -155,7 +162,13 @@ def normalize_symbol_response(payload:object,width:int,height:int,min_confidence
             confidence=float(item.get("confidence",item.get("score",item.get("probability",0.0))))
         except (TypeError,ValueError):
             continue
-        if not min_confidence<=confidence<=1.0:
+        threshold=min_confidence
+        if per_kind_min_confidence and kind in per_kind_min_confidence:
+            try:
+                threshold=max(.05,min(.99,float(per_kind_min_confidence[kind])))
+            except (TypeError,ValueError):
+                threshold=min_confidence
+        if not threshold<=confidence<=1.0:
             continue
         box=_bbox(item,width,height)
         if box is None:
@@ -478,7 +491,7 @@ def extract_local_onnx_detections(image:np.ndarray)->list[dict]:
         return []
     input_size=int(os.getenv("SYMBOL_ONNX_INPUT_SIZE","640") or "640")
     input_size=max(128,min(2048,input_size))
-    confidence=_env_confidence("SYMBOL_ONNX_RAW_MIN_CONFIDENCE",.30,.10)
+    confidence=_env_confidence("SYMBOL_ONNX_RAW_MIN_CONFIDENCE",.10,.05)
 
     key=(model_path,input_size)
     net=_ONNX_CACHE.get(key)

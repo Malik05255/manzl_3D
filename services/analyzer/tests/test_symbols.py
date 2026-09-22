@@ -188,3 +188,28 @@ def test_raw_onnx_threshold_can_be_lower_than_fixture_threshold(monkeypatch):
 
     monkeypatch.setenv("SYMBOL_ONNX_RAW_MIN_CONFIDENCE","0.01")
     assert _env_confidence("SYMBOL_ONNX_RAW_MIN_CONFIDENCE",.30,.10)==.10
+
+
+def test_normalize_symbol_response_supports_per_kind_thresholds():
+    payload=[
+        {"class":"sink","bbox":[10,10,60,60],"confidence":.12},
+        {"class":"toilet","bbox":[80,10,130,60],"confidence":.12},
+    ]
+    result=normalize_symbol_response(
+        payload,
+        200,
+        100,
+        .55,
+        per_kind_min_confidence={"sink":.10},
+    )
+    assert [item["kind"] for item in result]==["sink"]
+
+
+def test_normalize_symbol_response_keeps_global_threshold_without_override():
+    payload=[
+        {"class":"sink","bbox":[10,10,60,60],"confidence":.12},
+        {"class":"sink","bbox":[80,10,130,60],"confidence":.60},
+    ]
+    result=normalize_symbol_response(payload,200,100,.55)
+    assert len(result)==1
+    assert result[0]["confidence"]==.6
