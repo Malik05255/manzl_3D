@@ -543,7 +543,7 @@ def test_pdf_vector_window_requires_repeated_parallel_strokes():
         # Unrelated long wall face should not define the window span.
         {"a":{"x":20.0,"y":100.0},"b":{"x":360.0,"y":100.0},"widthPx":1.2},
     ]
-    windows=detect_pdf_vector_windows(vectors,walls,420,280)
+    windows=detect_pdf_vector_windows(vectors,walls,3000,2000)
     assert len(windows)==1
     item=windows[0]
     assert item["provenance"]=="pdf-vector"
@@ -563,4 +563,4 @@ def test_pdf_vector_plain_two_wall_faces_are_not_window():
         {"a":{"x":90.0,"y":108.0},"b":{"x":280.0,"y":108.0},"widthPx":1.2},
         {"a":{"x":90.0,"y":132.0},"b":{"x":280.0,"y":132.0},"widthPx":1.2},
     ]
-    assert detect_pdf_vector_windows(vectors,walls,420,280)==[]
+    assert detect_pdf_vector_windows(vectors,walls,3000,2000)==[]
