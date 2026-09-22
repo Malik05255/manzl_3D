@@ -590,3 +590,53 @@ def test_vector_window_rejects_parallel_group_far_from_wall():
     ]
     windows=detect_windows(image,walls,None,vector_lines=vectors)
     assert windows==[]
+
+
+def test_pdf_vector_window_does_not_merge_wall_topology():
+    walls=[
+        wall("left",20,120,120,120),
+        wall("right",200,120,320,120),
+    ]
+    windows=[{
+        "id":"window-vector-1",
+        "kind":"window",
+        "wallId":"left",
+        "a":{"x":120.0,"y":120.0},
+        "b":{"x":200.0,"y":120.0},
+        "confidence":.91,
+        "provenance":"pdf-vector",
+        "windowDepthPx":12.0,
+    }]
+
+    normalized,doors,kept_windows=normalize_opening_hosts(
+        walls,[],windows,
+    )
+
+    assert doors==[]
+    assert len(normalized)==2
+    assert {item["id"] for item in normalized}=={"left","right"}
+    assert len(kept_windows)==1
+    assert kept_windows[0]["wallId"] in {"left","right"}
+
+
+def test_raster_window_can_still_merge_true_wall_gap():
+    walls=[
+        wall("left",20,120,120,120),
+        wall("right",200,120,320,120),
+    ]
+    windows=[{
+        "id":"window-raster-1",
+        "kind":"window",
+        "wallId":"left",
+        "a":{"x":120.0,"y":120.0},
+        "b":{"x":200.0,"y":120.0},
+        "confidence":.91,
+        "provenance":"opencv",
+    }]
+
+    normalized,_,kept_windows=normalize_opening_hosts(
+        walls,[],windows,
+    )
+
+    assert len(normalized)==1
+    assert kept_windows[0]["wallId"]==normalized[0]["id"]
