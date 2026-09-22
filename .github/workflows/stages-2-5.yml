@@ -15,7 +15,7 @@ jobs:
   prepare-model:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.head_ref == 'feat/cloud-floorplan-editor'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - name: Checkout Manzil H
         uses: actions/checkout@v4
@@ -71,26 +71,124 @@ jobs:
           print(json.dumps(info,indent=2))
           PY
 
+      - name: Restore cached secondary fixture detector
+        id: secondary-cache
+        uses: actions/cache@v4
+        with:
+          path: secondary-model-cache
+          key: secondary-fixtures-v1-${{ hashFiles('services/analyzer/tools/generate_synthetic_symbol_dataset.py') }}
+
+      - name: Train synthetic secondary fixture detector
+        if: steps.secondary-cache.outputs.cache-hit != 'true'
+        run: |
+          python services/analyzer/tools/generate_synthetic_symbol_dataset.py \
+            --output synthetic-symbols \
+            --train 420 \
+            --val 84 \
+            --size 320 \
+            --seed 240922
+          python - <<'PY'
+          import hashlib, json, shutil
+          from pathlib import Path
+          from ultralytics import YOLO
+
+          model=YOLO("yolov8n.pt")
+          result=model.train(
+              data="synthetic-symbols/data.yaml",
+              epochs=3,
+              imgsz=320,
+              batch=32,
+              device="cpu",
+              workers=2,
+              cache=False,
+              patience=2,
+              project="secondary-model-training",
+              name="objects",
+              exist_ok=True,
+              verbose=False,
+              plots=False,
+              seed=240922,
+              freeze=10,
+          )
+          best=Path(result.save_dir)/"weights"/"best.pt"
+          trained=YOLO(str(best))
+          exported=trained.export(
+              format="onnx",
+              imgsz=640,
+              opset=12,
+              simplify=False,
+              dynamic=False,
+          )
+          target_dir=Path("secondary-model-cache")
+          target_dir.mkdir(exist_ok=True)
+          target=target_dir/"secondary-fixtures.onnx"
+          shutil.copy2(exported,target)
+          classes=[str(trained.names[index]) for index in sorted(trained.names)]
+          info={
+              "source":"deterministic synthetic architectural symbols",
+              "baseModel":"yolov8n.pt",
+              "sourceLicense":"AGPL-3.0",
+              "classes":classes,
+              "rawMinConfidence":0.003,
+              "allowedClasses":["toilet","cooktop"],
+              "classThresholds":{"toilet":0.003,"cooktop":0.010},
+              "tileTrigger":640,
+              "tileSize":640,
+              "tileOverlap":0.25,
+              "nmsIou":0.45,
+              "onnxSha256":hashlib.sha256(target.read_bytes()).hexdigest(),
+              "onnxBytes":target.stat().st_size,
+          }
+          (target_dir/"secondary-model-info.json").write_text(
+              json.dumps(info,indent=2),encoding="utf-8"
+          )
+          print(json.dumps(info,indent=2))
+          PY
+
+      - name: Bundle secondary fixture detector
+        run: |
+          cp secondary-model-cache/secondary-fixtures.onnx benchmark-model/
+          cp secondary-model-cache/secondary-model-info.json benchmark-model/
+
       - name: Verify ONNX with production OpenCV decoder
         working-directory: services/analyzer
         env:
           PYTHONPATH: .
           SYMBOL_ONNX_MODEL: ../../benchmark-model/floorcad-symbols.onnx
+          SYMBOL_SECONDARY_ONNX_MODEL: ../../benchmark-model/secondary-fixtures.onnx
         run: |
           export SYMBOL_ONNX_CLASSES="$(python - <<'PY'
           import json
           print(json.dumps(json.load(open("../../benchmark-model/symbol-model-info.json"))["classes"],separators=(",",":")))
           PY
           )"
+          export SYMBOL_SECONDARY_ONNX_CLASSES="$(python - <<'PY'
+          import json
+          print(json.dumps(json.load(open("../../benchmark-model/secondary-model-info.json"))["classes"],separators=(",",":")))
+          PY
+          )"
+          export SYMBOL_SECONDARY_ONNX_RAW_MIN_CONFIDENCE="0.003"
+          export SYMBOL_SECONDARY_ONNX_ALLOWED_CLASSES="toilet,cooktop"
+          export SYMBOL_SECONDARY_ONNX_CLASS_THRESHOLDS='{"toilet":0.003,"cooktop":0.010}'
+          export SYMBOL_SECONDARY_ONNX_TILE_TRIGGER="640"
+          export SYMBOL_SECONDARY_ONNX_TILE_SIZE="640"
+          export SYMBOL_SECONDARY_ONNX_TILE_OVERLAP="0.25"
+          export SYMBOL_SECONDARY_ONNX_NMS_IOU="0.45"
           python - <<'PY'
           import cv2, numpy as np
-          from app.symbols import extract_local_onnx_detections
-          net=cv2.dnn.readNetFromONNX("../../benchmark-model/floorcad-symbols.onnx")
-          assert net is not None
+          from app.symbols import extract_local_onnx_detections,extract_secondary_onnx_detections
+          primary=cv2.dnn.readNetFromONNX("../../benchmark-model/floorcad-symbols.onnx")
+          secondary=cv2.dnn.readNetFromONNX("../../benchmark-model/secondary-fixtures.onnx")
+          assert primary is not None and secondary is not None
           image=np.full((640,640,3),255,dtype=np.uint8)
-          result=extract_local_onnx_detections(image)
-          assert isinstance(result,list)
-          print("ONNX production decoder smoke passed; detections on blank:",len(result))
+          primary_result=extract_local_onnx_detections(image)
+          secondary_result=extract_secondary_onnx_detections(image)
+          assert isinstance(primary_result,list)
+          assert isinstance(secondary_result,list)
+          print(
+              "ONNX production decoder smoke passed; blank detections:",
+              len(primary_result),len(secondary_result),
+          )
           PY
 
       - name: Upload ONNX model
@@ -150,10 +248,21 @@ jobs:
           import json, os
           from pathlib import Path
           info=json.loads(Path("benchmark-model/symbol-model-info.json").read_text())
+          secondary=json.loads(Path("benchmark-model/secondary-model-info.json").read_text())
           with Path(os.environ["GITHUB_ENV"]).open("a",encoding="utf-8") as env:
               env.write("SYMBOL_ONNX_MODEL="+str(Path("benchmark-model/floorcad-symbols.onnx").resolve())+"\n")
               env.write("SYMBOL_ONNX_CLASSES="+json.dumps(info["classes"],separators=(",",":"))+"\n")
               env.write("SYMBOL_MIN_CONFIDENCE=0.55\n")
+              env.write("SYMBOL_SINK_MIN_CONFIDENCE=0.10\n")
+              env.write("SYMBOL_SECONDARY_ONNX_MODEL="+str(Path("benchmark-model/secondary-fixtures.onnx").resolve())+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_CLASSES="+json.dumps(secondary["classes"],separators=(",",":"))+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_RAW_MIN_CONFIDENCE="+str(secondary["rawMinConfidence"])+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_ALLOWED_CLASSES="+",".join(secondary["allowedClasses"])+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_CLASS_THRESHOLDS="+json.dumps(secondary["classThresholds"],separators=(",",":"))+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_TILE_TRIGGER="+str(secondary["tileTrigger"])+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_TILE_SIZE="+str(secondary["tileSize"])+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_TILE_OVERLAP="+str(secondary["tileOverlap"])+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_NMS_IOU="+str(secondary["nmsIou"])+"\n")
               env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
           PY
 
@@ -375,6 +484,7 @@ jobs:
           name: stages-2-4-${{ github.sha }}
           path: |
             benchmark-output/model/symbol-model-info.json
+            benchmark-output/model/secondary-model-info.json
             benchmark-output/aec15/score.txt
             benchmark-output/aec15/report.json
             benchmark-output/aec15/predictions/*.json
