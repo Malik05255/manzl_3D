@@ -1,0 +1,201 @@
+name: Door BBox Ablation
+
+on:
+  push:
+    branches: [exp/door-bbox-ablation]
+    paths:
+      - .github/workflows/experiment-door-bbox-ablation.yml
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [4, 9, 13, 14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely
+          pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
+      - name: Export FloorCAD ONNX
+        run: |
+          python - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          from huggingface_hub import hf_hub_download
+          from ultralytics import YOLO
+          source=hf_hub_download(
+              "mudasir13cs/floorcad-yolov8n-detect",
+              "floorcad-yolov8n-detect.pt",
+          )
+          model=YOLO(source)
+          exported=model.export(format="onnx",imgsz=640,opset=12,simplify=False,dynamic=False)
+          target=Path("benchmark-model"); target.mkdir(exist_ok=True)
+          shutil.copy2(exported,target/"floorcad.onnx")
+          classes=[str(model.names[index]) for index in sorted(model.names)]
+          (target/"classes.json").write_text(json.dumps(classes),encoding="utf-8")
+          PY
+      - name: Configure detector
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          classes=json.loads(Path("benchmark-model/classes.json").read_text())
+          with Path(os.environ["GITHUB_ENV"]).open("a") as env:
+              env.write("SYMBOL_ONNX_MODEL="+str(Path("benchmark-model/floorcad.onnx").resolve())+"\n")
+              env.write("SYMBOL_ONNX_CLASSES="+json.dumps(classes,separators=(",",":"))+"\n")
+              env.write("SYMBOL_ONNX_RAW_MIN_CONFIDENCE=0.30\n")
+              env.write("SYMBOL_MIN_CONFIDENCE=0.55\n")
+              env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
+          PY
+      - name: Analyze sheet once
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p "../../benchmark-output/door-${{ matrix.shard }}"
+          python -m app.aec_benchmark \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --output "../../benchmark-output/door-${{ matrix.shard }}" \
+            --offset "${{ matrix.shard }}" --limit 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: door-ablation-sheet-${{ matrix.shard }}-${{ github.sha }}
+          path: |
+            benchmark-output/door-${{ matrix.shard }}/*.json
+            benchmark-output/door-${{ matrix.shard }}/_canonical/*.json
+          retention-days: 3
+
+  score:
+    if: always()
+    needs: analyze
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/analyzer/requirements.txt shapely
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: door-ablation-sheet-*-${{ github.sha }}
+          path: benchmark-output/door-ablation/raw
+          merge-multiple: true
+      - name: Build and score door bbox variants
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import copy, json, math, os
+          from pathlib import Path
+          from app.aec_benchmark import run_official_scorer
+
+          root=Path("../..")
+          raw=root/"benchmark-output/door-ablation/raw"
+          dataset=root/"external/aec-geometric-bench/dataset"
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          sizes={str(x["sheet"]):(int(x["width"]),int(x["height"])) for x in manifest["sheets"]}
+          sheets=sorted(p.stem for p in raw.glob("sheet_*.json"))
+          modes=["current","simple","square70","square90","square110"]
+          dirs={m:root/f"benchmark-output/door-ablation/{m}" for m in modes}
+          for d in dirs.values(): d.mkdir(parents=True,exist_ok=True)
+
+          def simple_bbox(door,sx,sy,pad):
+              xs=[float(door["a"]["x"]),float(door["b"]["x"])]
+              ys=[float(door["a"]["y"]),float(door["b"]["y"])]
+              return [(min(xs)-pad)*sx,(min(ys)-pad)*sy,(max(xs)+pad)*sx,(max(ys)+pad)*sy]
+
+          def square_bbox(door,sx,sy,factor):
+              ax=float(door["a"]["x"]); ay=float(door["a"]["y"])
+              bx=float(door["b"]["x"]); by=float(door["b"]["y"])
+              span=max(4.0,math.hypot(bx-ax,by-ay))
+              cx=(ax+bx)/2; cy=(ay+by)/2
+              half=span*factor/2
+              return [(cx-half)*sx,(cy-half)*sy,(cx+half)*sx,(cy+half)*sy]
+
+          for sheet in sheets:
+              plan=json.loads((raw/"_canonical"/f"{sheet}.json").read_text())
+              original=json.loads((raw/f"{sheet}.json").read_text())
+              width,height=sizes[sheet]
+              sx=width/max(1.0,float(plan["widthPx"]))
+              sy=height/max(1.0,float(plan["heightPx"]))
+              thicknesses=[max(1.0,float(w.get("thicknessPx",4))) for w in plan.get("walls",[])]
+              thicknesses.sort()
+              median=thicknesses[len(thicknesses)//2] if thicknesses else 4.0
+              pad=max(3.0,median*1.25)
+
+              valid_doors=[d for d in plan.get("doors",[]) if d.get("doorSubtype")!="sliding"]
+              for mode in modes:
+                  pred=copy.deepcopy(original)
+                  door_indexes=[
+                      i for i,obj in enumerate(pred.get("objects",[]))
+                      if obj.get("class") in {"Single Swing Door","Double Swing Door"}
+                  ]
+                  for idx,door in zip(door_indexes,valid_doors):
+                      if mode=="simple":
+                          pred["objects"][idx]["bbox"]=simple_bbox(door,sx,sy,pad)
+                      elif mode.startswith("square"):
+                          factor={"square70":.70,"square90":.90,"square110":1.10}[mode]
+                          pred["objects"][idx]["bbox"]=square_bbox(door,sx,sy,factor)
+                  (dirs[mode]/f"{sheet}.json").write_text(json.dumps(pred),encoding="utf-8")
+
+          report={}
+          for mode in modes:
+              code,output,parsed=run_official_scorer(
+                  scorer,dirs[mode],dataset,sheet_names=sheets,include_per_sheet=True,
+              )
+              if code!=0 or parsed is None:
+                  raise SystemExit(f"score failed for {mode}: {output}")
+              report[mode]=parsed
+              s=parsed["classes"]
+              print(
+                  "MODE",mode,
+                  "SINGLE",json.dumps(s.get("Single Swing Door",{}),sort_keys=True),
+                  "DOUBLE",json.dumps(s.get("Double Swing Door",{}),sort_keys=True),
+                  "OBJECT",json.dumps(parsed.get("objectMicro",{}),sort_keys=True),
+              )
+
+          target=root/"benchmark-output/door-ablation/report.json"
+          target.write_text(json.dumps(report,indent=2),encoding="utf-8")
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Door bbox ablation\n\n")
+              out.write("| Mode | Single F1 | Double F1 | Object micro F1 |\n")
+              out.write("|---|---:|---:|---:|\n")
+              for mode,parsed in report.items():
+                  cls=parsed["classes"]
+                  out.write(
+                      f"| {mode} | {float(cls.get('Single Swing Door',{}).get('f1',0)):.3f} | "
+                      f"{float(cls.get('Double Swing Door',{}).get('f1',0)):.3f} | "
+                      f"{float(parsed.get('objectMicro',{}).get('f1',0)):.3f} |\n"
+                  )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: door-bbox-ablation-${{ github.sha }}
+          path: benchmark-output/door-ablation/report.json
+          retention-days: 7
