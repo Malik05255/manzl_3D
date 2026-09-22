@@ -1,6 +1,9 @@
 name: AEC Real Drawing Benchmark
 
 on:
+  push:
+    branches:
+      - feat/cloud-floorplan-editor
   workflow_dispatch:
     inputs:
       limit:
@@ -26,14 +29,19 @@ on:
 
 jobs:
   benchmark:
+    if: github.event_name == 'workflow_dispatch' || vars.AEC_BENCH_LICENSE_CONFIRMED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Check dataset licence confirmation
+        env:
+          MANUAL_CONFIRMED: ${{ inputs.license_confirmed }}
+          REPO_CONFIRMED: ${{ vars.AEC_BENCH_LICENSE_CONFIRMED }}
         run: |
-          if [ "${{ inputs.license_confirmed }}" != "true" ]; then
-            echo "Dataset licence confirmation is required."
-            exit 1
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            test "$MANUAL_CONFIRMED" = "true" || (echo "Dataset licence confirmation is required." && exit 1)
+          else
+            test "$REPO_CONFIRMED" = "true" || (echo "Repository variable AEC_BENCH_LICENSE_CONFIRMED=true is required." && exit 1)
           fi
 
       - name: Checkout Manzil H
@@ -42,8 +50,8 @@ jobs:
       - name: Checkout AEC-Geometric-Bench
         uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.dataset_repository }}
-          ref: ${{ inputs.dataset_ref }}
+          repository: ${{ inputs.dataset_repository || 'KamaiEnterprises/aec-geometric-bench' }}
+          ref: ${{ inputs.dataset_ref || 'main' }}
           path: external/aec-geometric-bench
 
       - uses: actions/setup-python@v5
@@ -61,7 +69,7 @@ jobs:
 
       - name: Validate limit and record source revisions
         run: |
-          LIMIT="${{ inputs.limit }}"
+          LIMIT="${{ inputs.limit || '15' }}"
           case "$LIMIT" in
             ''|*[!0-9]*) echo "limit must be an integer from 1 to 15"; exit 2 ;;
           esac
@@ -85,7 +93,7 @@ jobs:
           PYTHONPATH=. python -m app.aec_benchmark \
             --dataset ../../external/aec-geometric-bench/dataset \
             --output ../../benchmark-output/aec15/predictions \
-            --limit "${{ inputs.limit }}" \
+            --limit "${{ inputs.limit || '15' }}" \
             --scorer ../../external/aec-geometric-bench/scoring/score.py \
             --report-json ../../benchmark-output/aec15/report.json \
             | tee ../../benchmark-output/aec15/score.txt
