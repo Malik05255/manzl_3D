@@ -165,10 +165,15 @@ def plan_to_aec_prediction(plan:dict,*,sheet:str,width:int,height:int)->dict:
                 [x1,y1],[x2,y1],[x2,y2],[x1,y2],
             ])
 
+    # Canonical plans intentionally retain low-confidence vector/raster
+    # candidates for human review. The benchmark prediction represents the
+    # automatic accepted result, so quarantined candidates must not count as
+    # final walls.
     walls=[
         polygon
         for wall in plan.get("walls",[])
-        if len(polygon:=_wall_polygon(wall,sx,sy))>=3
+        if float(wall.get("confidence",0.0))>=.70
+        and len(polygon:=_wall_polygon(wall,sx,sy))>=3
     ]
     return {"sheet":sheet,"objects":objects,"areas":areas,"walls":walls}
 
