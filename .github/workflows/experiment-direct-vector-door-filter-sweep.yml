@@ -1,0 +1,171 @@
+name: Direct Vector Door Filter Sweep
+
+on:
+  push:
+    branches: [exp/direct-vector-door-filter-sweep]
+    paths:
+      - .github/workflows/experiment-direct-vector-door-filter-sweep.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install scorer dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely
+
+      - name: Download direct-door canonical outputs
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35768614068
+          pattern: direct-vector-door-sheet-*
+          path: benchmark-input
+          merge-multiple: true
+
+      - name: Sweep direct-door geometry filters
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from app.aec_benchmark import plan_to_aec_prediction, run_official_scorer
+
+          root=Path("../..")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          by_sheet={str(item["sheet"]):item for item in manifest["sheets"]}
+          canonical=root/"benchmark-input/_canonical"
+          sheets=sorted(p.stem for p in canonical.glob("sheet_*.json"))
+          if len(sheets)!=5:
+              raise SystemExit(f"Expected 5 cached canonical sheets, found {len(sheets)}: {sheets}")
+
+          configs=[
+              ("baseline",None,None),
+              ("all",0.0,999.0),
+              ("wide",3.0,6.0),
+              ("medium",3.5,5.5),
+              ("tight",3.7,5.0),
+              ("tp-band",3.8,4.3),
+              ("tp-core",3.9,4.1),
+          ]
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          rows=[]
+
+          for name,low,high in configs:
+              out=root/f"benchmark-output/direct-door-filter/{name}"
+              out.mkdir(parents=True,exist_ok=True)
+              kept_direct=0
+              removed_direct=0
+
+              for sheet in sheets:
+                  plan=json.loads((canonical/f"{sheet}.json").read_text())
+                  wall_by_id={str(w["id"]):w for w in plan.get("walls",[])}
+                  filtered=[]
+                  for door in plan.get("doors",[]):
+                      if door.get("provenance")!="pdf-vector-direct":
+                          filtered.append(door)
+                          continue
+                      if low is None:
+                          removed_direct+=1
+                          continue
+                      wall=wall_by_id.get(str(door.get("wallId","")))
+                      try:
+                          leaf=float(door.get("vectorLeafLengthPx",0.0) or 0.0)
+                          thickness=float((wall or {}).get("thicknessPx",0.0) or 0.0)
+                          ratio=leaf/thickness if thickness>0 else 999.0
+                      except (TypeError,ValueError):
+                          ratio=999.0
+                      if low<=ratio<=high:
+                          filtered.append(door)
+                          kept_direct+=1
+                      else:
+                          removed_direct+=1
+                  plan["doors"]=filtered
+                  item=by_sheet[sheet]
+                  prediction=plan_to_aec_prediction(
+                      plan,
+                      sheet=sheet,
+                      width=int(item["width"]),
+                      height=int(item["height"]),
+                  )
+                  (out/f"{sheet}.json").write_text(
+                      json.dumps(prediction,separators=(",",":")),
+                      encoding="utf-8",
+                  )
+
+              code,output,report=run_official_scorer(
+                  scorer,out,dataset,sheet_names=sheets,include_per_sheet=True,
+              )
+              if code!=0 or report is None:
+                  print(output)
+                  raise SystemExit(code or 1)
+              single=report.get("classes",{}).get("Single Swing Door",{})
+              double=report.get("classes",{}).get("Double Swing Door",{})
+              row={
+                  "name":name,
+                  "low":low,
+                  "high":high,
+                  "keptDirect":kept_direct,
+                  "removedDirect":removed_direct,
+                  "single":single,
+                  "double":double,
+                  "objectMicro":report.get("objectMicro",{}),
+                  "macroF1":report.get("macroF1",0),
+              }
+              rows.append(row)
+              print("FILTER",json.dumps(row,sort_keys=True))
+
+          rows.sort(
+              key=lambda r:(
+                  float(r["single"].get("f1",0)),
+                  float(r["objectMicro"].get("f1",0)),
+                  -int(r["keptDirect"]),
+              ),
+              reverse=True,
+          )
+          target=root/"benchmark-output/direct-door-filter/report.json"
+          target.parent.mkdir(parents=True,exist_ok=True)
+          target.write_text(json.dumps(rows,indent=2),encoding="utf-8")
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Direct vector door filter sweep\n\n")
+              out.write("| Filter | Kept direct | Single TP | FP | FN | F1 | Object F1 | macroF1 |\n")
+              out.write("|---|---:|---:|---:|---:|---:|---:|---:|\n")
+              for row in rows:
+                  s=row["single"]
+                  out.write(
+                      f"| {row['name']} | {row['keptDirect']} | {s.get('tp',0)} | "
+                      f"{s.get('fp',0)} | {s.get('fn',0)} | {float(s.get('f1',0)):.4f} | "
+                      f"{float(row['objectMicro'].get('f1',0)):.4f} | "
+                      f"{float(row['macroF1']):.4f} |\n"
+                  )
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: direct-vector-door-filter-sweep-${{ github.sha }}
+          path: benchmark-output/direct-door-filter/report.json
+          retention-days: 5
