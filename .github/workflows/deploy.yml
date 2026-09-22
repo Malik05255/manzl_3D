@@ -121,15 +121,13 @@ jobs:
           set -euo pipefail
           npx wrangler r2 bucket info "$R2_BUCKET" >/dev/null 2>&1 || npx wrangler r2 bucket create "$R2_BUCKET" --location apac
           npx wrangler queues info "$ANALYZE_QUEUE" >/dev/null 2>&1 || npx wrangler queues create "$ANALYZE_QUEUE"
-          npx wrangler pages project list --json > /tmp/pages.json
-          if ! python - <<'PY'
-          import json, os, sys
-          items=json.load(open('/tmp/pages.json'))
-          name=os.environ['PAGES_PROJECT']
-          sys.exit(0 if any(x.get('name')==name for x in items) else 1)
-          PY
-          then
-            npx wrangler pages project create "$PAGES_PROJECT" --production-branch production
+          if ! npx wrangler pages project create "$PAGES_PROJECT" --production-branch production >/tmp/pages-create.log 2>&1; then
+            if grep -qi "already exists" /tmp/pages-create.log; then
+              echo "Pages project $PAGES_PROJECT already exists; continuing."
+            else
+              cat /tmp/pages-create.log >&2
+              exit 1
+            fi
           fi
 
       - name: Deploy Analyzer container
