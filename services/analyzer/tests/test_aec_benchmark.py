@@ -345,5 +345,12 @@ def test_run_dataset_honors_manifest_offset(tmp_path,monkeypatch):
     )
     monkeypatch.setattr(benchmark_module.cv2,"imwrite",lambda *args,**kwargs:True)
 
-    written=run_dataset(dataset,tmp_path/"out",limit=2,offset=2)
+    output=tmp_path/"out"
+    written=run_dataset(dataset,output,limit=2,offset=2)
     assert [path.stem for path in written]==["sheet_03","sheet_04"]
+    timing=json.loads((output/"_timings"/"sheet_03.json").read_text(encoding="utf-8"))
+    assert timing["sheet"]=="sheet_03"
+    assert timing["totalSeconds"]>=0
+    assert timing["counts"]=={
+        "walls":0,"rooms":0,"doors":0,"windows":0,"symbols":0,"dimensions":0,
+    }
