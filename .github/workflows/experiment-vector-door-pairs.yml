@@ -1,0 +1,202 @@
+name: Vector Door Pair Diagnostics
+
+on:
+  push:
+    branches: [exp/vector-door-pair-diagnostics]
+    paths:
+      - .github/workflows/experiment-vector-door-pairs.yml
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install analyzer dependencies
+        run: pip install -r services/analyzer/requirements.txt
+      - name: Measure wall-leaf line-pair coverage inside GT doors
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json, math, os, xml.etree.ElementTree as ET
+          from pathlib import Path
+          from app.document import decode_document_with_page, extract_pdf_vector_lines
+
+          root=Path("../..")
+          dataset=root/"external/aec-geometric-bench/dataset"
+          manifest=json.loads((dataset/"manifest.json").read_text())
+          tree=ET.parse(dataset/"annotations_15_scoring_ready.xml").getroot()
+          images={Path(str(x.get("name"))).stem:x for x in tree.findall("image")}
+          labels={"Single Swing Door","Double Swing Door"}
+
+          def angle(line):
+              ax=float(line["a"]["x"]); ay=float(line["a"]["y"])
+              bx=float(line["b"]["x"]); by=float(line["b"]["y"])
+              return math.degrees(math.atan2(by-ay,bx-ax))%180.0
+
+          def length(line):
+              ax=float(line["a"]["x"]); ay=float(line["a"]["y"])
+              bx=float(line["b"]["x"]); by=float(line["b"]["y"])
+              return math.hypot(bx-ax,by-ay)
+
+          def adiff(a,b):
+              d=abs((a-b)%180.0)
+              return min(d,180.0-d)
+
+          def line_bbox(line):
+              ax=float(line["a"]["x"]); ay=float(line["a"]["y"])
+              bx=float(line["b"]["x"]); by=float(line["b"]["y"])
+              return [min(ax,bx),min(ay,by),max(ax,bx),max(ay,by)]
+
+          def intersects(a,b,pad=0.0):
+              return not (
+                  a[2]<b[0]-pad or a[0]>b[2]+pad
+                  or a[3]<b[1]-pad or a[1]>b[3]+pad
+              )
+
+          def point_segment_distance(px,py,line):
+              ax=float(line["a"]["x"]); ay=float(line["a"]["y"])
+              bx=float(line["b"]["x"]); by=float(line["b"]["y"])
+              dx=bx-ax; dy=by-ay
+              denom=dx*dx+dy*dy
+              if denom<=1e-9:
+                  return math.hypot(px-ax,py-ay)
+              t=max(0.0,min(1.0,((px-ax)*dx+(py-ay)*dy)/denom))
+              qx=ax+t*dx; qy=ay+t*dy
+              return math.hypot(px-qx,py-qy)
+
+          result={}
+          totals={"doors":0,"withPair":0,"withStrongPair":0,"withCandidateLeaf":0}
+
+          for item in manifest["sheets"]:
+              sheet=str(item["sheet"])
+              data=(dataset/str(item["pdf"])).read_bytes()
+              image,page=decode_document_with_page(data,"application/pdf")
+              h,w=image.shape[:2]
+              sx=w/float(item["width"]); sy=h/float(item["height"])
+              lines=extract_pdf_vector_lines(data,page)
+              features=[
+                  {
+                      "line":line,
+                      "bbox":line_bbox(line),
+                      "length":length(line),
+                      "angle":angle(line),
+                  }
+                  for line in lines
+                  if length(line)>=18.0
+              ]
+
+              doors=[]
+              for box in images[sheet].findall("box"):
+                  label=str(box.get("label") or "")
+                  if label not in labels:
+                      continue
+                  gt=[
+                      float(box.get("xtl"))*sx,float(box.get("ytl"))*sy,
+                      float(box.get("xbr"))*sx,float(box.get("ybr"))*sy,
+                  ]
+                  long=max(gt[2]-gt[0],gt[3]-gt[1])
+                  short=max(1.0,min(gt[2]-gt[0],gt[3]-gt[1]))
+                  pad=max(8.0,short*.20)
+                  nearby=[
+                      f for f in features
+                      if intersects(f["bbox"],gt,pad)
+                      and f["length"]>=long*.28
+                      and f["length"]<=long*3.2
+                  ]
+
+                  candidate_leaf=False
+                  pair=False
+                  strong=False
+                  for leaf in nearby:
+                      if not long*.30<=leaf["length"]<=long*1.65:
+                          continue
+                      candidate_leaf=True
+                      la=leaf["angle"]
+                      endpoints=[
+                          (float(leaf["line"]["a"]["x"]),float(leaf["line"]["a"]["y"])),
+                          (float(leaf["line"]["b"]["x"]),float(leaf["line"]["b"]["y"])),
+                      ]
+                      for wall in nearby:
+                          if wall is leaf:
+                              continue
+                          delta=adiff(la,wall["angle"])
+                          if not 18.0<=delta<=82.0:
+                              continue
+                          # A hinge-like endpoint of the leaf should touch or nearly
+                          # touch the wall/reference line.
+                          nearest=min(
+                              point_segment_distance(px,py,wall["line"])
+                              for px,py in endpoints
+                          )
+                          if nearest>max(10.0,short*.18):
+                              continue
+                          pair=True
+                          if (
+                              wall["length"]>=long*.70
+                              and leaf["length"]>=long*.45
+                              and nearest<=max(6.0,short*.10)
+                          ):
+                              strong=True
+                              break
+                      if strong:
+                          break
+
+                  doors.append({
+                      "label":label,
+                      "bbox":gt,
+                      "nearbyLineCount":len(nearby),
+                      "candidateLeaf":candidate_leaf,
+                      "pair":pair,
+                      "strongPair":strong,
+                  })
+
+              summary={
+                  "doors":len(doors),
+                  "withCandidateLeaf":sum(1 for x in doors if x["candidateLeaf"]),
+                  "withPair":sum(1 for x in doors if x["pair"]),
+                  "withStrongPair":sum(1 for x in doors if x["strongPair"]),
+                  "vectorLines":len(features),
+              }
+              result[sheet]={"summary":summary,"doors":doors}
+              for key in ("doors","withCandidateLeaf","withPair","withStrongPair"):
+                  totals[key]+=summary[key]
+              print(sheet,json.dumps(summary,sort_keys=True))
+
+          result["aggregate"]=totals
+          target=root/"benchmark-output/vector-door-pairs.json"
+          target.parent.mkdir(exist_ok=True)
+          target.write_text(json.dumps(result,indent=2),encoding="utf-8")
+          print("AGGREGATE",json.dumps(totals,sort_keys=True))
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Native PDF wall/leaf pair coverage\n\n")
+              out.write("| Sheet | Doors | Candidate leaf | Pair | Strong pair | Vector lines |\n")
+              out.write("|---|---:|---:|---:|---:|---:|\n")
+              for sheet in sorted(k for k in result if k.startswith("sheet_")):
+                  s=result[sheet]["summary"]
+                  out.write(
+                      f"| {sheet} | {s['doors']} | {s['withCandidateLeaf']} | "
+                      f"{s['withPair']} | {s['withStrongPair']} | {s['vectorLines']} |\n"
+                  )
+              out.write(
+                  f"\nAggregate: {totals['withPair']}/{totals['doors']} with a pair; "
+                  f"{totals['withStrongPair']}/{totals['doors']} with a strong pair.\n"
+              )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vector-door-pairs-${{ github.sha }}
+          path: benchmark-output/vector-door-pairs.json
+          retention-days: 5
