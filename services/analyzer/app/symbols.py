@@ -540,13 +540,37 @@ def extract_local_onnx_detections(image:np.ndarray)->list[dict]:
     )
 
 
+def normalize_configured_symbols(
+    detections:object,
+    width:int,
+    height:int,
+)->list[dict]:
+    """Apply one shared symbol-confidence policy to live and benchmark paths."""
+    try:
+        min_confidence=float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78")
+    except ValueError:
+        min_confidence=.78
+    try:
+        sink_min=float(os.getenv("SYMBOL_SINK_MIN_CONFIDENCE",".10") or ".10")
+    except ValueError:
+        sink_min=.10
+    return normalize_symbol_response(
+        detections,
+        width,
+        height,
+        max(.50,min(.99,min_confidence)),
+        per_kind_min_confidence={
+            "sink":max(.05,min(.99,sink_min)),
+        },
+    )
+
+
 def extract_local_onnx_symbols(image:np.ndarray)->list[dict]:
     h,w=image.shape[:2]
-    confidence=float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78")
-    confidence=max(.50,min(.99,confidence))
-    return normalize_symbol_response(
+    return normalize_configured_symbols(
         extract_local_onnx_detections(image),
-        w,h,confidence,
+        w,
+        h,
     )
 
 
