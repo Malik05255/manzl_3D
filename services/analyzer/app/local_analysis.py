@@ -16,7 +16,7 @@ from .dimensions import extract_dimension_evidence
 from .ocr import _merge_labels,classify_text,extract_ocr_dimension_labels,extract_ocr_labels,native_pdf_text_is_sufficient
 from .openings import detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts
 from .pipeline import assemble_plan
-from .rooms import detect_rooms
+from .rooms import detect_rooms,seal_openings_for_room_detection
 from .scale import estimate_scale_with_diagnostics
 from .symbols import extract_local_onnx_detections,extract_symbol_detections,normalize_symbol_response
 from .topology import classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
@@ -153,7 +153,10 @@ def analyze_document_bytes_local(
         )
     ]
     barrier=rasterize_wall_mask(walls,h,w,min_pdf_vector_confidence=.70,excluded_wall_ids=quarantined_wall_ids)
-    rooms=detect_rooms(barrier,labels,scale)
+    room_barrier=seal_openings_for_room_detection(
+        barrier,[*doors,*windows],topology_walls,
+    )
+    rooms=detect_rooms(room_barrier,labels,scale)
     link_room_boundaries(rooms,topology_walls)
     rooms=filter_nonarchitectural_enclosures(rooms,topology_walls,w,h)
     recalibrate_extracted_room_confidence(rooms,topology_walls,w,h)
