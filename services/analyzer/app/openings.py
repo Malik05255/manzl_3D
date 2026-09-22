@@ -601,19 +601,21 @@ def resolve_opening_conflicts(
                 margin=.14 if subtype in {"single_swing","double_swing"} and swing_depth>12 else .04
                 if window_conf>=door_conf+margin:
                     rejected_doors.add(str(door.get("id","")))
-                    continue
+                else:
+                    rejected_windows.add(str(window.get("id","")))
+                continue
 
             if door_ai and not window_ai:
                 if door_conf>=window_conf+.08:
                     rejected_windows.add(str(window.get("id","")))
-                    continue
+                else:
+                    rejected_doors.add(str(door.get("id","")))
+                continue
 
-            # Same provenance or inconclusive mixed evidence: retain the higher
-            # confidence interpretation. Ties keep the geometric door behavior.
-            if window_conf>door_conf+.06:
-                rejected_doors.add(str(door.get("id","")))
-            else:
-                rejected_windows.add(str(window.get("id","")))
+            # Preserve the geometry-first behavior when both candidates come
+            # from the same kind of evidence. AI-vs-geometry arbitration is
+            # handled explicitly above.
+            rejected_windows.add(str(window.get("id","")))
 
     kept_doors=[
         item for item in doors
