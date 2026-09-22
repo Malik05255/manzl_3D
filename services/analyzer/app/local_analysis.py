@@ -101,7 +101,7 @@ def analyze_document_bytes_local(
             ai_detections=extract_local_onnx_detections(image)
             min_confidence=float(os.getenv("SYMBOL_MIN_CONFIDENCE",".78") or ".78")
             symbols=normalize_symbol_response(
-                ai_detections,w,h,max(.50,min(.99,min_confidence)),
+                ai_detections,w,h,max(.30,min(.99,min_confidence)),
             )
         except Exception:
             ai_detections=[]
