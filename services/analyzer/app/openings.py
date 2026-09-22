@@ -741,7 +741,7 @@ def detect_pdf_vector_windows(
         return []
     base=float(max(1,min(width,height)))
     min_length=max(32.0,base*.010)
-    max_length=max(min_length*2.0,min(620.0,base*.115))
+    max_length=max(180.0,min_length*2.0,min(620.0,base*.115))
     min_separation=max(6.0,base*.0015)
     max_separation=max(24.0,base*.0125)
     max_stroke_width=max(3.0,base*.0015)
