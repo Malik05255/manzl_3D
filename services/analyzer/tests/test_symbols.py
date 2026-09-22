@@ -1,3 +1,4 @@
+import app.symbols as symbols_module
 import numpy as np
 
 from app.symbols import normalize_configured_symbols,_env_confidence,_decode_yolo_output,_dedupe_raw_detections,_prepare_yolo_rows,_tile_windows,normalize_symbol_response
@@ -228,3 +229,32 @@ def test_configured_symbol_policy_is_shared_and_sink_specific(monkeypatch):
         ("toilet",.65),
         ("sink",.12),
     ]
+
+
+def test_configured_onnx_detections_merge_primary_and_secondary(monkeypatch):
+    image=np.full((100,100,3),255,dtype=np.uint8)
+    monkeypatch.setattr(
+        symbols_module,
+        "extract_local_onnx_detections",
+        lambda _image:[
+            {"class":"sink","bbox":[10,10,40,40],"confidence":.80},
+        ],
+    )
+    monkeypatch.setattr(
+        symbols_module,
+        "extract_secondary_onnx_detections",
+        lambda _image:[
+            {"class":"sink","bbox":[11,11,41,41],"confidence":.70},
+            {"class":"toilet","bbox":[55,55,85,85],"confidence":.75},
+        ],
+    )
+    merged=symbols_module.extract_configured_onnx_detections(image)
+    assert len(merged)==2
+    assert {item["class"] for item in merged}=={"sink","toilet"}
+
+
+def test_secondary_onnx_detections_are_optional(monkeypatch):
+    monkeypatch.delenv("SYMBOL_SECONDARY_ONNX_MODEL",raising=False)
+    monkeypatch.delenv("SYMBOL_SECONDARY_ONNX_CLASSES",raising=False)
+    image=np.full((50,50,3),255,dtype=np.uint8)
+    assert symbols_module.extract_secondary_onnx_detections(image)==[]
