@@ -47,6 +47,7 @@ jobs:
       - name: Install workspace and deployment dependencies
         run: |
           npm install
+          npm run build:contracts
           npm install --no-save wrangler@latest
 
       - name: Resolve public URLs and resource names
