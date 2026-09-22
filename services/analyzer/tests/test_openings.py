@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 
+import app.openings as openings_module
 from app.openings import _door_arc_evidence_details,_door_subtype_from_evidence,detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
 
 
@@ -530,3 +531,45 @@ def test_double_swing_requires_two_visible_leaf_hinges():
     assert _door_subtype_from_evidence(set(),{"a","b"})=="single_swing"
 
 
+
+
+def test_scaled_single_leaf_skips_arc_scan(monkeypatch):
+    image=np.full((260,320,3),255,dtype=np.uint8)
+    cv2.line(image,(30,130),(120,130),(0,0,0),5)
+    cv2.line(image,(170,130),(290,130),(0,0,0),5)
+    monkeypatch.setattr(
+        openings_module,
+        "_door_leaf_evidence_details",
+        lambda *args,**kwargs:(1,{"a"},"negative",42.0),
+    )
+    def fail_arc(*args,**kwargs):
+        raise AssertionError("arc scan should be skipped")
+    monkeypatch.setattr(openings_module,"_door_arc_evidence_details",fail_arc)
+    doors=detect_doors(
+        image,
+        [wall("left",30,130,120,130),wall("right",170,130,290,130)],
+        meters_per_pixel=.02,
+    )
+    assert len(doors)==1
+
+
+def test_unscaled_single_leaf_keeps_arc_scan_when_needed(monkeypatch):
+    image=np.full((260,320,3),255,dtype=np.uint8)
+    cv2.line(image,(30,130),(140,130),(0,0,0),5)
+    cv2.line(image,(160,130),(290,130),(0,0,0),5)
+    monkeypatch.setattr(
+        openings_module,
+        "_door_leaf_evidence_details",
+        lambda *args,**kwargs:(1,{"a"},"negative",18.0),
+    )
+    called={"value":False}
+    def track_arc(*args,**kwargs):
+        called["value"]=True
+        return 0,set(),"unknown",0.0
+    monkeypatch.setattr(openings_module,"_door_arc_evidence_details",track_arc)
+    detect_doors(
+        image,
+        [wall("left",30,130,140,130),wall("right",160,130,290,130)],
+        meters_per_pixel=None,
+    )
+    assert called["value"] is True
