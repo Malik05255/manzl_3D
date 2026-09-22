@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.openings import _door_arc_evidence_details,_door_subtype_from_evidence,detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
+from app.openings import _door_arc_evidence_details,_door_subtype_from_evidence,detect_doors,detect_pdf_vector_windows,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
 
 
 def wall(wall_id,x1,y1,x2,y2):
@@ -530,3 +530,33 @@ def test_double_swing_requires_two_visible_leaf_hinges():
     assert _door_subtype_from_evidence(set(),{"a","b"})=="single_swing"
 
 
+
+
+def test_pdf_vector_window_requires_repeated_parallel_strokes():
+    walls=[wall("host",20,120,360,120)]
+    vectors=[
+        {"a":{"x":120.0,"y":108.0},"b":{"x":230.0,"y":108.0},"widthPx":1.2},
+        {"a":{"x":120.0,"y":120.0},"b":{"x":230.0,"y":120.0},"widthPx":1.2},
+        {"a":{"x":124.0,"y":132.0},"b":{"x":226.0,"y":132.0},"widthPx":1.2},
+        # Unrelated long wall face should not define the window span.
+        {"a":{"x":20.0,"y":100.0},"b":{"x":360.0,"y":100.0},"widthPx":1.2},
+    ]
+    windows=detect_pdf_vector_windows(vectors,walls,420,280)
+    assert len(windows)==1
+    item=windows[0]
+    assert item["provenance"]=="pdf-vector"
+    assert item["wallId"]=="host"
+    x1,y1,x2,y2=item["sourceBBox"]
+    assert 115<=x1<=125
+    assert 225<=x2<=235
+    assert 105<=y1<=112
+    assert 128<=y2<=135
+
+
+def test_pdf_vector_plain_two_wall_faces_are_not_window():
+    walls=[wall("host",20,120,360,120)]
+    vectors=[
+        {"a":{"x":90.0,"y":108.0},"b":{"x":280.0,"y":108.0},"widthPx":1.2},
+        {"a":{"x":90.0,"y":132.0},"b":{"x":280.0,"y":132.0},"widthPx":1.2},
+    ]
+    assert detect_pdf_vector_windows(vectors,walls,420,280)==[]
