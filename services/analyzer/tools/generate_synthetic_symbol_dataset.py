@@ -152,60 +152,177 @@ def _augment_patch(
 
 
 def _background(size: int, rng: random.Random) -> np.ndarray:
-    base = np.full((size, size), rng.randint(244, 255), dtype=np.uint8)
-    noise = np.random.default_rng(rng.randrange(2**32)).normal(0, rng.uniform(.8, 3.0), (size, size))
-    base = np.clip(base.astype(np.float32) + noise, 225, 255).astype(np.uint8)
+    base = np.full((size, size), rng.randint(247, 255), dtype=np.uint8)
+    noise = np.random.default_rng(rng.randrange(2**32)).normal(
+        0,
+        rng.uniform(.4, 1.8),
+        (size, size),
+    )
+    base = np.clip(base.astype(np.float32) + noise, 232, 255).astype(np.uint8)
 
-    # Architectural linework distractors.
-    for _ in range(rng.randint(5, 16)):
-        thickness = rng.choice([1, 1, 2, 2, 3, 5])
-        shade = rng.randint(0, 90)
-        if rng.random() < .78:
-            if rng.random() < .5:
-                y = rng.randint(8, size - 9)
-                x1 = rng.randint(0, max(0, size - 70))
-                x2 = rng.randint(min(size - 1, x1 + 35), size - 1)
-                cv2.line(base, (x1, y), (x2, y), shade, thickness)
-            else:
-                x = rng.randint(8, size - 9)
-                y1 = rng.randint(0, max(0, size - 70))
-                y2 = rng.randint(min(size - 1, y1 + 35), size - 1)
-                cv2.line(base, (x, y1), (x, y2), shade, thickness)
-        else:
-            x1, y1 = rng.randint(0, size - 1), rng.randint(0, size - 1)
-            length = rng.randint(30, max(31, size // 3))
-            angle = rng.choice([30, 45, 60, 120, 135, 150])
-            x2 = int(round(x1 + math.cos(math.radians(angle)) * length))
-            y2 = int(round(y1 + math.sin(math.radians(angle)) * length))
-            cv2.line(base, (x1, y1), (x2, y2), shade, thickness)
+    # Room-like CAD context. Prefer orthogonal wall networks over arbitrary
+    # clutter so training tiles resemble architectural plan crops.
+    margin = rng.randint(max(6, size // 40), max(10, size // 18))
+    wall_shade = rng.randint(0, 55)
+    wall_thickness = rng.choice([3, 4, 5, 6, 7])
+    cv2.rectangle(
+        base,
+        (margin, margin),
+        (size - margin - 1, size - margin - 1),
+        wall_shade,
+        wall_thickness,
+    )
 
-    # Furniture-like rectangles/circles and tiny dimension text.
-    for _ in range(rng.randint(2, 8)):
-        x1 = rng.randint(4, size - 50)
-        y1 = rng.randint(4, size - 50)
-        x2 = min(size - 4, x1 + rng.randint(20, 90))
-        y2 = min(size - 4, y1 + rng.randint(12, 70))
+    verticals = sorted({
+        rng.randint(size // 4, size * 3 // 4)
+        for _ in range(rng.randint(1, 3))
+    })
+    horizontals = sorted({
+        rng.randint(size // 4, size * 3 // 4)
+        for _ in range(rng.randint(1, 3))
+    })
+    for x in verticals:
+        y1 = margin + rng.randint(0, max(1, size // 12))
+        y2 = size - margin - rng.randint(0, max(1, size // 12))
+        cv2.line(base, (x, y1), (x, y2), wall_shade, wall_thickness)
+    for y in horizontals:
+        x1 = margin + rng.randint(0, max(1, size // 12))
+        x2 = size - margin - rng.randint(0, max(1, size // 12))
+        cv2.line(base, (x1, y), (x2, y), wall_shade, wall_thickness)
+
+    # Secondary CAD linework: furniture, dimensions, centre lines and text.
+    for _ in range(rng.randint(4, 11)):
+        shade = rng.randint(45, 155)
+        thickness = rng.choice([1, 1, 1, 2])
+        x1 = rng.randint(margin + 2, max(margin + 3, size - margin - 30))
+        y1 = rng.randint(margin + 2, max(margin + 3, size - margin - 30))
+        x2 = min(size - margin - 2, x1 + rng.randint(14, max(15, size // 4)))
+        y2 = min(size - margin - 2, y1 + rng.randint(10, max(11, size // 5)))
         if rng.random() < .55:
-            cv2.rectangle(base, (x1, y1), (x2, y2), rng.randint(50, 155), rng.choice([1, 1, 2]))
-        else:
+            cv2.rectangle(base, (x1, y1), (x2, y2), shade, thickness)
+        elif rng.random() < .75:
             cv2.ellipse(
                 base,
                 ((x1 + x2) // 2, (y1 + y2) // 2),
-                (max(4, (x2 - x1) // 2), max(4, (y2 - y1) // 2)),
-                0, 0, 360, rng.randint(50, 155), 1,
+                (max(3, (x2 - x1) // 2), max(3, (y2 - y1) // 2)),
+                0,
+                0,
+                360,
+                shade,
+                thickness,
             )
-    if rng.random() < .7:
+        else:
+            cv2.line(base, (x1, y1), (x2, y2), shade, thickness)
+
+    for _ in range(rng.randint(0, 3)):
         cv2.putText(
             base,
-            f"{rng.randint(1,9)}.{rng.randint(0,99):02d}",
-            (rng.randint(5, size // 2), rng.randint(25, size - 10)),
+            rng.choice(["2.80", "3.20", "4.50", "BED", "WC", "KITCHEN"]),
+            (
+                rng.randint(margin + 2, max(margin + 3, size // 2)),
+                rng.randint(margin + 15, size - margin - 4),
+            ),
             cv2.FONT_HERSHEY_SIMPLEX,
-            rng.uniform(.25, .45),
-            rng.randint(55, 140),
+            rng.uniform(.22, .38),
+            rng.randint(70, 155),
             1,
             cv2.LINE_AA,
         )
     return base
+
+
+def _draw_context_around_object(
+    image: np.ndarray,
+    class_id: int,
+    box: tuple[int, int, int, int],
+    rng: random.Random,
+) -> None:
+    x1, y1, x2, y2 = box
+    h, w = image.shape
+    bw = max(1, x2 - x1)
+    bh = max(1, y2 - y1)
+    shade = rng.randint(0, 60)
+    thickness = rng.choice([3, 4, 5, 6])
+
+    if class_id in {0, 1}:
+        # Swing doors belong in a wall opening. Add wall stubs outside the
+        # labelled door box, never through it.
+        span = rng.randint(max(18, max(bw, bh)), max(24, max(bw, bh) * 3))
+        if bw >= bh:
+            cy = (y1 + y2) // 2
+            cv2.line(
+                image,
+                (max(0, x1 - span), cy),
+                (max(0, x1 - 2), cy),
+                shade,
+                thickness,
+            )
+            cv2.line(
+                image,
+                (min(w - 1, x2 + 2), cy),
+                (min(w - 1, x2 + span), cy),
+                shade,
+                thickness,
+            )
+        else:
+            cx = (x1 + x2) // 2
+            cv2.line(
+                image,
+                (cx, max(0, y1 - span)),
+                (cx, max(0, y1 - 2)),
+                shade,
+                thickness,
+            )
+            cv2.line(
+                image,
+                (cx, min(h - 1, y2 + 2)),
+                (cx, min(h - 1, y2 + span)),
+                shade,
+                thickness,
+            )
+        return
+
+    # Fixtures usually sit close to one or two room walls.
+    side = rng.choice(["top", "bottom", "left", "right"])
+    gap = rng.randint(3, max(4, min(14, max(bw, bh) // 3 + 2)))
+    extension = rng.randint(max(10, max(bw, bh) // 2), max(18, max(bw, bh) * 2))
+    if side == "top":
+        y = max(0, y1 - gap)
+        cv2.line(
+            image,
+            (max(0, x1 - extension), y),
+            (min(w - 1, x2 + extension), y),
+            shade,
+            thickness,
+        )
+    elif side == "bottom":
+        y = min(h - 1, y2 + gap)
+        cv2.line(
+            image,
+            (max(0, x1 - extension), y),
+            (min(w - 1, x2 + extension), y),
+            shade,
+            thickness,
+        )
+    elif side == "left":
+        x = max(0, x1 - gap)
+        cv2.line(
+            image,
+            (x, max(0, y1 - extension)),
+            (x, min(h - 1, y2 + extension)),
+            shade,
+            thickness,
+        )
+    else:
+        x = min(w - 1, x2 + gap)
+        cv2.line(
+            image,
+            (x, max(0, y1 - extension)),
+            (x, min(h - 1, y2 + extension)),
+            shade,
+            thickness,
+        )
+
 
 
 def _overlap(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
@@ -261,11 +378,16 @@ def _write_sample(
     labels: list[tuple[int, tuple[int, int, int, int]]] = []
     occupied: list[tuple[int, int, int, int]] = []
 
-    object_count = rng.randint(min_objects, max_objects)
+    # Blank negatives must truly contain no target symbols. The previous
+    # generator cleared labels after drawing targets, which accidentally
+    # taught the detector that real symbols were background.
+    blank_negative = rng.random() < .08
+    object_count = 0 if blank_negative else rng.randint(min_objects, max_objects)
+
     for _ in range(object_count):
         class_id = rng.randrange(len(CLASSES))
         base = DRAWERS[class_id](rng)
-        if rng.random() < .75:
+        if rng.random() < .78:
             target_long = rng.randint(
                 max(12, size // 26),
                 max(28, size // 8),
@@ -282,10 +404,17 @@ def _write_sample(
         box, image = placed
         occupied.append(box)
         labels.append((class_id, box))
+        _draw_context_around_object(image, class_id, box, rng)
 
-    # Occasional blank/hard-negative frame.
-    if rng.random() < .08:
-        labels.clear()
+    # Light scan/print artifacts after target placement.
+    if rng.random() < .45:
+        image = cv2.GaussianBlur(image, (3, 3), rng.uniform(.15, .55))
+    if rng.random() < .35:
+        kernel = np.ones((2, 2), np.uint8)
+        if rng.random() < .5:
+            image = cv2.erode(image, kernel, iterations=1)
+        else:
+            image = cv2.dilate(image, kernel, iterations=1)
 
     image_path.parent.mkdir(parents=True, exist_ok=True)
     label_path.parent.mkdir(parents=True, exist_ok=True)
@@ -297,7 +426,10 @@ def _write_sample(
         bw = (x2 - x1) / size
         bh = (y2 - y1) / size
         rows.append(f"{class_id} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}")
-    label_path.write_text("\n".join(rows) + ("\n" if rows else ""), encoding="utf-8")
+    label_path.write_text(
+        "\n".join(rows) + ("\n" if rows else ""),
+        encoding="utf-8",
+    )
 
 
 def generate(output: Path, train_count: int, val_count: int, size: int, seed: int) -> Path:
