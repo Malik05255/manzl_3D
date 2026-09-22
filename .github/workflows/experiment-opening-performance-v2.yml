@@ -6,7 +6,7 @@ on:
     paths:
       - services/analyzer/app/openings.py
       - services/analyzer/tests/test_openings.py
-      - .github/workflows/experiment-opening-performance.yml
+      - .github/workflows/experiment-opening-performance-v2.yml
   workflow_dispatch:
 
 jobs:
