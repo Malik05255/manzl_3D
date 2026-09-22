@@ -1,8 +1,8 @@
-name: Synthetic Detector Policy V2
+name: Synthetic Detector Full Policy V2
 
 on:
   push:
-    branches: [exp/synthetic-object-detector-fast-v2]
+    branches: [exp/synthetic-object-detector-full-v2]
     paths:
       - services/analyzer/app/symbols.py
       - services/analyzer/tests/test_symbols.py
@@ -54,8 +54,8 @@ jobs:
         with:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: 35772651346
-          name: synthetic-object-model-3110e7f36bdee04e45278c7d2da5046fc8e83058
+          run-id: 35771807959
+          name: synthetic-object-model-ce173f1610d70efb74b1c49c1c72ed137d04e57a
           path: synthetic-model-artifact
 
       - name: Configure detector with fixture-specific floors
@@ -152,7 +152,7 @@ jobs:
                   encoding="utf-8",
               )
               with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
-                  out.write("## Synthetic policy V2\n\n")
+                  out.write("## Synthetic full policy V2\n\n")
                   out.write("| Class | TP | FP | FN | F1 |\n|---|---:|---:|---:|---:|\n")
                   for cls in (
                       "Single Swing Door","Double Swing Door","Window","Sink",
