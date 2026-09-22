@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -186,8 +187,10 @@ def run_dataset(dataset_dir:Path,output_dir:Path,limit:int|None=None,offset:int=
     output_dir.mkdir(parents=True,exist_ok=True)
     canonical_dir=output_dir/"_canonical"
     debug_dir=output_dir/"_debug"
+    timing_dir=output_dir/"_timings"
     canonical_dir.mkdir(parents=True,exist_ok=True)
     debug_dir.mkdir(parents=True,exist_ok=True)
+    timing_dir.mkdir(parents=True,exist_ok=True)
     written=[]
     sheets=manifest.get("sheets",[])
     start=max(0,int(offset))
@@ -198,10 +201,13 @@ def run_dataset(dataset_dir:Path,output_dir:Path,limit:int|None=None,offset:int=
     for item in sheets:
         sheet=str(item["sheet"])
         pdf_path=dataset_dir/str(item["pdf"])
+        started=time.perf_counter()
         data=pdf_path.read_bytes()
+        read_done=time.perf_counter()
         plan=analyze_document_bytes_local(
             data,"application/pdf",project_id=sheet,filename=pdf_path.name,
         )
+        analysis_done=time.perf_counter()
         canonical_target=canonical_dir/f"{sheet}.json"
         canonical_target.write_text(
             json.dumps(plan,ensure_ascii=False,indent=2),
@@ -214,12 +220,42 @@ def run_dataset(dataset_dir:Path,output_dir:Path,limit:int|None=None,offset:int=
         )
         overlay=render_extraction_overlay(source_image,plan)
         cv2.imwrite(str(debug_dir/f"{sheet}.png"),overlay)
+        render_done=time.perf_counter()
 
         prediction=plan_to_aec_prediction(
             plan,sheet=sheet,width=int(item["width"]),height=int(item["height"]),
         )
         target=output_dir/f"{sheet}.json"
         target.write_text(json.dumps(prediction,ensure_ascii=False),encoding="utf-8")
+        finished=time.perf_counter()
+        timing={
+            "sheet":sheet,
+            "sourceBytes":len(data),
+            "sourceWidth":int(plan.get("widthPx",0) or 0),
+            "sourceHeight":int(plan.get("heightPx",0) or 0),
+            "readSeconds":round(read_done-started,4),
+            "analysisSeconds":round(analysis_done-read_done,4),
+            "diagnosticRenderSeconds":round(render_done-analysis_done,4),
+            "predictionExportSeconds":round(finished-render_done,4),
+            "totalSeconds":round(finished-started,4),
+            "counts":{
+                "walls":len(plan.get("walls",[])),
+                "rooms":len(plan.get("rooms",[])),
+                "doors":len(plan.get("doors",[])),
+                "windows":len(plan.get("windows",[])),
+                "symbols":len(plan.get("symbols",[])),
+                "dimensions":len(plan.get("dimensions",[])),
+            },
+            "engines":list(plan.get("analysis",{}).get("engines",[])),
+        }
+        (timing_dir/f"{sheet}.json").write_text(
+            json.dumps(timing,ensure_ascii=False,indent=2),encoding="utf-8",
+        )
+        print(
+            f"{sheet}: analysis={timing['analysisSeconds']:.2f}s "
+            f"render={timing['diagnosticRenderSeconds']:.2f}s "
+            f"total={timing['totalSeconds']:.2f}s"
+        )
         written.append(target)
     return written
 
