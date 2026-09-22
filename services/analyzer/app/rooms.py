@@ -50,6 +50,45 @@ def _contains(polygon:list[dict],x:float,y:float)->bool:
     return cv2.pointPolygonTest(contour,(float(x),float(y)),False)>=0
 
 
+
+def seal_openings_for_room_detection(
+    wall_mask:np.ndarray,
+    openings:list[dict],
+    walls:list[dict],
+    *,
+    min_confidence:float=.70,
+)->np.ndarray:
+    """Close trusted door/window gaps only for room segmentation."""
+    result=wall_mask.copy()
+    wall_by_id={str(wall.get("id","")):wall for wall in walls}
+
+    for opening in openings:
+        try:
+            confidence=float(opening.get("confidence",0.0) or 0.0)
+            if confidence<min_confidence:
+                continue
+            host=wall_by_id.get(str(opening.get("wallId","")))
+            if host is None:
+                continue
+            ax=float(opening["a"]["x"]); ay=float(opening["a"]["y"])
+            bx=float(opening["b"]["x"]); by=float(opening["b"]["y"])
+            thickness=max(2.0,float(host.get("thicknessPx",4.0) or 4.0))
+        except (KeyError,TypeError,ValueError):
+            continue
+
+        dx=bx-ax; dy=by-ay
+        length=float(np.hypot(dx,dy))
+        if length<2.0:
+            continue
+        ux=dx/length; uy=dy/length
+        overlap=max(3.0,min(24.0,thickness*.70))
+        x1=int(round(ax-ux*overlap)); y1=int(round(ay-uy*overlap))
+        x2=int(round(bx+ux*overlap)); y2=int(round(by+uy*overlap))
+        line_width=max(3,min(64,int(round(thickness))))
+        cv2.line(result,(x1,y1),(x2,y2),255,line_width,lineType=cv2.LINE_8)
+
+    return result
+
 def detect_rooms(wall_mask:np.ndarray,labels:list[dict],meters_per_pixel:float|None,min_area_ratio:float=0.0012,max_area_ratio:float=0.72)->list[dict]:
     h,w=wall_mask.shape[:2]
     close_size=max(7,min(25,min(h,w)//80))
