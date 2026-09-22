@@ -66,6 +66,56 @@ def test_detects_window_gap_with_parallel_glazing_lines():
     assert windows[0]["confidence"]>=0.80
 
 
+def test_detects_window_embedded_in_continuous_wall():
+    image=np.full((280,420,3),255,dtype=np.uint8)
+    cv2.line(image,(25,140),(395,140),(0,0,0),5)
+    # Window glazing is drawn inside the continuous host wall rather than
+    # represented as a literal break in the wall centerline.
+    cv2.line(image,(140,132),(245,132),(0,0,0),2)
+    cv2.line(image,(140,148),(245,148),(0,0,0),2)
+
+    windows=detect_windows(
+        image,
+        [wall("host",25,140,395,140)],
+        meters_per_pixel=.02,
+    )
+
+    assert len(windows)==1
+    assert windows[0]["wallId"]=="host"
+    assert windows[0]["confidence"]>=.80
+    assert 130<=min(windows[0]["a"]["x"],windows[0]["b"]["x"])<=150
+    assert 235<=max(windows[0]["a"]["x"],windows[0]["b"]["x"])<=255
+
+
+def test_continuous_wall_edges_alone_are_not_embedded_window():
+    image=np.full((280,420,3),255,dtype=np.uint8)
+    cv2.line(image,(25,136),(395,136),(0,0,0),2)
+    cv2.line(image,(25,144),(395,144),(0,0,0),2)
+
+    windows=detect_windows(
+        image,
+        [wall("host",25,140,395,140)],
+        meters_per_pixel=.02,
+    )
+
+    assert windows==[]
+
+
+def test_parallel_detail_far_from_continuous_wall_is_not_window():
+    image=np.full((300,420,3),255,dtype=np.uint8)
+    cv2.line(image,(25,160),(395,160),(0,0,0),5)
+    cv2.line(image,(140,112),(245,112),(0,0,0),2)
+    cv2.line(image,(140,124),(245,124),(0,0,0),2)
+
+    windows=detect_windows(
+        image,
+        [wall("host",25,160,395,160)],
+        meters_per_pixel=.02,
+    )
+
+    assert windows==[]
+
+
 def test_blank_gap_is_not_window():
     image=np.full((280,360,3),255,dtype=np.uint8)
     cv2.line(image,(25,140),(120,140),(0,0,0),5)
