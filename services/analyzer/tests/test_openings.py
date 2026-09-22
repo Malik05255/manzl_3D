@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.openings import _door_arc_evidence_details,_door_subtype_from_evidence,detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
+from app.openings import _door_arc_evidence_details,_door_subtype_from_evidence,detect_doors,detect_windows,filter_embedded_windows_by_host_role,fuse_ai_opening_detections,normalize_opening_hosts,resolve_opening_conflicts
 
 
 def wall(wall_id,x1,y1,x2,y2):
@@ -603,3 +603,39 @@ def test_double_swing_requires_two_visible_leaf_hinges():
     assert _door_subtype_from_evidence(set(),{"a","b"})=="single_swing"
 
 
+
+
+def test_embedded_window_on_interior_host_is_rejected_after_roles():
+    walls=[{**wall("inside",20,120,300,120),"role":"interior"}]
+    windows=[{
+        "id":"window-embedded-1","kind":"window","wallId":"inside",
+        "a":{"x":100.0,"y":120.0},"b":{"x":180.0,"y":120.0},
+        "confidence":.84,"reviewed":False,"provenance":"opencv",
+        "_embeddedCandidate":True,
+    }]
+    assert filter_embedded_windows_by_host_role(walls,windows)==[]
+
+
+def test_embedded_window_on_exterior_host_survives_and_marker_is_removed():
+    walls=[{**wall("outside",20,120,300,120),"role":"exterior"}]
+    windows=[{
+        "id":"window-embedded-1","kind":"window","wallId":"outside",
+        "a":{"x":100.0,"y":120.0},"b":{"x":180.0,"y":120.0},
+        "confidence":.84,"reviewed":False,"provenance":"opencv",
+        "_embeddedCandidate":True,
+    }]
+    result=filter_embedded_windows_by_host_role(walls,windows)
+    assert len(result)==1
+    assert result[0]["id"]=="window-1"
+    assert "_embeddedCandidate" not in result[0]
+
+
+def test_gap_window_on_interior_host_is_not_removed():
+    walls=[{**wall("inside",20,120,300,120),"role":"interior"}]
+    windows=[{
+        "id":"window-1","kind":"window","wallId":"inside",
+        "a":{"x":100.0,"y":120.0},"b":{"x":180.0,"y":120.0},
+        "confidence":.88,"reviewed":False,"provenance":"opencv",
+    }]
+    result=filter_embedded_windows_by_host_role(walls,windows)
+    assert len(result)==1
