@@ -1,8 +1,8 @@
-name: Secondary Cooktop Rescue
+name: Secondary Sink Cooktop Rescue
 
 on:
   push:
-    branches: [exp/secondary-cooktop-rescue]
+    branches: [exp/secondary-sink-cooktop-rescue]
     paths:
       - services/analyzer/app/symbols.py
       - services/analyzer/tests/test_symbols.py
@@ -132,8 +132,8 @@ jobs:
               env.write("OPENING_ONNX_MIN_CONFIDENCE=0.35\n")
               env.write("SYMBOL_SECONDARY_ONNX_MODEL="+str((root/"secondary.onnx").resolve())+"\n")
               env.write("SYMBOL_SECONDARY_ONNX_CLASSES="+json.dumps(secondary,separators=(",",":"))+"\n")
-              env.write("SYMBOL_SECONDARY_ONNX_RAW_MIN_CONFIDENCE=0.15\n")
-              env.write("SYMBOL_SECONDARY_ONNX_ALLOWED_CLASSES=cooktop\n")
+              env.write("SYMBOL_SECONDARY_ONNX_RAW_MIN_CONFIDENCE=0.50\n")
+              env.write("SYMBOL_SECONDARY_ONNX_ALLOWED_CLASSES=sink,cooktop\n")
               env.write("SYMBOL_SECONDARY_ONNX_TILE_TRIGGER=1800\n")
               env.write("SYMBOL_SECONDARY_ONNX_TILE_SIZE=1600\n")
               env.write("SYMBOL_SECONDARY_ONNX_TILE_OVERLAP=0.18\n")
@@ -209,7 +209,7 @@ jobs:
                   encoding="utf-8",
               )
               with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
-                  out.write("## FloorCAD + cooktop-only secondary\n\n")
+                  out.write("## FloorCAD + sink/cooktop secondary\n\n")
                   out.write("| Class | TP | FP | FN | F1 |\n|---|---:|---:|---:|---:|\n")
                   for cls in (
                       "Single Swing Door","Double Swing Door","Window","Sink",
