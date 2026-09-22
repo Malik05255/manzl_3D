@@ -303,3 +303,48 @@ def test_secondary_onnx_allows_tile_overrides(monkeypatch):
     assert captured["tile_trigger"]==900
     assert captured["tile_size"]==800
     assert captured["tile_overlap"]==.30
+
+
+def test_secondary_onnx_allowed_classes_filters_model_output(monkeypatch):
+    image=np.full((100,100,3),255,dtype=np.uint8)
+    monkeypatch.setenv("SYMBOL_SECONDARY_ONNX_MODEL","secondary.onnx")
+    monkeypatch.setenv(
+        "SYMBOL_SECONDARY_ONNX_CLASSES",
+        '["single_swing_door","toilet","bathtub","cooktop","sink"]',
+    )
+    monkeypatch.setenv(
+        "SYMBOL_SECONDARY_ONNX_ALLOWED_CLASSES",
+        "toilet,bathtub,cooktop",
+    )
+    monkeypatch.setattr(
+        symbols_module,
+        "_extract_onnx_detections",
+        lambda *_args,**_kwargs:[
+            {"class":"single_swing_door","bbox":[1,1,10,10],"confidence":.9},
+            {"class":"toilet","bbox":[11,1,20,10],"confidence":.8},
+            {"class":"bathtub","bbox":[21,1,30,10],"confidence":.8},
+            {"class":"cooktop","bbox":[31,1,40,10],"confidence":.8},
+            {"class":"sink","bbox":[41,1,50,10],"confidence":.9},
+        ],
+    )
+    result=symbols_module.extract_secondary_onnx_detections(image)
+    assert {item["class"] for item in result}=={"toilet","bathtub","cooktop"}
+
+
+def test_configured_symbol_policy_supports_fixture_threshold_overrides(monkeypatch):
+    monkeypatch.setenv("SYMBOL_MIN_CONFIDENCE",".55")
+    monkeypatch.setenv("SYMBOL_TOILET_MIN_CONFIDENCE",".25")
+    monkeypatch.setenv("SYMBOL_BATHTUB_MIN_CONFIDENCE",".45")
+    monkeypatch.setenv("SYMBOL_SHOWER_MIN_CONFIDENCE",".60")
+    monkeypatch.setenv("SYMBOL_COOKTOP_MIN_CONFIDENCE",".80")
+    payload=[
+        {"class":"toilet","bbox":[10,10,30,30],"confidence":.25},
+        {"class":"bathtub","bbox":[40,10,70,30],"confidence":.45},
+        {"class":"shower","bbox":[80,10,110,40],"confidence":.59},
+        {"class":"cooktop","bbox":[120,10,150,40],"confidence":.80},
+        {"class":"stairs","bbox":[10,50,50,90],"confidence":.40},
+    ]
+    result=normalize_configured_symbols(payload,200,120)
+    assert {item["kind"] for item in result}=={
+        "toilet","bathtub","cooktop",
+    }
