@@ -2,9 +2,10 @@ name: Embedded Window Experiment
 
 on:
   push:
-    branches: [exp/embedded-window-detection]
+    branches: [exp/embedded-window-role-filter]
     paths:
       - services/analyzer/app/openings.py
+      - services/analyzer/app/local_analysis.py
       - services/analyzer/tests/test_openings.py
       - .github/workflows/experiment-window-benchmark.yml
   workflow_dispatch:
@@ -60,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [4, 12, 13]
+        shard: [4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
