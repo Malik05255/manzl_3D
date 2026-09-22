@@ -1,7 +1,9 @@
+import app.aec_benchmark as benchmark_module
+import numpy as np
 import json
 import xml.etree.ElementTree as ET
 
-from app.aec_benchmark import _write_gt_subset,parse_official_score_output,plan_to_aec_prediction,run_official_scorer
+from app.aec_benchmark import _write_gt_subset,parse_official_score_output,plan_to_aec_prediction,run_dataset,run_official_scorer
 
 
 def test_floorplan_converts_to_aec_prediction_frame():
@@ -302,3 +304,46 @@ def test_elevator_symbol_maps_to_aec_area():
         [440.0,520.0],
         [240.0,520.0],
     ]]
+
+
+
+def test_run_dataset_honors_manifest_offset(tmp_path,monkeypatch):
+    dataset=tmp_path/"dataset"
+    dataset.mkdir()
+    sheets=[]
+    for index in range(1,6):
+        pdf=f"sheet_{index:02d}.pdf"
+        (dataset/pdf).write_bytes(b"pdf")
+        sheets.append({
+            "sheet":f"sheet_{index:02d}",
+            "pdf":pdf,
+            "width":100,
+            "height":100,
+        })
+    (dataset/"manifest.json").write_text(
+        json.dumps({"sheets":sheets}),
+        encoding="utf-8",
+    )
+
+    def fake_plan(data,mime_type,project_id,filename):
+        return {
+            "widthPx":100,"heightPx":100,
+            "walls":[],"rooms":[],"doors":[],"windows":[],"symbols":[],
+            "source":{"page":1},
+        }
+
+    monkeypatch.setattr(benchmark_module,"analyze_document_bytes_local",fake_plan)
+    monkeypatch.setattr(
+        benchmark_module,
+        "decode_document_with_page",
+        lambda *args,**kwargs:(np.zeros((100,100,3),dtype=np.uint8),1),
+    )
+    monkeypatch.setattr(
+        benchmark_module,
+        "render_extraction_overlay",
+        lambda image,plan:image,
+    )
+    monkeypatch.setattr(benchmark_module.cv2,"imwrite",lambda *args,**kwargs:True)
+
+    written=run_dataset(dataset,tmp_path/"out",limit=2,offset=2)
+    assert [path.stem for path in written]==["sheet_03","sheet_04"]
