@@ -196,10 +196,51 @@ def native_pdf_text_is_sufficient(labels:list[dict])->bool:
     return useful>=2 and (room_count>=2 or dimension_count>=2)
 
 
+def _restore_scaled_labels(labels:list[dict],scale:float,prefix:str)->list[dict]:
+    if scale<=0:
+        return []
+    restored=[]
+    for index,label in enumerate(labels,start=1):
+        item=dict(label)
+        center=dict(item["center"])
+        center["x"]=float(center["x"])/scale
+        center["y"]=float(center["y"])/scale
+        item["center"]=center
+        item["id"]=f"{prefix}-{index}"
+        restored.append(item)
+    return restored
+
+
 def extract_ocr_labels(image:np.ndarray)->list[dict]:
     lang=os.getenv("OCR_LANG","ara+eng")
     rgb=cv2.cvtColor(image,cv2.COLOR_BGR2RGB) if image.ndim==3 else cv2.cvtColor(image,cv2.COLOR_GRAY2RGB)
-    base=_ocr_pass(rgb,lang,"--psm 11",25,"base")
+    base=_ocr_pass(rgb,lang,"--psm 11 -c preserve_interword_spaces=1",25,"base")
+
+    # Small Arabic labels are common in residential drawings. A second,
+    # bounded high-resolution pass materially improves them without turning
+    # every analysis into an unbounded memory job on the free worker.
+    if os.getenv("OCR_MULTISCALE","1").strip().lower() not in ("0","false","off","no"):
+        h,w=image.shape[:2]
+        short=max(1,min(h,w))
+        long=max(h,w)
+        if short<1850 and long<3600:
+            scale=min(1.65,1850.0/short,3600.0/long)
+            if scale>=1.12:
+                enlarged=cv2.resize(
+                    rgb,
+                    (int(round(w*scale)),int(round(h*scale))),
+                    interpolation=cv2.INTER_CUBIC,
+                )
+                enhanced=_ocr_pass(
+                    enlarged,lang,
+                    "--psm 11 -c preserve_interword_spaces=1",
+                    28,"hires",
+                )
+                enhanced=_restore_scaled_labels(enhanced,scale,"hires")
+                base=_merge_labels(
+                    base,enhanced,max(10.0,min(image.shape[:2])*0.010)
+                )
+
     dimensions=extract_ocr_dimension_labels(image)
     distance=max(12.0,min(image.shape[:2])*0.012)
     return _merge_labels(base,dimensions,distance)
