@@ -1,0 +1,144 @@
+name: Vector Door Center Diagnostics
+
+on:
+  push:
+    branches: [exp/vector-door-center-diagnostics]
+    paths:
+      - .github/workflows/experiment-vector-door-centers.yml
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35760288332
+          pattern: vector-door-sheet-*
+          path: benchmark-input
+          merge-multiple: true
+
+      - name: Measure door center alignment independently of bbox IoU
+        run: |
+          python - <<'PY'
+          import json, math, xml.etree.ElementTree as ET, os
+          from pathlib import Path
+
+          root=Path(".")
+          pred_root=root/"benchmark-input"
+          dataset=root/"external/aec-geometric-bench/dataset"
+          annotations=ET.parse(dataset/"annotations_15_scoring_ready.xml").getroot()
+          images={Path(str(node.get("name"))).stem:node for node in annotations.findall("image")}
+          labels={"Single Swing Door","Double Swing Door"}
+
+          def center(box):
+              x1,y1,x2,y2=map(float,box)
+              return ((x1+x2)/2,(y1+y2)/2)
+
+          def iou(a,b):
+              ax1,ay1,ax2,ay2=map(float,a); bx1,by1,bx2,by2=map(float,b)
+              iw=max(0.0,min(ax2,bx2)-max(ax1,bx1))
+              ih=max(0.0,min(ay2,by2)-max(ay1,by1))
+              inter=iw*ih
+              if inter<=0: return 0.0
+              aa=max(0.0,ax2-ax1)*max(0.0,ay2-ay1)
+              bb=max(0.0,bx2-bx1)*max(0.0,by2-by1)
+              return inter/max(1e-9,aa+bb-inter)
+
+          rows=[]
+          for pred_path in sorted(pred_root.glob("sheet_*.json")):
+              sheet=pred_path.stem
+              payload=json.loads(pred_path.read_text())
+              preds=[
+                  obj for obj in payload.get("objects",[])
+                  if obj.get("class") in labels
+              ]
+              gt=[]
+              for node in images[sheet].findall("box"):
+                  label=str(node.get("label") or "")
+                  if label not in labels: continue
+                  box=[
+                      float(node.get("xtl")),float(node.get("ytl")),
+                      float(node.get("xbr")),float(node.get("ybr")),
+                  ]
+                  gt.append({"class":label,"bbox":box})
+
+              for truth in gt:
+                  tcx,tcy=center(truth["bbox"])
+                  tw=truth["bbox"][2]-truth["bbox"][0]
+                  th=truth["bbox"][3]-truth["bbox"][1]
+                  scale=max(1.0,max(tw,th))
+                  best_dist=999.0
+                  best_iou=0.0
+                  best_cls=None
+                  for pred in preds:
+                      pcx,pcy=center(pred["bbox"])
+                      dist=math.hypot(pcx-tcx,pcy-tcy)/scale
+                      if dist<best_dist:
+                          best_dist=dist
+                          best_iou=iou(pred["bbox"],truth["bbox"])
+                          best_cls=pred.get("class")
+                  rows.append({
+                      "sheet":sheet,
+                      "gtClass":truth["class"],
+                      "bestCenterNorm":best_dist,
+                      "bestIoU":best_iou,
+                      "predClass":best_cls,
+                  })
+
+          total=len(rows)
+          within25=sum(1 for r in rows if r["bestCenterNorm"]<=.25)
+          within50=sum(1 for r in rows if r["bestCenterNorm"]<=.50)
+          within75=sum(1 for r in rows if r["bestCenterNorm"]<=.75)
+          iou25=sum(1 for r in rows if r["bestIoU"]>=.25)
+          iou50=sum(1 for r in rows if r["bestIoU"]>=.50)
+
+          result={
+              "gtDoors":total,
+              "centerWithin025":within25,
+              "centerWithin050":within50,
+              "centerWithin075":within75,
+              "iouAtLeast025":iou25,
+              "iouAtLeast050":iou50,
+              "rows":rows,
+          }
+          target=root/"benchmark-output/vector-door-center-diagnostics.json"
+          target.parent.mkdir(exist_ok=True)
+          target.write_text(json.dumps(result,indent=2),encoding="utf-8")
+
+          print("GT_DOORS",total)
+          print("CENTER_WITHIN_025",within25)
+          print("CENTER_WITHIN_050",within50)
+          print("CENTER_WITHIN_075",within75)
+          print("IOU_AT_LEAST_025",iou25)
+          print("IOU_AT_LEAST_050",iou50)
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## Vector door center diagnostics\n\n")
+              out.write(f"- GT doors: {total}\n")
+              out.write(f"- nearest prediction center within 0.25× GT size: {within25}\n")
+              out.write(f"- within 0.50× GT size: {within50}\n")
+              out.write(f"- within 0.75× GT size: {within75}\n")
+              out.write(f"- nearest-pair IoU >= 0.25: {iou25}\n")
+              out.write(f"- nearest-pair IoU >= 0.50: {iou50}\n")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vector-door-center-diagnostics-${{ github.sha }}
+          path: benchmark-output/vector-door-center-diagnostics.json
+          retention-days: 5
