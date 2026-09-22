@@ -513,7 +513,7 @@ def extract_local_onnx_detections(image:np.ndarray)->list[dict]:
             confidence=confidence,
         )
 
-    tile_size=int(os.getenv("SYMBOL_ONNX_TILE_SIZE","1600") or "1600")
+    tile_size=int(os.getenv("SYMBOL_ONNX_TILE_SIZE","1200") or "1200")
     tile_size=max(input_size,min(3200,tile_size))
     overlap=float(os.getenv("SYMBOL_ONNX_TILE_OVERLAP",".18") or ".18")
     detections=[]
