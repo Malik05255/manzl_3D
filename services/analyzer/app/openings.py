@@ -556,9 +556,10 @@ def _vector_window_candidates(
         max_length=max(min_length+8.0,base*.090)
 
     features=[]
-    buckets:dict[int,list[int]]={}
+    buckets:dict[tuple[int,int,int],list[int]]={}
     bucket_width=5.0
     bucket_count=int(round(180.0/bucket_width))
+    cell_size=max(48.0,min(180.0,base*.030))
 
     for raw in vector_lines:
         try:
@@ -586,25 +587,27 @@ def _vector_window_candidates(
         t2=bx*ux+by*uy
         start=min(t1,t2)
         end=max(t1,t2)
-        offset=((ax+bx)/2)*nx+((ay+by)/2)*ny
+        mx=(ax+bx)/2
+        my=(ay+by)/2
+        offset=mx*nx+my*ny
         center=(start+end)/2
         item={
             "a":{"x":ax,"y":ay},"b":{"x":bx,"y":by},
             "length":length,"angle":angle,
             "ux":ux,"uy":uy,"nx":nx,"ny":ny,
             "start":start,"end":end,"offset":offset,"center":center,
+            "mx":mx,"my":my,
             "widthPx":width_px,
         }
         index=len(features)
         features.append(item)
         bucket=int(round(angle/bucket_width))%bucket_count
-        buckets.setdefault(bucket,[]).append(index)
+        cell_x=int(math.floor(mx/cell_size))
+        cell_y=int(math.floor(my/cell_size))
+        buckets.setdefault((bucket,cell_x,cell_y),[]).append(index)
 
     if len(features)<3:
         return []
-
-    for values in buckets.values():
-        values.sort(key=lambda idx:features[idx]["center"])
 
     raw_candidates=[]
     used_keys=set()
@@ -612,13 +615,26 @@ def _vector_window_candidates(
 
     for seed_index,seed in enumerate(features):
         seed_bucket=int(round(seed["angle"]/bucket_width))%bucket_count
+        seed_cell_x=int(math.floor(float(seed["mx"])/cell_size))
+        seed_cell_y=int(math.floor(float(seed["my"])/cell_size))
+        search_radius=max(
+            1,
+            int(math.ceil(max(90.0,float(seed["length"])*.55)/cell_size)),
+        )
         possible=[]
         for bucket in (
             (seed_bucket-1)%bucket_count,
             seed_bucket,
             (seed_bucket+1)%bucket_count,
         ):
-            possible.extend(buckets.get(bucket,[]))
+            for dx in range(-search_radius,search_radius+1):
+                for dy in range(-search_radius,search_radius+1):
+                    possible.extend(
+                        buckets.get(
+                            (bucket,seed_cell_x+dx,seed_cell_y+dy),
+                            [],
+                        )
+                    )
 
         peers=[]
         sux=float(seed["ux"]); suy=float(seed["uy"])
