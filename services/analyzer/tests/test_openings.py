@@ -547,3 +547,46 @@ def test_arc_roi_limit_supports_override_and_disable(monkeypatch):
 def test_arc_roi_limit_rejects_invalid_value(monkeypatch):
     monkeypatch.setenv("OPENING_ARC_MAX_ROI","invalid")
     assert _arc_roi_limit()==640.0
+
+
+def test_vector_window_requires_three_parallel_hosted_strokes():
+    image=np.full((1200,1800,3),255,dtype=np.uint8)
+    walls=[
+        wall("left",100,600,680,600),
+        wall("right",800,600,1700,600),
+    ]
+    vectors=[
+        {"a":{"x":700.0,"y":590.0},"b":{"x":780.0,"y":590.0},"widthPx":1.2},
+        {"a":{"x":700.0,"y":600.0},"b":{"x":780.0,"y":600.0},"widthPx":1.2},
+        {"a":{"x":700.0,"y":610.0},"b":{"x":780.0,"y":610.0},"widthPx":1.2},
+    ]
+    windows=detect_windows(image,walls,None,vector_lines=vectors)
+    assert len(windows)==1
+    assert windows[0]["provenance"]=="pdf-vector"
+    assert windows[0]["wallId"] in {"left","right"}
+
+
+def test_vector_window_rejects_only_two_parallel_strokes():
+    image=np.full((1200,1800,3),255,dtype=np.uint8)
+    walls=[
+        wall("left",100,600,680,600),
+        wall("right",800,600,1700,600),
+    ]
+    vectors=[
+        {"a":{"x":700.0,"y":590.0},"b":{"x":780.0,"y":590.0},"widthPx":1.2},
+        {"a":{"x":700.0,"y":610.0},"b":{"x":780.0,"y":610.0},"widthPx":1.2},
+    ]
+    windows=detect_windows(image,walls,None,vector_lines=vectors)
+    assert windows==[]
+
+
+def test_vector_window_rejects_parallel_group_far_from_wall():
+    image=np.full((1200,1800,3),255,dtype=np.uint8)
+    walls=[wall("host",100,600,1700,600)]
+    vectors=[
+        {"a":{"x":700.0,"y":300.0},"b":{"x":780.0,"y":300.0},"widthPx":1.2},
+        {"a":{"x":700.0,"y":310.0},"b":{"x":780.0,"y":310.0},"widthPx":1.2},
+        {"a":{"x":700.0,"y":320.0},"b":{"x":780.0,"y":320.0},"widthPx":1.2},
+    ]
+    windows=detect_windows(image,walls,None,vector_lines=vectors)
+    assert windows==[]

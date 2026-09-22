@@ -61,6 +61,43 @@ def _opening_bbox(opening:dict,sx:float,sy:float,padding_px:float)->list[float]:
     ]
 
 
+def _window_bbox(window:dict,sx:float,sy:float,padding_px:float)->list[float]:
+    """Use vector glazing depth when available instead of generic wall padding."""
+    try:
+        depth=float(window.get("windowDepthPx") or 0.0)
+    except (TypeError,ValueError):
+        depth=0.0
+    if str(window.get("provenance",""))!="pdf-vector" or depth<=1.0:
+        return _opening_bbox(window,sx,sy,padding_px)
+
+    ax=float(window["a"]["x"]); ay=float(window["a"]["y"])
+    bx=float(window["b"]["x"]); by=float(window["b"]["y"])
+    dx=bx-ax; dy=by-ay
+    length=math.hypot(dx,dy)
+    if length<=1e-9:
+        return _opening_bbox(window,sx,sy,padding_px)
+
+    ux=dx/length; uy=dy/length
+    nx=-uy; ny=ux
+    # Native PDF vectors already describe the glazing span closely. Preserve
+    # that span and add only a tiny longitudinal tolerance for scorer/raster
+    # quantization rather than reusing median wall thickness.
+    longitudinal_pad=max(1.0,min(4.0,padding_px*.12))
+    half=max(2.0,depth/2.0)
+    points=[
+        (ax-ux*longitudinal_pad+nx*half,ay-uy*longitudinal_pad+ny*half),
+        (bx+ux*longitudinal_pad+nx*half,by+uy*longitudinal_pad+ny*half),
+        (bx+ux*longitudinal_pad-nx*half,by+uy*longitudinal_pad-ny*half),
+        (ax-ux*longitudinal_pad-nx*half,ay-uy*longitudinal_pad-ny*half),
+    ]
+    return [
+        min(point[0] for point in points)*sx,
+        min(point[1] for point in points)*sy,
+        max(point[0] for point in points)*sx,
+        max(point[1] for point in points)*sy,
+    ]
+
+
 def _door_bbox(door:dict,sx:float,sy:float,padding_px:float)->list[float]:
     fallback=_opening_bbox(door,sx,sy,padding_px)
     side=str(door.get("doorSwingSide") or "unknown")
@@ -122,7 +159,7 @@ def plan_to_aec_prediction(plan:dict,*,sheet:str,width:int,height:int)->dict:
     for window in plan.get("windows",[]):
         objects.append({
             "class":"Window",
-            "bbox":_opening_bbox(window,sx,sy,padding),
+            "bbox":_window_bbox(window,sx,sy,padding),
         })
 
     symbol_classes={
