@@ -559,13 +559,13 @@ def test_scaled_single_leaf_skips_expensive_arc_scan(monkeypatch):
 
 def test_unscaled_single_leaf_still_checks_arc_when_needed_for_threshold(monkeypatch):
     image=np.full((260,320,3),255,dtype=np.uint8)
-    cv2.line(image,(30,130),(120,130),(0,0,0),5)
-    cv2.line(image,(170,130),(290,130),(0,0,0),5)
+    cv2.line(image,(30,130),(140,130),(0,0,0),5)
+    cv2.line(image,(160,130),(290,130),(0,0,0),5)
 
     monkeypatch.setattr(
         openings_module,
         "_door_leaf_evidence_details",
-        lambda *args,**kwargs:(1,{"a"},"negative",42.0),
+        lambda *args,**kwargs:(1,{"a"},"negative",18.0),
     )
     called={"value":False}
 
@@ -576,7 +576,7 @@ def test_unscaled_single_leaf_still_checks_arc_when_needed_for_threshold(monkeyp
     monkeypatch.setattr(openings_module,"_door_arc_evidence_details",track_arc)
     detect_doors(
         image,
-        [wall("left",30,130,120,130),wall("right",170,130,290,130)],
+        [wall("left",30,130,140,130),wall("right",160,130,290,130)],
         meters_per_pixel=None,
     )
     assert called["value"] is True
