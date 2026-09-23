@@ -111,6 +111,29 @@ def wall_consensus_score(result:dict|None,heuristic_mask:np.ndarray|None)->float
     return float(2*int(np.count_nonzero(a & b))/denom)
 
 
+def should_use_learned_walls(
+    result:dict|None,
+    heuristic_mask:np.ndarray|None,
+    *,
+    dominant_colored_plan:bool=False,
+    minimum_consensus:float=.70,
+    minimum_wall_confidence:float=.58,
+)->bool:
+    """Allow learned wall geometry only on high-agreement colored plans.
+
+    General construction drawings keep V3 geometry because the synthetic model
+    is not yet a universal wall replacement. Colored residential exports are a
+    narrower domain: when a dominant wall hue exists and the learned mask agrees
+    strongly with independent geometry, the learned mask is cleaner for redraw
+    because it ignores red labels, green dimensions and furniture strokes.
+    """
+    if not dominant_colored_plan or not result or not result.get("plausible"):
+        return False
+    consensus=wall_consensus_score(result,heuristic_mask)
+    wall_conf=float((result.get("classConfidence") or {}).get("wall",0.0))
+    return consensus>=minimum_consensus and wall_conf>=minimum_wall_confidence
+
+
 def learned_opening_detections(result:dict|None)->list[dict]:
     if not result or not result.get("plausible"):
         return []
