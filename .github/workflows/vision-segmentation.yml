@@ -1,5 +1,8 @@
 name: Vision Segmentation Model
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
   push:
@@ -33,7 +36,7 @@ jobs:
         run: |
           python tools/train_segmentation_synthetic.py \
             --output ../../segmentation-model \
-            --epochs 3 \
+            --epochs 2 \
             --train-count 700 \
             --val-count 140 \
             --size 256
@@ -80,6 +83,16 @@ jobs:
           assert iou["door"] >= 0.35, iou
           assert iou["window"] >= 0.35, iou
           PY
+
+      - name: Publish public model release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view segmentation-v1 >/dev/null 2>&1; then
+            gh release upload segmentation-v1               segmentation-model/manzil-segmentation-v1.onnx               segmentation-model/metadata.json               --clobber
+          else
+            gh release create segmentation-v1               segmentation-model/manzil-segmentation-v1.onnx               segmentation-model/metadata.json               --title "Manzil H Vision Segmentation V1"               --notes "Owned synthetic-trained wall/room/door/window segmentation model. Production use remains gated by benchmark validation."
+          fi
 
       - name: Upload learned model
         uses: actions/upload-artifact@v4
