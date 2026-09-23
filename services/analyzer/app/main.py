@@ -4,6 +4,7 @@ import hashlib
 import os
 from datetime import datetime,timezone
 import cv2
+import numpy as np
 import httpx
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,HttpUrl
