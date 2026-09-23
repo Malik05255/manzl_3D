@@ -113,7 +113,13 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     learned_segmentation=bool(
         segmentation_result
         and segmentation_result.get("plausible")
-        and segmentation_consensus>=float(os.getenv("SEGMENTATION_MIN_WALL_CONSENSUS",".30") or ".30")
+        and segmentation_consensus>=float(os.getenv("SEGMENTATION_MIN_WALL_CONSENSUS",".60") or ".60")
+        and (
+            has_dominant_structural_color(image)
+            or os.getenv("SEGMENTATION_ALLOW_MONOCHROME","0").strip().lower() in {"1","true","on","yes"}
+        )
+        and float(segmentation_result.get("meanConfidence",0.0))
+            >=float(os.getenv("SEGMENTATION_MIN_MEAN_CONFIDENCE",".60") or ".60")
     )
     # Learned segmentation is evaluated as a candidate, while V3 remains the
     # canonical wall geometry. This prevents synthetic-domain wall masks from
