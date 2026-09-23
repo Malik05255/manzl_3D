@@ -109,6 +109,10 @@ def _dominant_structural_color_mask(image:np.ndarray)->np.ndarray|None:
     return selected
 
 
+def has_dominant_structural_color(image:np.ndarray)->bool:
+    return _dominant_structural_color_mask(image) is not None
+
+
 def extract_structural_wall_mask(image: np.ndarray, ink: np.ndarray) -> np.ndarray:
     """Return a conservative wall-region mask for reconstruction.
 
