@@ -173,12 +173,10 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
         labels=_merge_labels(labels,native_labels,distance)
 
     await progress(req.callback_url,req.project_id,"geometry",58,"استخراج الجدران والهندسة")
-    wall_input=(
-        structural_mask
-        if reconstruction_v2 and structural_mask is not None and cv2.countNonZero(structural_mask)>0
-        else ink
-    )
-    walls,wall_mask=detect_walls(wall_input)
+    # Detect on the original ink so diagonal/irregular walls survive. V3 then
+    # filters raster candidates against the conservative structural mask instead
+    # of throwing away non-axis evidence before detection.
+    walls,wall_mask=detect_walls(ink)
     vector_lines=[]
     if req.mime_type=="application/pdf":
         try:
