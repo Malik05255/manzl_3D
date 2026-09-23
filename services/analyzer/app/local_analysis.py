@@ -205,7 +205,8 @@ def analyze_document_bytes_local(
     )
     learned_room_barrier=semantic_room_barrier(segmentation_result) if learned_segmentation else None
     if learned_room_barrier is not None:
-        segmentation_barrier=learned_room_barrier
+        segmentation_seed=cv2.bitwise_or(barrier,learned_room_barrier)
+        segmentation_barrier=build_room_barrier(segmentation_seed)
     else:
         segmentation_barrier=build_room_barrier(barrier) if reconstruction_v3 else barrier
     rooms=detect_rooms(segmentation_barrier,labels,scale)
