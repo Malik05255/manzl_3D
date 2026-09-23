@@ -4,7 +4,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.vision_segmentation import learned_opening_detections,semantic_room_barrier,wall_consensus_score
+from app.vision_segmentation import learned_opening_detections,semantic_room_barrier,should_use_learned_rooms,wall_consensus_score
 
 
 def test_semantic_room_barrier_uses_learned_structure_not_text_holes():
@@ -51,3 +51,20 @@ def test_wall_consensus_rejects_unrelated_learned_geometry():
     heuristic[10:20,10:90]=255
     heuristic[70:80,10:90]=0
     assert wall_consensus_score(result,heuristic)>.99
+
+
+def test_learned_room_gate_only_rescues_failed_geometry_or_colored_label_match():
+    labels=[
+        {"kind":"room_name","confidence":.9},
+        {"kind":"room_name","confidence":.9},
+        {"kind":"room_name","confidence":.9},
+        {"kind":"room_name","confidence":.9},
+    ]
+    assert should_use_learned_rooms([], [{},{}], labels)
+    assert not should_use_learned_rooms([{}]*8, [{}]*5, labels)
+    assert should_use_learned_rooms(
+        [{}]*10,[{}]*4,labels,dominant_colored_plan=True
+    )
+    assert not should_use_learned_rooms(
+        [{}]*5,[{}]*10,labels,dominant_colored_plan=True
+    )
