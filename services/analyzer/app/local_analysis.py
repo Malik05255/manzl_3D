@@ -53,8 +53,6 @@ def analyze_document_bytes_local(
     engines=["opencv","canonical-wall-barrier"]
     if reconstruction_v3:
         engines.extend(["structural-wall-mask-v2","clean-vector-reconstruction-v2","room-barrier-v3"])
-        if use_region_vectorizer:
-            engines.append("structural-region-vectorizer-v3")
 
     if mime_type=="application/pdf":
         native_lines=extract_pdf_text_lines(data,page)
@@ -137,6 +135,7 @@ def analyze_document_bytes_local(
     )
     if use_region_vectorizer:
         walls=fuse_region_wall_candidates(walls,structural_mask)
+        engines.append("structural-region-vectorizer-v3")
     if vector_lines:
         walls=enrich_walls_with_vector(walls,vector_lines)
         walls=add_vector_wall_candidates(walls,vector_lines,h,w,labels=labels)
