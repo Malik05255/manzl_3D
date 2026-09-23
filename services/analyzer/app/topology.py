@@ -84,14 +84,33 @@ def room_boundary_coverage(room,walls:list)->float:
 def link_room_boundaries(rooms:list,walls:list)->list:
     for room in rooms:
         polygon=_room_value(room,"polygon")
-        scored=[]
+        all_scored=[]
         for wall in walls:
             best=0.0
             for index,point in enumerate(polygon):
                 other=polygon[(index+1)%len(polygon)]
                 best=max(best,_edge_wall_score(point,other,wall))
-            if best>=0.34:
-                scored.append((best,str(_wall_value(wall,"id"))))
+            if best>0:
+                all_scored.append((best,str(_wall_value(wall,"id"))))
+
+        scored=[item for item in all_scored if item[0]>=0.34]
+
+        # V3 room masks represent the inner face of a wall while canonical
+        # wall lines represent its centreline. At acute/slanted corners the
+        # polygon approximation can reduce the strict overlap score on one or
+        # two real boundary walls. If an otherwise valid enclosure links to
+        # fewer than three walls, recover only the strongest nearby candidates
+        # from a lower-confidence band. This is deliberately bounded so an
+        # interior wall cannot cause an unbounded topology fan-out.
+        if len(scored)<3 and len(polygon)>=3:
+            seen={wall_id for _,wall_id in scored}
+            fallback=[
+                item for item in sorted(all_scored,key=lambda item:(-item[0],item[1]))
+                if item[1] not in seen and item[0]>=0.14
+            ]
+            needed=max(0,3-len(scored))
+            scored.extend(fallback[:needed])
+
         ids=[wall_id for _,wall_id in sorted(scored,key=lambda item:(-item[0],item[1]))]
         if isinstance(room,dict):
             room["boundaryWallIds"]=ids
