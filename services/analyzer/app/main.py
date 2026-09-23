@@ -16,7 +16,7 @@ from .models import CanonicalizeRequest,EditRequest,FloorPlan,ProposalResponse,R
 from .ocr import _merge_labels,classify_text,extract_ocr_dimension_labels,extract_ocr_labels,native_pdf_text_is_sufficient
 from .openings import detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts
 from .pipeline import assemble_plan
-from .rooms import detect_rooms
+from .rooms import build_room_barrier,detect_rooms
 from .scale import estimate_scale_with_diagnostics
 from .symbols import extract_local_onnx_detections,extract_symbol_detections,normalize_configured_symbols
 from .structural import extract_structural_wall_mask,filter_walls_by_structural_support,structural_mask_metrics
@@ -242,8 +242,9 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
         excluded_wall_ids=quarantined_wall_ids,
     )
 
-    await progress(req.callback_url,req.project_id,"rooms",78,"فهم الغرف والعلاقات")
-    rooms=detect_rooms(room_barrier_mask,labels,scale)
+    await progress(req.callback_url,req.project_id,"rooms",78,"إعادة بناء الغرف وإغلاق فتحات الأبواب للتحليل")
+    segmentation_barrier=build_room_barrier(room_barrier_mask) if reconstruction_v2 else room_barrier_mask
+    rooms=detect_rooms(segmentation_barrier,labels,scale)
     link_room_boundaries(rooms,topology_walls)
     rooms=filter_nonarchitectural_enclosures(rooms,topology_walls,w,h)
     recalibrate_extracted_room_confidence(rooms,topology_walls,w,h)
@@ -252,7 +253,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     await progress(req.callback_url,req.project_id,"validation",93,"التحقق من جودة النتيجة")
     engines=["opencv","canonical-wall-barrier"]
     if reconstruction_v2:
-        engines.extend(["structural-wall-mask-v2","clean-vector-reconstruction-v2"])
+        engines.extend(["structural-wall-mask-v2","clean-vector-reconstruction-v2","room-barrier-v3"])
     if local_labels: engines.append("tesseract-dimensions" if use_native_fastpath else "tesseract")
     if used_cloud_ocr: engines.append("google-vision")
     if used_pdf_text: engines.append("pdf-text")
