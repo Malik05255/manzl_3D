@@ -491,6 +491,125 @@ def _detect_slanted_wall_candidates(ink:np.ndarray)->list[dict]:
     return accepted
 
 
+def detect_region_wall_candidates(region_mask:np.ndarray)->list[dict]:
+    """Vectorize a clean structural wall-region mask without Hough fragmentation.
+
+    The structural V3 mask already removes most text and dimension strokes. For
+    axis-aligned residential plans, contouring long horizontal/vertical wall
+    bands is substantially more stable than asking Hough to rediscover their
+    centre lines. Door/window gaps remain separate components and therefore stay
+    editable openings.
+    """
+    if region_mask.ndim!=2:
+        raise ValueError("REGION_WALL_MASK_SHAPE")
+    h,w=region_mask.shape[:2]
+    min_side=float(max(1,min(h,w)))
+    binary=np.where(region_mask>0,255,0).astype(np.uint8)
+
+    min_length=max(28,int(round(min_side*.028)))
+    axis_kernel=max(20,min(110,int(round(min_side*.040))))
+    min_thickness=max(5.0,min_side*.0040)
+    max_thickness=max(55.0,min_side*.060)
+
+    horizontal=cv2.morphologyEx(
+        binary,cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT,(axis_kernel,1)),
+    )
+    vertical=cv2.morphologyEx(
+        binary,cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT,(1,axis_kernel)),
+    )
+
+    raw=[]
+    for orientation,mask in (("h",horizontal),("v",vertical)):
+        contours,_=cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+        for contour in contours:
+            x,y,rw,rh=cv2.boundingRect(contour)
+            if orientation=="h":
+                if rw<min_length or rw<rh*2.5:
+                    continue
+                thickness=float(rh)
+                if thickness<min_thickness or thickness>max_thickness:
+                    continue
+                y_axis=int(round(y+rh/2.0))
+                line=(int(x),y_axis,int(x+rw),y_axis)
+            else:
+                if rh<min_length or rh<rw*2.5:
+                    continue
+                thickness=float(rw)
+                if thickness<min_thickness or thickness>max_thickness:
+                    continue
+                x_axis=int(round(x+rw/2.0))
+                line=(x_axis,int(y),x_axis,int(y+rh))
+
+            # Re-estimate from the actual structural band so T-junction bounding
+            # boxes do not inflate thickness.
+            measured=_estimate_thickness(binary,line)
+            raw.append({
+                "a":{"x":float(line[0]),"y":float(line[1])},
+                "b":{"x":float(line[2]),"y":float(line[3])},
+                "thicknessPx":round(max(2.0,min(48.0,measured)),2),
+                "confidence":0.95,
+                "reviewed":False,
+                "provenance":"structural-mask",
+            })
+
+    # Collapse overlapping fragments but keep architectural opening-sized gaps.
+    return _merge_near_collinear_candidates(raw)
+
+
+def fuse_region_wall_candidates(
+    walls:list[dict],
+    region_mask:np.ndarray,
+)->list[dict]:
+    """Prefer structural-mask centerlines for axis walls, preserve raster slants."""
+    candidates=detect_region_wall_candidates(region_mask)
+    if not candidates:
+        return walls
+
+    result=[dict(item) for item in walls]
+    for candidate in candidates:
+        duplicate_indexes=[
+            index for index,item in enumerate(result)
+            if _wall_duplicate(candidate,item)
+        ]
+        if duplicate_indexes:
+            # Replace fragmented/offset Hough output with the deterministic
+            # structural-band centerline while carrying the strongest confidence.
+            best=max(
+                duplicate_indexes,
+                key=lambda index:float(result[index].get("confidence",0.0)),
+            )
+            existing=result[best]
+            candidate={
+                **candidate,
+                "confidence":round(max(
+                    float(candidate.get("confidence",0.0)),
+                    float(existing.get("confidence",0.0)),
+                ),3),
+                "provenance":"mixed" if existing.get("provenance")!="structural-mask" else "structural-mask",
+            }
+            result=[
+                item for index,item in enumerate(result)
+                if index not in duplicate_indexes
+            ]
+        result.append(candidate)
+
+    # Assign deterministic IDs after fusion. Existing non-duplicate walls keep
+    # their IDs; new structural candidates receive a separate namespace.
+    existing_ids={str(item.get("id","")) for item in result if item.get("id")}
+    next_index=1
+    for item in result:
+        if item.get("id"):
+            continue
+        while f"wall-struct-{next_index}" in existing_ids:
+            next_index+=1
+        item["id"]=f"wall-struct-{next_index}"
+        existing_ids.add(item["id"])
+        next_index+=1
+    return result
+
+
 def detect_walls(ink:np.ndarray)->tuple[list[dict],np.ndarray]:
     h,w=ink.shape[:2]
     min_side=max(1,min(h,w))
