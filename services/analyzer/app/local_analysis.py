@@ -45,7 +45,14 @@ def analyze_document_bytes_local(
     h,w=image.shape[:2]
     _,ink=preprocess(image)
     reconstruction_v3=os.getenv("ANALYZER_RECONSTRUCTION_V3","1").strip().lower() not in {"0","false","off","no"}
-    structural_mask=extract_structural_wall_mask(image,ink) if reconstruction_v3 else None
+    heuristic_structural_mask=extract_structural_wall_mask(image,ink) if reconstruction_v3 else None
+    segmentation_result=infer_segmentation(image)
+    learned_segmentation=bool(segmentation_result and segmentation_result.get("plausible"))
+    if learned_segmentation:
+        structural_mask=np.asarray(segmentation_result["masks"]["wall"],dtype=np.uint8)
+        structural_mask=cv2.morphologyEx(structural_mask,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8))
+    else:
+        structural_mask=heuristic_structural_mask
     structural_metrics=structural_mask_metrics(structural_mask) if structural_mask is not None else {}
 
     vector_lines=[]
@@ -119,6 +126,9 @@ def analyze_document_bytes_local(
             symbols=asyncio.run(extract_symbol_detections(image))
         except Exception:
             symbols=[]
+    if learned_segmentation:
+        ai_detections=[*ai_detections,*learned_opening_detections(segmentation_result)]
+        engines.append("vision-segmentation-v1")
     if symbols:
         engines.append("symbol-detector")
     if ai_detections:
@@ -192,7 +202,11 @@ def analyze_document_bytes_local(
         min_pdf_vector_confidence=.70,
         excluded_wall_ids=quarantined_wall_ids,
     )
-    segmentation_barrier=build_room_barrier(barrier) if reconstruction_v3 else barrier
+    learned_room_barrier=semantic_room_barrier(segmentation_result) if learned_segmentation else None
+    if learned_room_barrier is not None:
+        segmentation_barrier=learned_room_barrier
+    else:
+        segmentation_barrier=build_room_barrier(barrier) if reconstruction_v3 else barrier
     rooms=detect_rooms(segmentation_barrier,labels,scale)
     link_room_boundaries(rooms,topology_walls)
     rooms=filter_nonarchitectural_enclosures(rooms,topology_walls,w,h)
