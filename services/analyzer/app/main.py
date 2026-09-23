@@ -25,7 +25,7 @@ from .topology import canonicalize_plan,classify_wall_roles,filter_nonarchitectu
 from .semantic import normalize_edit_semantics
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,fuse_region_wall_candidates,quarantine_dimension_aligned_walls,rasterize_wall_mask
 from .validation import validate_plan
-from .vision_segmentation import infer_segmentation,learned_opening_detections,semantic_room_barrier,wall_consensus_score
+from .vision_segmentation import infer_segmentation,semantic_room_barrier,should_use_learned_rooms,wall_consensus_score
 
 app=FastAPI(title="Manzil H Analyzer",version="0.1.0")
 PIPELINE_VERSION=os.getenv("ANALYZER_PIPELINE_VERSION",app.version)
@@ -115,11 +115,10 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
         and segmentation_result.get("plausible")
         and segmentation_consensus>=float(os.getenv("SEGMENTATION_MIN_WALL_CONSENSUS",".30") or ".30")
     )
-    if learned_segmentation:
-        structural_mask=np.asarray(segmentation_result["masks"]["wall"],dtype=np.uint8)
-        structural_mask=cv2.morphologyEx(structural_mask,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8))
-    else:
-        structural_mask=heuristic_structural_mask
+    # Learned segmentation is evaluated as a candidate, while V3 remains the
+    # canonical wall geometry. This prevents synthetic-domain wall masks from
+    # degrading general construction drawings.
+    structural_mask=heuristic_structural_mask
     structural_metrics=structural_mask_metrics(structural_mask) if structural_mask is not None else {}
 
     native_labels=[]
@@ -181,8 +180,6 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
         _safe_symbols(),
     )
     symbols,ai_detections=symbol_bundle
-    if learned_segmentation:
-        ai_detections=[*ai_detections,*learned_opening_detections(segmentation_result)]
     used_cloud_ocr=bool(cloud_labels)
     if cloud_labels:
         distance=max(12.0,min(image.shape[:2])*0.012)
@@ -270,13 +267,21 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     )
 
     await progress(req.callback_url,req.project_id,"rooms",78,"إعادة بناء الغرف وإغلاق فتحات الأبواب للتحليل")
+    fallback_barrier=build_room_barrier(room_barrier_mask) if reconstruction_v3 else room_barrier_mask
+    fallback_rooms=detect_rooms(fallback_barrier,labels,scale)
+    rooms=fallback_rooms
+    use_learned_rooms=False
     learned_room_barrier=semantic_room_barrier(segmentation_result) if learned_segmentation else None
     if learned_room_barrier is not None:
         segmentation_seed=cv2.bitwise_or(room_barrier_mask,learned_room_barrier)
-        segmentation_barrier=build_room_barrier(segmentation_seed)
-    else:
-        segmentation_barrier=build_room_barrier(room_barrier_mask) if reconstruction_v3 else room_barrier_mask
-    rooms=detect_rooms(segmentation_barrier,labels,scale)
+        learned_barrier=build_room_barrier(segmentation_seed)
+        learned_rooms=detect_rooms(learned_barrier,labels,scale)
+        use_learned_rooms=should_use_learned_rooms(
+            fallback_rooms,learned_rooms,labels,
+            dominant_colored_plan=has_dominant_structural_color(image),
+        )
+        if use_learned_rooms:
+            rooms=learned_rooms
     link_room_boundaries(rooms,topology_walls)
     rooms=filter_nonarchitectural_enclosures(rooms,topology_walls,w,h)
     recalibrate_extracted_room_confidence(rooms,topology_walls,w,h)
@@ -297,9 +302,11 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     if symbols: engines.append("symbol-detector")
     if ai_detections: engines.append("onnx-architectural-detector")
     if learned_segmentation:
-        engines.append("vision-segmentation-v1")
+        engines.append("vision-segmentation-candidate-v1")
         engines.append(f"segmentation-confidence:{float(segmentation_result.get('meanConfidence',0.0)):.3f}")
         engines.append(f"segmentation-wall-consensus:{segmentation_consensus:.3f}")
+        if use_learned_rooms:
+            engines.append("vision-room-rescue-v1")
     analysis={
         "pipelineVersion":PIPELINE_VERSION,
         "analyzedAt":datetime.now(timezone.utc).isoformat(),
