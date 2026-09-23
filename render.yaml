@@ -30,5 +30,7 @@ services:
         value: /app/models/manzil-segmentation-v1.onnx
       - key: SEGMENTATION_INPUT_SIZE
         value: "384"
+      - key: SEGMENTATION_MIN_WALL_CONSENSUS
+        value: "0.30"
       - key: ANALYZER_PIPELINE_VERSION
         value: vision-segmentation-v1
