@@ -62,6 +62,57 @@ def _outlined_wall_bands(ink: np.ndarray) -> np.ndarray:
     return cv2.bitwise_or(vertical, horizontal)
 
 
+def _dominant_structural_color_mask(image:np.ndarray)->np.ndarray|None:
+    """Isolate a dominant wall color when exported plans use colored walls.
+
+    In many residential exports the walls are one saturated color while room
+    labels, dimensions and annotations use different colors. Treating every
+    saturated pixel as structural mixes those layers. A dominant-hue path keeps
+    the large wall family and rejects red labels/green dimensions before any
+    geometry is inferred.
+    """
+    hsv=cv2.cvtColor(image,cv2.COLOR_BGR2HSV)
+    hue=hsv[:,:,0]
+    saturation=hsv[:,:,1]
+    value=hsv[:,:,2]
+    eligible=(saturation>=55)&(value>=45)&(value<=252)
+    count=int(np.count_nonzero(eligible))
+    h,w=image.shape[:2]
+    if count<max(250,int(h*w*.0025)):
+        return None
+
+    hist=np.bincount(hue[eligible].astype(np.int32),minlength=180).astype(np.float64)
+    # Circular smoothing keeps red (near 0/179) well behaved.
+    smooth=np.zeros_like(hist)
+    for offset in range(-3,4):
+        smooth+=np.roll(hist,offset)
+    peak=int(np.argmax(smooth))
+    peak_share=float(smooth[peak])/(float(hist.sum())*7.0+1e-9)
+    if peak_share<.23:
+        return None
+
+    delta=np.minimum((hue.astype(np.int16)-peak)%180,(peak-hue.astype(np.int16))%180)
+    selected=np.where(
+        eligible&(delta<=9),
+        255,0,
+    ).astype(np.uint8)
+    selected=cv2.morphologyEx(selected,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8))
+
+    short=max(1,min(h,w))
+    selected=_thick_core(selected,max(2.6,min(6.5,short*.0028)))
+    selected=_keep_large_components(
+        selected,max(30,int(round(short*short*.000035)))
+    )
+    ratio=float(cv2.countNonZero(selected))/float(max(1,h*w))
+    if ratio<.004:
+        return None
+    return selected
+
+
+def has_dominant_structural_color(image:np.ndarray)->bool:
+    return _dominant_structural_color_mask(image) is not None
+
+
 def extract_structural_wall_mask(image: np.ndarray, ink: np.ndarray) -> np.ndarray:
     """Return a conservative wall-region mask for reconstruction.
 
@@ -88,15 +139,19 @@ def extract_structural_wall_mask(image: np.ndarray, ink: np.ndarray) -> np.ndarr
 
     # Saturated wall colors (blue/green/etc.). Requiring thickness prevents
     # colored room labels and dimension lines from becoming walls.
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    saturation = hsv[:, :, 1]
-    value = hsv[:, :, 2]
-    colored = np.where((saturation >= 48) & (value <= 248), 255, 0).astype(np.uint8)
-    colored = cv2.morphologyEx(colored, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
-    # Colored dimension/extension lines are often 1-3 px while colored wall
-    # bands are materially thicker. Use a stricter core threshold for color
-    # than for monochrome ink so green/blue dimensions never become walls.
-    colored = _thick_core(colored, max(2.8, min_half * 1.30))
+    dominant_colored=_dominant_structural_color_mask(image)
+    if dominant_colored is not None:
+        colored=dominant_colored
+    else:
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        saturation = hsv[:, :, 1]
+        value = hsv[:, :, 2]
+        colored = np.where((saturation >= 48) & (value <= 248), 255, 0).astype(np.uint8)
+        colored = cv2.morphologyEx(colored, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+        # Colored dimension/extension lines are often 1-3 px while colored wall
+        # bands are materially thicker. Use a stricter core threshold for color
+        # than for monochrome ink so dimensions never become walls.
+        colored = _thick_core(colored, max(2.8, min_half * 1.30))
 
     outlined = _outlined_wall_bands(ink)
 
