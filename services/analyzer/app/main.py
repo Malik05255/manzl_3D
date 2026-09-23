@@ -24,7 +24,7 @@ from .topology import canonicalize_plan,classify_wall_roles,filter_nonarchitectu
 from .semantic import normalize_edit_semantics
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,fuse_region_wall_candidates,quarantine_dimension_aligned_walls,rasterize_wall_mask
 from .validation import validate_plan
-from .vision_segmentation import infer_segmentation,learned_opening_detections,semantic_room_barrier
+from .vision_segmentation import infer_segmentation,learned_opening_detections,semantic_room_barrier,wall_consensus_score
 
 app=FastAPI(title="Manzil H Analyzer",version="0.1.0")
 PIPELINE_VERSION=os.getenv("ANALYZER_PIPELINE_VERSION",app.version)
@@ -108,7 +108,12 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     reconstruction_enabled=reconstruction_v2 or reconstruction_v3
     heuristic_structural_mask=extract_structural_wall_mask(image,ink) if reconstruction_enabled else None
     segmentation_result=await asyncio.to_thread(infer_segmentation,image)
-    learned_segmentation=bool(segmentation_result and segmentation_result.get("plausible"))
+    segmentation_consensus=wall_consensus_score(segmentation_result,heuristic_structural_mask)
+    learned_segmentation=bool(
+        segmentation_result
+        and segmentation_result.get("plausible")
+        and segmentation_consensus>=float(os.getenv("SEGMENTATION_MIN_WALL_CONSENSUS",".30") or ".30")
+    )
     if learned_segmentation:
         structural_mask=np.asarray(segmentation_result["masks"]["wall"],dtype=np.uint8)
         structural_mask=cv2.morphologyEx(structural_mask,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8))
@@ -293,6 +298,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     if learned_segmentation:
         engines.append("vision-segmentation-v1")
         engines.append(f"segmentation-confidence:{float(segmentation_result.get('meanConfidence',0.0)):.3f}")
+        engines.append(f"segmentation-wall-consensus:{segmentation_consensus:.3f}")
     analysis={
         "pipelineVersion":PIPELINE_VERSION,
         "analyzedAt":datetime.now(timezone.utc).isoformat(),
