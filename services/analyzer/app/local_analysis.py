@@ -24,7 +24,7 @@ from .symbols import extract_configured_onnx_detections,extract_symbol_detection
 from .structural import extract_structural_wall_mask,filter_walls_by_structural_support,has_dominant_structural_color,structural_mask_metrics
 from .topology import classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,fuse_region_wall_candidates,quarantine_dimension_aligned_walls,rasterize_wall_mask
-from .vision_segmentation import infer_segmentation,learned_opening_detections,semantic_room_barrier
+from .vision_segmentation import infer_segmentation,learned_opening_detections,semantic_room_barrier,wall_consensus_score
 
 
 def analyze_document_bytes_local(
@@ -48,7 +48,12 @@ def analyze_document_bytes_local(
     reconstruction_v3=os.getenv("ANALYZER_RECONSTRUCTION_V3","1").strip().lower() not in {"0","false","off","no"}
     heuristic_structural_mask=extract_structural_wall_mask(image,ink) if reconstruction_v3 else None
     segmentation_result=infer_segmentation(image)
-    learned_segmentation=bool(segmentation_result and segmentation_result.get("plausible"))
+    segmentation_consensus=wall_consensus_score(segmentation_result,heuristic_structural_mask)
+    learned_segmentation=bool(
+        segmentation_result
+        and segmentation_result.get("plausible")
+        and segmentation_consensus>=float(os.getenv("SEGMENTATION_MIN_WALL_CONSENSUS",".30") or ".30")
+    )
     if learned_segmentation:
         structural_mask=np.asarray(segmentation_result["masks"]["wall"],dtype=np.uint8)
         structural_mask=cv2.morphologyEx(structural_mask,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8))
