@@ -4,7 +4,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.vision_segmentation import learned_opening_detections,semantic_room_barrier
+from app.vision_segmentation import learned_opening_detections,semantic_room_barrier,wall_consensus_score
 
 
 def test_semantic_room_barrier_uses_learned_structure_not_text_holes():
@@ -38,3 +38,16 @@ def test_learned_openings_emit_boxes_for_connected_components():
     kinds={item["class"] for item in detections}
     assert kinds=={"door","window"}
     assert all(item["confidence"]>.8 for item in detections)
+
+
+def test_wall_consensus_rejects_unrelated_learned_geometry():
+    masks={name:np.zeros((100,100),dtype=np.uint8) for name in ("background","room","wall","door","window")}
+    masks["wall"][10:20,10:90]=255
+    result={"plausible":True,"masks":masks}
+    heuristic=np.zeros((100,100),dtype=np.uint8)
+    heuristic[70:80,10:90]=255
+    assert wall_consensus_score(result,heuristic)==0.0
+
+    heuristic[10:20,10:90]=255
+    heuristic[70:80,10:90]=0
+    assert wall_consensus_score(result,heuristic)>.99
