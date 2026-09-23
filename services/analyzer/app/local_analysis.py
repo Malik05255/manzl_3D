@@ -23,7 +23,7 @@ from .scale import estimate_scale_with_diagnostics
 from .symbols import extract_configured_onnx_detections,extract_symbol_detections,normalize_configured_symbols
 from .structural import extract_structural_wall_mask,filter_walls_by_structural_support,structural_mask_metrics
 from .topology import classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
-from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,quarantine_dimension_aligned_walls,rasterize_wall_mask
+from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,fuse_region_wall_candidates,quarantine_dimension_aligned_walls,rasterize_wall_mask
 
 
 def analyze_document_bytes_local(
@@ -52,7 +52,7 @@ def analyze_document_bytes_local(
     native_labels=[]
     engines=["opencv","canonical-wall-barrier"]
     if reconstruction_v3:
-        engines.extend(["structural-wall-mask-v2","clean-vector-reconstruction-v2","room-barrier-v3"])
+        engines.extend(["structural-wall-mask-v2","structural-region-vectorizer-v3","clean-vector-reconstruction-v2","room-barrier-v3"])
 
     if mime_type=="application/pdf":
         native_lines=extract_pdf_text_lines(data,page)
@@ -128,6 +128,8 @@ def analyze_document_bytes_local(
     # filters raster candidates against the conservative structural mask instead
     # of throwing away non-axis evidence before detection.
     walls,wall_mask=detect_walls(ink)
+    if structural_mask is not None and cv2.countNonZero(structural_mask)>0:
+        walls=fuse_region_wall_candidates(walls,structural_mask)
     if vector_lines:
         walls=enrich_walls_with_vector(walls,vector_lines)
         walls=add_vector_wall_candidates(walls,vector_lines,h,w,labels=labels)
