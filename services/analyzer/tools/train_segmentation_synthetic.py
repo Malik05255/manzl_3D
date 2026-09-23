@@ -186,7 +186,7 @@ def main():
         model,example,onnx_path,
         input_names=["image"],output_names=["logits"],
         opset_version=17,
-        dynamic_axes={"image":{0:"batch",2:"height",3:"width"},"logits":{0:"batch",2:"height",3:"width"}},
+        dynamo=False,
     )
     final=evaluate(model,val,torch.device("cpu"))
     meta={"classes":CLASSES,"inputSize":384,"syntheticValidationIoU":final,"training":"Manzil-owned procedural floorplan generator","version":"vision-segmentation-v1"}
