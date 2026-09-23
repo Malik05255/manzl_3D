@@ -13,7 +13,7 @@ def _estimate_wall_thickness(mask:np.ndarray)->float:
         return 4.0
     # Upper-middle percentile tracks the wall core without being dominated by
     # thin antialiased edges or rare oversized blobs.
-    half=float(np.percentile(values,72))
+    half=float(np.percentile(values,90))
     return max(2.0,min(48.0,half*2.0))
 
 
@@ -43,7 +43,7 @@ def build_room_barrier(wall_mask:np.ndarray)->np.ndarray:
 
     # Typical residential door openings are several wall-thicknesses wide.
     # Cap by page scale so atria/open-plan connections are not bridged.
-    bridge=int(round(max(17.0,min(short*.085,thickness*6.2))))
+    bridge=int(round(max(17.0,min(short*.16,thickness*9.5))))
     bridge=max(9,bridge|1)
 
     run=int(round(max(18.0,min(short*.12,thickness*4.0))))
