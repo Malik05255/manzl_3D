@@ -4,7 +4,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.vision_segmentation import learned_opening_detections,semantic_room_barrier,should_use_learned_rooms,wall_consensus_score
+from app.vision_segmentation import learned_opening_detections,semantic_room_barrier,should_use_learned_rooms,should_use_learned_walls,wall_consensus_score
 
 
 def test_semantic_room_barrier_uses_learned_structure_not_text_holes():
@@ -68,3 +68,21 @@ def test_learned_room_gate_only_rescues_failed_geometry_or_colored_label_match()
     assert not should_use_learned_rooms(
         [{}]*5,[{}]*10,labels,dominant_colored_plan=True
     )
+
+
+def test_learned_wall_takeover_requires_colored_plan_and_strong_agreement():
+    masks={name:np.zeros((100,100),dtype=np.uint8) for name in ("background","room","wall","door","window")}
+    masks["wall"][10:20,10:90]=255
+    result={
+        "plausible":True,
+        "masks":masks,
+        "classConfidence":{"wall":.91},
+    }
+    heuristic=np.zeros((100,100),dtype=np.uint8)
+    heuristic[10:20,10:90]=255
+    assert should_use_learned_walls(result,heuristic,dominant_colored_plan=True)
+    assert not should_use_learned_walls(result,heuristic,dominant_colored_plan=False)
+
+    shifted=np.zeros_like(heuristic)
+    shifted[60:70,10:90]=255
+    assert not should_use_learned_walls(result,shifted,dominant_colored_plan=True)

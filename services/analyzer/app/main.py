@@ -25,7 +25,7 @@ from .topology import canonicalize_plan,classify_wall_roles,filter_nonarchitectu
 from .semantic import normalize_edit_semantics
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,fuse_region_wall_candidates,quarantine_dimension_aligned_walls,rasterize_wall_mask
 from .validation import validate_plan
-from .vision_segmentation import infer_segmentation,semantic_room_barrier,should_use_learned_rooms,wall_consensus_score
+from .vision_segmentation import infer_segmentation,semantic_room_barrier,should_use_learned_rooms,should_use_learned_walls,wall_consensus_score
 
 app=FastAPI(title="Manzil H Analyzer",version="0.1.0")
 PIPELINE_VERSION=os.getenv("ANALYZER_PIPELINE_VERSION",app.version)
@@ -121,10 +121,18 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
         and float(segmentation_result.get("meanConfidence",0.0))
             >=float(os.getenv("SEGMENTATION_MIN_MEAN_CONFIDENCE",".60") or ".60")
     )
-    # Learned segmentation is evaluated as a candidate, while V3 remains the
-    # canonical wall geometry. This prevents synthetic-domain wall masks from
-    # degrading general construction drawings.
-    structural_mask=heuristic_structural_mask
+    dominant_colored_plan=has_dominant_structural_color(image)
+    use_learned_walls=should_use_learned_walls(
+        segmentation_result,heuristic_structural_mask,
+        dominant_colored_plan=dominant_colored_plan,
+        minimum_consensus=float(os.getenv("SEGMENTATION_COLORED_WALL_CONSENSUS",".70") or ".70"),
+        minimum_wall_confidence=float(os.getenv("SEGMENTATION_COLORED_WALL_CONFIDENCE",".58") or ".58"),
+    )
+    if use_learned_walls:
+        structural_mask=np.asarray(segmentation_result["masks"]["wall"],dtype=np.uint8)
+        structural_mask=cv2.morphologyEx(structural_mask,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8))
+    else:
+        structural_mask=heuristic_structural_mask
     structural_metrics=structural_mask_metrics(structural_mask) if structural_mask is not None else {}
 
     native_labels=[]
@@ -284,7 +292,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
         learned_rooms=detect_rooms(learned_barrier,labels,scale)
         use_learned_rooms=should_use_learned_rooms(
             fallback_rooms,learned_rooms,labels,
-            dominant_colored_plan=has_dominant_structural_color(image),
+            dominant_colored_plan=dominant_colored_plan,
         )
         if use_learned_rooms:
             rooms=learned_rooms
@@ -311,6 +319,8 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
         engines.append("vision-segmentation-candidate-v1")
         engines.append(f"segmentation-confidence:{float(segmentation_result.get('meanConfidence',0.0)):.3f}")
         engines.append(f"segmentation-wall-consensus:{segmentation_consensus:.3f}")
+        if use_learned_walls:
+            engines.append("vision-colored-wall-takeover-v1")
         if use_learned_rooms:
             engines.append("vision-room-rescue-v1")
     analysis={

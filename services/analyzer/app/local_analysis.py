@@ -25,7 +25,7 @@ from .symbols import extract_configured_onnx_detections,extract_symbol_detection
 from .structural import extract_structural_wall_mask,filter_walls_by_structural_support,has_dominant_structural_color,structural_mask_metrics
 from .topology import classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,fuse_region_wall_candidates,quarantine_dimension_aligned_walls,rasterize_wall_mask
-from .vision_segmentation import infer_segmentation,semantic_room_barrier,should_use_learned_rooms,wall_consensus_score
+from .vision_segmentation import infer_segmentation,semantic_room_barrier,should_use_learned_rooms,should_use_learned_walls,wall_consensus_score
 
 
 def analyze_document_bytes_local(
@@ -61,7 +61,18 @@ def analyze_document_bytes_local(
         and float(segmentation_result.get("meanConfidence",0.0))
             >=float(os.getenv("SEGMENTATION_MIN_MEAN_CONFIDENCE",".60") or ".60")
     )
-    structural_mask=heuristic_structural_mask
+    dominant_colored_plan=has_dominant_structural_color(image)
+    use_learned_walls=should_use_learned_walls(
+        segmentation_result,heuristic_structural_mask,
+        dominant_colored_plan=dominant_colored_plan,
+        minimum_consensus=float(os.getenv("SEGMENTATION_COLORED_WALL_CONSENSUS",".70") or ".70"),
+        minimum_wall_confidence=float(os.getenv("SEGMENTATION_COLORED_WALL_CONFIDENCE",".58") or ".58"),
+    )
+    if use_learned_walls:
+        structural_mask=np.asarray(segmentation_result["masks"]["wall"],dtype=np.uint8)
+        structural_mask=cv2.morphologyEx(structural_mask,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8))
+    else:
+        structural_mask=heuristic_structural_mask
     structural_metrics=structural_mask_metrics(structural_mask) if structural_mask is not None else {}
 
     vector_lines=[]
@@ -137,6 +148,8 @@ def analyze_document_bytes_local(
             symbols=[]
     if learned_segmentation:
         engines.append("vision-segmentation-candidate-v1")
+        if use_learned_walls:
+            engines.append("vision-colored-wall-takeover-v1")
     if symbols:
         engines.append("symbol-detector")
     if ai_detections:
@@ -221,7 +234,7 @@ def analyze_document_bytes_local(
         learned_rooms=detect_rooms(learned_barrier,labels,scale)
         use_learned_rooms=should_use_learned_rooms(
             fallback_rooms,learned_rooms,labels,
-            dominant_colored_plan=has_dominant_structural_color(image),
+            dominant_colored_plan=dominant_colored_plan,
         )
         if use_learned_rooms:
             rooms=learned_rooms
