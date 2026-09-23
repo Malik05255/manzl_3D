@@ -31,6 +31,10 @@ services:
       - key: SEGMENTATION_INPUT_SIZE
         value: "384"
       - key: SEGMENTATION_MIN_WALL_CONSENSUS
-        value: "0.30"
+        value: "0.60"
+      - key: SEGMENTATION_MIN_MEAN_CONFIDENCE
+        value: "0.60"
+      - key: SEGMENTATION_ALLOW_MONOCHROME
+        value: "0"
       - key: ANALYZER_PIPELINE_VERSION
         value: vision-segmentation-v1
