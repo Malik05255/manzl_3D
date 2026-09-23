@@ -129,13 +129,30 @@ def learned_opening_detections(result:dict|None)->list[dict]:
 
 
 def semantic_room_barrier(result:dict|None)->np.ndarray|None:
-    """Convert learned room pixels into a barrier understood by detect_rooms."""
+    """Build a structural barrier from learned wall/door/window classes.
+
+    The semantic room class is intentionally *not* inverted into a barrier:
+    labels and furniture can create small background holes inside an otherwise
+    correct room prediction, and adjacent rooms can still touch through a weak
+    door prediction. Instead the learned wall mask is primary geometry, while
+    learned door/window pixels seal their host openings for room-instance
+    separation. The caller may run build_room_barrier() afterwards to close any
+    remaining door-sized gap.
+    """
     if not result or not result.get("plausible"):
         return None
-    room=np.asarray(result["masks"]["room"])
-    if room.ndim!=2:
+    masks=result.get("masks") or {}
+    wall=np.asarray(masks.get("wall"))
+    door=np.asarray(masks.get("door"))
+    window=np.asarray(masks.get("window"))
+    if wall.ndim!=2 or door.shape!=wall.shape or window.shape!=wall.shape:
         return None
-    # Room pixels are free space (0); every other learned class is a barrier.
-    barrier=np.where(room>0,0,255).astype(np.uint8)
-    barrier=cv2.morphologyEx(barrier,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8))
-    return barrier
+    barrier=cv2.bitwise_or(wall,door)
+    barrier=cv2.bitwise_or(barrier,window)
+    # Slightly expand learned openings so a sparse door/window class actually
+    # reaches the adjacent wall band and separates room components.
+    opening=cv2.bitwise_or(door,window)
+    if cv2.countNonZero(opening)>0:
+        expanded=cv2.dilate(opening,np.ones((5,5),np.uint8),iterations=1)
+        barrier=cv2.bitwise_or(barrier,expanded)
+    return cv2.morphologyEx(barrier,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8))
