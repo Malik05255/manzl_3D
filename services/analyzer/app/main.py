@@ -16,13 +16,13 @@ from .models import CanonicalizeRequest,EditRequest,FloorPlan,ProposalResponse,R
 from .ocr import _merge_labels,classify_text,extract_ocr_dimension_labels,extract_ocr_labels,native_pdf_text_is_sufficient
 from .openings import detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts
 from .pipeline import assemble_plan
-from .rooms import detect_rooms
+from .rooms import build_room_barrier,detect_rooms
 from .scale import estimate_scale_with_diagnostics
 from .symbols import extract_local_onnx_detections,extract_symbol_detections,normalize_configured_symbols
-from .structural import extract_structural_wall_mask,filter_walls_by_structural_support,structural_mask_metrics
+from .structural import extract_structural_wall_mask,filter_walls_by_structural_support,has_dominant_structural_color,structural_mask_metrics
 from .topology import canonicalize_plan,classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
 from .semantic import normalize_edit_semantics
-from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,quarantine_dimension_aligned_walls,rasterize_wall_mask
+from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,fuse_region_wall_candidates,quarantine_dimension_aligned_walls,rasterize_wall_mask
 from .validation import validate_plan
 
 app=FastAPI(title="Manzil H Analyzer",version="0.1.0")
@@ -73,10 +73,12 @@ async def upload_preview(url:HttpUrl|None,image):
 @app.get("/health")
 async def health():
     reconstruction_v2=os.getenv("ANALYZER_RECONSTRUCTION_V2","1").strip().lower() not in {"0","false","off","no"}
+    reconstruction_v3=os.getenv("ANALYZER_RECONSTRUCTION_V3","1").strip().lower() not in {"0","false","off","no"}
     return {
         "ok":True,
         "pipelineVersion":PIPELINE_VERSION,
-        "reconstructionV2":reconstruction_v2,
+        "reconstructionV2":reconstruction_v2 or reconstruction_v3,
+        "reconstructionV3":reconstruction_v3,
     }
 
 @app.post("/v1/analyze",response_model=FloorPlan)
@@ -100,7 +102,9 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     await upload_preview(req.preview_url,image)
     _,ink=preprocess(image)
     reconstruction_v2=os.getenv("ANALYZER_RECONSTRUCTION_V2","1").strip().lower() not in {"0","false","off","no"}
-    structural_mask=extract_structural_wall_mask(image,ink) if reconstruction_v2 else None
+    reconstruction_v3=os.getenv("ANALYZER_RECONSTRUCTION_V3","1").strip().lower() not in {"0","false","off","no"}
+    reconstruction_enabled=reconstruction_v2 or reconstruction_v3
+    structural_mask=extract_structural_wall_mask(image,ink) if reconstruction_enabled else None
     structural_metrics=structural_mask_metrics(structural_mask) if structural_mask is not None else {}
 
     native_labels=[]
@@ -173,12 +177,18 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
         labels=_merge_labels(labels,native_labels,distance)
 
     await progress(req.callback_url,req.project_id,"geometry",58,"استخراج الجدران والهندسة")
-    wall_input=(
-        structural_mask
-        if reconstruction_v2 and structural_mask is not None and cv2.countNonZero(structural_mask)>0
-        else ink
+    # Detect on the original ink so diagonal/irregular walls survive. V3 then
+    # filters raster candidates against the conservative structural mask instead
+    # of throwing away non-axis evidence before detection.
+    walls,wall_mask=detect_walls(ink)
+    use_region_vectorizer=(
+        structural_mask is not None
+        and cv2.countNonZero(structural_mask)>0
+        and reconstruction_v3
+        and has_dominant_structural_color(image)
     )
-    walls,wall_mask=detect_walls(wall_input)
+    if use_region_vectorizer:
+        walls=fuse_region_wall_candidates(walls,structural_mask)
     vector_lines=[]
     if req.mime_type=="application/pdf":
         try:
@@ -237,13 +247,14 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     ]
     room_barrier_mask=rasterize_wall_mask(
         walls,h,w,
-        base_mask=structural_mask if reconstruction_v2 and structural_mask is not None else None,
+        base_mask=structural_mask if reconstruction_enabled and structural_mask is not None else None,
         min_pdf_vector_confidence=.70,
         excluded_wall_ids=quarantined_wall_ids,
     )
 
-    await progress(req.callback_url,req.project_id,"rooms",78,"فهم الغرف والعلاقات")
-    rooms=detect_rooms(room_barrier_mask,labels,scale)
+    await progress(req.callback_url,req.project_id,"rooms",78,"إعادة بناء الغرف وإغلاق فتحات الأبواب للتحليل")
+    segmentation_barrier=build_room_barrier(room_barrier_mask) if reconstruction_v3 else room_barrier_mask
+    rooms=detect_rooms(segmentation_barrier,labels,scale)
     link_room_boundaries(rooms,topology_walls)
     rooms=filter_nonarchitectural_enclosures(rooms,topology_walls,w,h)
     recalibrate_extracted_room_confidence(rooms,topology_walls,w,h)
@@ -251,8 +262,12 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
 
     await progress(req.callback_url,req.project_id,"validation",93,"التحقق من جودة النتيجة")
     engines=["opencv","canonical-wall-barrier"]
-    if reconstruction_v2:
+    if reconstruction_enabled:
         engines.extend(["structural-wall-mask-v2","clean-vector-reconstruction-v2"])
+    if reconstruction_v3:
+        engines.append("room-barrier-v3")
+        if use_region_vectorizer:
+            engines.append("structural-region-vectorizer-v3")
     if local_labels: engines.append("tesseract-dimensions" if use_native_fastpath else "tesseract")
     if used_cloud_ocr: engines.append("google-vision")
     if used_pdf_text: engines.append("pdf-text")
