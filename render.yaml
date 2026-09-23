@@ -22,7 +22,9 @@ services:
         value: "1.55"
       - key: ANALYZER_RECONSTRUCTION_V2
         value: "1"
+      - key: ANALYZER_RECONSTRUCTION_V3
+        value: "1"
       - key: OCR_MULTISCALE
         value: "1"
       - key: ANALYZER_PIPELINE_VERSION
-        value: reconstruction-v2
+        value: reconstruction-v3
