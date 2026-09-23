@@ -132,7 +132,7 @@ def learned_opening_detections(result:dict|None)->list[dict]:
                 continue
             region=confidence[labels==index]
             score=float(np.mean(region)) if region.size else 0.0
-            if score<.38:
+            if score<.78:
                 continue
             detections.append({
                 "class":name,
