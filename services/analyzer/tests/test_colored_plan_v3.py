@@ -4,7 +4,7 @@ import numpy as np
 from app.document import preprocess
 from app.rooms import build_room_barrier,detect_rooms
 from app.structural import extract_structural_wall_mask,filter_walls_by_structural_support
-from app.walls import detect_walls,rasterize_wall_mask
+from app.walls import detect_walls,fuse_region_wall_candidates,rasterize_wall_mask
 
 
 def _colored_residential_plan():
@@ -45,8 +45,10 @@ def test_colored_plan_v3_reconstructs_rooms_without_dimension_pollution():
     assert cv2.countNonZero(structural[34:50,120:800])<500
 
     walls,_=detect_walls(ink)
+    walls=fuse_region_wall_candidates(walls,structural)
     accepted,_=filter_walls_by_structural_support(walls,structural,minimum_support=.34)
-    assert len(accepted)>=4
+    assert len(accepted)>=5
+    assert any(wall.get("provenance") in {"structural-mask","mixed"} for wall in accepted)
 
     barrier=rasterize_wall_mask(
         accepted,image.shape[0],image.shape[1],
