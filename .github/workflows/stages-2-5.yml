@@ -2,7 +2,7 @@ name: Stages 2-5 Validation
 
 on:
   push:
-    branches: [feat/cloud-floorplan-editor, feat/reconstruction-v3]
+    branches: [feat/cloud-floorplan-editor, feat/reconstruction-v3, feat/vision-segmentation-v1]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -266,10 +266,18 @@ jobs:
               env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
           PY
 
+      - name: Download learned segmentation model
+        run: |
+          mkdir -p benchmark-model
+          curl -fL --retry 3             -o benchmark-model/manzil-segmentation-v1.onnx             https://github.com/Malik05255/manzl_3D/releases/download/segmentation-v1/manzil-segmentation-v1.onnx
+          echo "SEGMENTATION_ONNX_MODEL=$(pwd)/benchmark-model/manzil-segmentation-v1.onnx" >> "$GITHUB_ENV"
+          echo "SEGMENTATION_INPUT_SIZE=384" >> "$GITHUB_ENV"
+
       - name: Run AEC shard
         working-directory: services/analyzer
         env:
           PYTHONPATH: .
+          SEGMENTATION_MIN_WALL_CONSENSUS: "0.00"
         run: |
           OFFSET=${{ matrix.shard }}
           mkdir -p "../../benchmark-output/shard-${{ matrix.shard }}"

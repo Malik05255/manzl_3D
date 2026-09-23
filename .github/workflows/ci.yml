@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, feat/cloud-floorplan-editor, feat/cloudflare-production-e2e, feat/analyzer-v2-apk, feat/reconstruction-v3]
+    branches: [main, feat/cloud-floorplan-editor, feat/cloudflare-production-e2e, feat/analyzer-v2-apk, feat/reconstruction-v3, feat/vision-segmentation-v1]
   pull_request:
 
 jobs:

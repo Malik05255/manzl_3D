@@ -126,20 +126,24 @@ jobs:
             fi
           fi
 
-      - name: Verify external Analyzer V3
+      - name: Verify external Vision Analyzer
         run: |
-          echo "Checking free external Analyzer V3 at $ANALYZER_URL"
+          echo "Checking learned Vision Analyzer at $ANALYZER_URL"
           curl --fail --show-error --silent --retry 60 --retry-delay 10 --retry-all-errors             "$ANALYZER_URL/health" -o /tmp/analyzer-health.json
           cat /tmp/analyzer-health.json
           python - <<'PY'
           import json
           payload=json.load(open("/tmp/analyzer-health.json"))
           assert payload.get("ok") is True, payload
-          assert payload.get("reconstructionV2") is True, (
-              "Render is healthy but still serving the old analyzer build: "
+          assert payload.get("reconstructionV3") is True, (
+              "Render is healthy but V3 is not active: "+repr(payload)
+          )
+          assert payload.get("visionSegmentation") is True, (
+              "Render is healthy but the learned segmentation model is not loaded: "
               +repr(payload)
           )
-          print("Analyzer V2 readiness confirmed.")
+          assert payload.get("pipelineVersion")=="vision-segmentation-v1", payload
+          print("Vision Segmentation V1 readiness confirmed.")
           PY
 
       - name: Generate production API Worker config

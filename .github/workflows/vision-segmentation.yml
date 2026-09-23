@@ -1,0 +1,105 @@
+name: Vision Segmentation Model
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/vision-segmentation-v1]
+    paths:
+      - "services/analyzer/app/vision_segmentation.py"
+      - "services/analyzer/tools/train_segmentation_synthetic.py"
+      - "services/analyzer/tests/test_vision_segmentation.py"
+      - ".github/workflows/vision-segmentation.yml"
+
+jobs:
+  train-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install training and inference dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install onnx==1.17.0
+          pip install -r services/analyzer/requirements.txt
+
+      - name: Train owned synthetic segmentation model
+        working-directory: services/analyzer
+        run: |
+          python tools/train_segmentation_synthetic.py \
+            --output ../../segmentation-model \
+            --epochs 4 \
+            --train-count 1400 \
+            --val-count 240 \
+            --size 256
+
+      - name: Verify ONNX through production OpenCV path
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+          SEGMENTATION_ONNX_MODEL: ../../segmentation-model/manzil-segmentation-v1.onnx
+          SEGMENTATION_INPUT_SIZE: "384"
+        run: |
+          python - <<'PY'
+          import json
+          import cv2
+          import numpy as np
+          from app.vision_segmentation import infer_segmentation,learned_opening_detections
+
+          image=np.full((640,900,3),255,dtype=np.uint8)
+          cv2.rectangle(image,(80,80),(820,560),(210,100,40),18)
+          cv2.line(image,(450,80),(450,275),(210,100,40),18)
+          cv2.line(image,(450,365),(450,560),(210,100,40),18)
+          result=infer_segmentation(image)
+          assert result is not None
+          assert result["plausible"],result
+          assert result["wallRatio"]>.005
+          print(json.dumps({
+              "meanConfidence":result["meanConfidence"],
+              "wallRatio":result["wallRatio"],
+              "roomRatio":result["roomRatio"],
+              "openings":len(learned_opening_detections(result)),
+          },indent=2))
+          PY
+
+      - name: Enforce synthetic validation floor
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          meta=json.loads(Path("segmentation-model/metadata.json").read_text())
+          iou=meta["syntheticValidationIoU"]
+          print(iou)
+          assert iou["room"] >= 0.86, iou
+          assert iou["wall"] >= 0.72, iou
+          assert iou["door"] >= 0.35, iou
+          assert iou["window"] >= 0.35, iou
+          PY
+
+      - name: Publish public model release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view segmentation-v1 >/dev/null 2>&1; then
+            gh release upload segmentation-v1               segmentation-model/manzil-segmentation-v1.onnx               segmentation-model/metadata.json               --clobber
+          else
+            gh release create segmentation-v1               segmentation-model/manzil-segmentation-v1.onnx               segmentation-model/metadata.json               --title "Manzil H Vision Segmentation V1"               --notes "Owned synthetic-trained wall/room/door/window segmentation model. Production use remains gated by benchmark validation."
+          fi
+
+      - name: Upload learned model
+        uses: actions/upload-artifact@v4
+        with:
+          name: manzil-segmentation-v1-${{ github.sha }}
+          path: |
+            segmentation-model/manzil-segmentation-v1.onnx
+            segmentation-model/metadata.json
+          if-no-files-found: error
+          retention-days: 14
