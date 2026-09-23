@@ -143,6 +143,38 @@ def learned_opening_detections(result:dict|None)->list[dict]:
     return detections
 
 
+def should_use_learned_rooms(
+    fallback_rooms:list[dict],
+    learned_rooms:list[dict],
+    labels:list[dict],
+    *,
+    dominant_colored_plan:bool=False,
+)->bool:
+    """Conservative production gate for learned room instances.
+
+    The learned model is a rescue path, not a blanket replacement. On general
+    construction drawings V3 remains stronger; on simple colored residential
+    plans the learned segmentation can recover rooms that geometry misses.
+    """
+    fallback_count=len(fallback_rooms)
+    learned_count=len(learned_rooms)
+    if learned_count<2:
+        return False
+    if fallback_count<=1:
+        return True
+
+    room_label_count=sum(
+        1 for item in labels
+        if str(item.get("kind",""))=="room_name"
+        and float(item.get("confidence",0.0))>=.45
+    )
+    if dominant_colored_plan and room_label_count>=2:
+        fallback_error=abs(fallback_count-room_label_count)
+        learned_error=abs(learned_count-room_label_count)
+        return learned_error+1<fallback_error
+    return False
+
+
 def semantic_room_barrier(result:dict|None)->np.ndarray|None:
     """Build a structural barrier from learned wall/door/window classes.
 
