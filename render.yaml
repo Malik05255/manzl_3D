@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: manzil-h-analyzer-malik05255
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./services/analyzer/Dockerfile
+    dockerContext: ./services/analyzer
+    healthCheckPath: /health
+    envVars:
+      - key: INTERNAL_TOKEN
+        sync: false
+      - key: OCR_LANG
+        value: ara+eng
+      - key: OCR_ROTATED_DIMENSIONS
+        value: "1"
+      - key: PDF_NATIVE_TEXT_FASTPATH
+        value: "1"
+      - key: PDF_PAGE_SCAN_LIMIT
+        value: "12"
+      - key: PDF_RENDER_SCALE
+        value: "1.55"
+      - key: ANALYZER_RECONSTRUCTION_V2
+        value: "1"
+      - key: ANALYZER_RECONSTRUCTION_V3
+        value: "1"
+      - key: OCR_MULTISCALE
+        value: "1"
+      - key: SEGMENTATION_ONNX_MODEL
+        value: /app/models/manzil-segmentation-v1.onnx
+      - key: SEGMENTATION_INPUT_SIZE
+        value: "384"
+      - key: SEGMENTATION_MIN_WALL_CONSENSUS
+        value: "0.60"
+      - key: SEGMENTATION_MIN_MEAN_CONFIDENCE
+        value: "0.60"
+      - key: SEGMENTATION_ALLOW_MONOCHROME
+        value: "0"
+      - key: ANALYZER_PIPELINE_VERSION
+        value: vision-segmentation-v1

@@ -1,0 +1,548 @@
+name: Stages 2-5 Validation
+
+on:
+  push:
+    branches: [feat/cloud-floorplan-editor, feat/reconstruction-v3, feat/vision-segmentation-v1]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: stages-2-5-${{ github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  prepare-model:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || (github.head_ref == 'feat/cloud-floorplan-editor' || github.head_ref == 'feat/reconstruction-v3')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout Manzil H
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+
+      - name: Install analyzer and ONNX export dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt
+          pip install "ultralytics==8.3.249" "huggingface_hub>=0.34,<1" "onnx>=1.17,<2"
+
+      - name: Export real FloorCAD checkpoint to ONNX
+        env:
+          HF_REPO: mudasir13cs/floorcad-yolov8n-detect
+          HF_FILE: floorcad-yolov8n-detect.pt
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, shutil
+          from pathlib import Path
+          from huggingface_hub import hf_hub_download
+          from ultralytics import YOLO
+
+          source=hf_hub_download(os.environ["HF_REPO"],os.environ["HF_FILE"])
+          model=YOLO(source)
+          exported=model.export(
+              format="onnx",
+              imgsz=640,
+              opset=12,
+              simplify=False,
+              dynamic=False,
+          )
+          target_dir=Path("benchmark-model")
+          target_dir.mkdir(exist_ok=True)
+          target=target_dir/"floorcad-symbols.onnx"
+          shutil.copy2(exported,target)
+          classes=[str(model.names[index]) for index in sorted(model.names)]
+          info={
+              "sourceRepo":os.environ["HF_REPO"],
+              "sourceFile":os.environ["HF_FILE"],
+              "sourceLicense":"AGPL-3.0",
+              "classes":classes,
+              "onnxSha256":hashlib.sha256(target.read_bytes()).hexdigest(),
+              "onnxBytes":target.stat().st_size,
+          }
+          (target_dir/"symbol-model-info.json").write_text(
+              json.dumps(info,indent=2),encoding="utf-8"
+          )
+          print(json.dumps(info,indent=2))
+          PY
+
+      - name: Restore cached secondary fixture detector
+        id: secondary-cache
+        uses: actions/cache@v4
+        with:
+          path: secondary-model-cache
+          key: secondary-fixtures-v1-${{ hashFiles('services/analyzer/tools/generate_synthetic_symbol_dataset.py') }}
+
+      - name: Train synthetic secondary fixture detector
+        if: steps.secondary-cache.outputs.cache-hit != 'true'
+        run: |
+          python services/analyzer/tools/generate_synthetic_symbol_dataset.py \
+            --output synthetic-symbols \
+            --train 420 \
+            --val 84 \
+            --size 320 \
+            --seed 240922
+          python - <<'PY'
+          import hashlib, json, shutil
+          from pathlib import Path
+          from ultralytics import YOLO
+
+          model=YOLO("yolov8n.pt")
+          result=model.train(
+              data="synthetic-symbols/data.yaml",
+              epochs=3,
+              imgsz=320,
+              batch=32,
+              device="cpu",
+              workers=2,
+              cache=False,
+              patience=2,
+              project="secondary-model-training",
+              name="objects",
+              exist_ok=True,
+              verbose=False,
+              plots=False,
+              seed=240922,
+              freeze=10,
+          )
+          best=Path(result.save_dir)/"weights"/"best.pt"
+          trained=YOLO(str(best))
+          exported=trained.export(
+              format="onnx",
+              imgsz=640,
+              opset=12,
+              simplify=False,
+              dynamic=False,
+          )
+          target_dir=Path("secondary-model-cache")
+          target_dir.mkdir(exist_ok=True)
+          target=target_dir/"secondary-fixtures.onnx"
+          shutil.copy2(exported,target)
+          classes=[str(trained.names[index]) for index in sorted(trained.names)]
+          info={
+              "source":"deterministic synthetic architectural symbols",
+              "baseModel":"yolov8n.pt",
+              "sourceLicense":"AGPL-3.0",
+              "classes":classes,
+              "rawMinConfidence":0.003,
+              "allowedClasses":["toilet","cooktop"],
+              "classThresholds":{"toilet":0.003,"cooktop":0.010},
+              "tileTrigger":640,
+              "tileSize":640,
+              "tileOverlap":0.25,
+              "nmsIou":0.45,
+              "onnxSha256":hashlib.sha256(target.read_bytes()).hexdigest(),
+              "onnxBytes":target.stat().st_size,
+          }
+          (target_dir/"secondary-model-info.json").write_text(
+              json.dumps(info,indent=2),encoding="utf-8"
+          )
+          print(json.dumps(info,indent=2))
+          PY
+
+      - name: Bundle secondary fixture detector
+        run: |
+          cp secondary-model-cache/secondary-fixtures.onnx benchmark-model/
+          cp secondary-model-cache/secondary-model-info.json benchmark-model/
+
+      - name: Verify ONNX with production OpenCV decoder
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+          SYMBOL_ONNX_MODEL: ../../benchmark-model/floorcad-symbols.onnx
+          SYMBOL_SECONDARY_ONNX_MODEL: ../../benchmark-model/secondary-fixtures.onnx
+        run: |
+          export SYMBOL_ONNX_CLASSES="$(python - <<'PY'
+          import json
+          print(json.dumps(json.load(open("../../benchmark-model/symbol-model-info.json"))["classes"],separators=(",",":")))
+          PY
+          )"
+          export SYMBOL_SECONDARY_ONNX_CLASSES="$(python - <<'PY'
+          import json
+          print(json.dumps(json.load(open("../../benchmark-model/secondary-model-info.json"))["classes"],separators=(",",":")))
+          PY
+          )"
+          export SYMBOL_SECONDARY_ONNX_RAW_MIN_CONFIDENCE="0.003"
+          export SYMBOL_SECONDARY_ONNX_ALLOWED_CLASSES="toilet,cooktop"
+          export SYMBOL_SECONDARY_ONNX_CLASS_THRESHOLDS='{"toilet":0.003,"cooktop":0.010}'
+          export SYMBOL_SECONDARY_ONNX_TILE_TRIGGER="640"
+          export SYMBOL_SECONDARY_ONNX_TILE_SIZE="640"
+          export SYMBOL_SECONDARY_ONNX_TILE_OVERLAP="0.25"
+          export SYMBOL_SECONDARY_ONNX_NMS_IOU="0.45"
+          python - <<'PY'
+          import cv2, numpy as np
+          from app.symbols import extract_local_onnx_detections,extract_secondary_onnx_detections
+          primary=cv2.dnn.readNetFromONNX("../../benchmark-model/floorcad-symbols.onnx")
+          secondary=cv2.dnn.readNetFromONNX("../../benchmark-model/secondary-fixtures.onnx")
+          assert primary is not None and secondary is not None
+          image=np.full((640,640,3),255,dtype=np.uint8)
+          primary_result=extract_local_onnx_detections(image)
+          secondary_result=extract_secondary_onnx_detections(image)
+          assert isinstance(primary_result,list)
+          assert isinstance(secondary_result,list)
+          print(
+              "ONNX production decoder smoke passed; blank detections:",
+              len(primary_result),len(secondary_result),
+          )
+          PY
+
+      - name: Upload ONNX model
+        uses: actions/upload-artifact@v4
+        with:
+          name: floorcad-onnx-${{ github.sha }}
+          path: benchmark-model/*
+          if-no-files-found: error
+          retention-days: 2
+
+  benchmark-shard:
+    needs: prepare-model
+    runs-on: ubuntu-latest
+    # sheet_15 requires ~23 minutes on the hosted CPU runner and sheet_10
+    # exceeded the previous 35-minute cap. Keep per-sheet isolation, but allow
+    # enough headroom to produce a complete AEC-15 score while profiling work
+    # targets the underlying bottleneck.
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+    steps:
+      - name: Checkout Manzil H
+        uses: actions/checkout@v4
+
+      - name: Checkout AEC-Geometric-Bench
+        uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+
+      - name: Install OCR, analyzer, and scorer dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely
+
+      - name: Download ONNX model
+        uses: actions/download-artifact@v4
+        with:
+          name: floorcad-onnx-${{ github.sha }}
+          path: benchmark-model
+
+      - name: Configure production ONNX detector
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          info=json.loads(Path("benchmark-model/symbol-model-info.json").read_text())
+          secondary=json.loads(Path("benchmark-model/secondary-model-info.json").read_text())
+          with Path(os.environ["GITHUB_ENV"]).open("a",encoding="utf-8") as env:
+              env.write("SYMBOL_ONNX_MODEL="+str(Path("benchmark-model/floorcad-symbols.onnx").resolve())+"\n")
+              env.write("SYMBOL_ONNX_CLASSES="+json.dumps(info["classes"],separators=(",",":"))+"\n")
+              env.write("SYMBOL_MIN_CONFIDENCE=0.55\n")
+              env.write("SYMBOL_SINK_MIN_CONFIDENCE=0.10\n")
+              env.write("SYMBOL_SECONDARY_ONNX_MODEL="+str(Path("benchmark-model/secondary-fixtures.onnx").resolve())+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_CLASSES="+json.dumps(secondary["classes"],separators=(",",":"))+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_RAW_MIN_CONFIDENCE="+str(secondary["rawMinConfidence"])+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_ALLOWED_CLASSES="+",".join(secondary["allowedClasses"])+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_CLASS_THRESHOLDS="+json.dumps(secondary["classThresholds"],separators=(",",":"))+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_TILE_TRIGGER="+str(secondary["tileTrigger"])+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_TILE_SIZE="+str(secondary["tileSize"])+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_TILE_OVERLAP="+str(secondary["tileOverlap"])+"\n")
+              env.write("SYMBOL_SECONDARY_ONNX_NMS_IOU="+str(secondary["nmsIou"])+"\n")
+              env.write("PDF_NATIVE_TEXT_FASTPATH=1\n")
+          PY
+
+      - name: Download learned segmentation model
+        run: |
+          mkdir -p benchmark-model
+          curl -fL --retry 3             -o benchmark-model/manzil-segmentation-v1.onnx             https://github.com/Malik05255/manzl_3D/releases/download/segmentation-v1/manzil-segmentation-v1.onnx
+          echo "SEGMENTATION_ONNX_MODEL=$(pwd)/benchmark-model/manzil-segmentation-v1.onnx" >> "$GITHUB_ENV"
+          echo "SEGMENTATION_INPUT_SIZE=384" >> "$GITHUB_ENV"
+
+      - name: Run AEC shard
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+          SEGMENTATION_MIN_WALL_CONSENSUS: "0.00"
+        run: |
+          OFFSET=${{ matrix.shard }}
+          mkdir -p "../../benchmark-output/shard-${{ matrix.shard }}"
+          echo "Running AEC-15 sheet offset $OFFSET (1 sheet per isolated job)"
+          python -m app.aec_benchmark \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --output "../../benchmark-output/shard-${{ matrix.shard }}" \
+            --offset "$OFFSET" \
+            --limit 1
+
+      - name: Upload shard predictions
+        uses: actions/upload-artifact@v4
+        with:
+          name: aec-shard-${{ matrix.shard }}-${{ github.sha }}
+          path: |
+            benchmark-output/shard-${{ matrix.shard }}/*.json
+            benchmark-output/shard-${{ matrix.shard }}/_canonical/*.json
+            benchmark-output/shard-${{ matrix.shard }}/_debug/*.png
+            benchmark-output/shard-${{ matrix.shard }}/_timings/*.json
+          if-no-files-found: error
+          retention-days: 2
+
+  benchmark-score:
+    if: always()
+    needs: benchmark-shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Manzil H
+        uses: actions/checkout@v4
+
+      - name: Checkout AEC-Geometric-Bench
+        uses: actions/checkout@v4
+        with:
+          repository: KamaiEnterprises/aec-geometric-bench
+          ref: main
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+
+      - name: Install scorer dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely
+
+      - name: Download all shard predictions
+        uses: actions/download-artifact@v4
+        with:
+          pattern: aec-shard-*-${{ github.sha }}
+          path: benchmark-output/aec15/predictions
+          merge-multiple: true
+
+      - name: Download model metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: floorcad-onnx-${{ github.sha }}
+          path: benchmark-output/model
+
+      - name: Score combined AEC-15 predictions
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from app.aec_benchmark import run_official_scorer
+
+          root=Path("../..")
+          predictions=root/"benchmark-output/aec15/predictions"
+          dataset=root/"external/aec-geometric-bench/dataset"
+          scorer=root/"external/aec-geometric-bench/scoring/score.py"
+          manifest=json.loads((dataset/"manifest.json").read_text(encoding="utf-8"))
+          expected=[str(item["sheet"]) for item in manifest.get("sheets",[])[:15]]
+          selected=sorted(path.stem for path in predictions.glob("sheet_*.json"))
+          missing=sorted(set(expected)-set(selected))
+          target=root/"benchmark-output/aec15"
+          target.mkdir(parents=True,exist_ok=True)
+          if not selected:
+              (target/"score.txt").write_text(
+                  "No AEC prediction sheets were produced.\n",encoding="utf-8"
+              )
+              raise SystemExit("No AEC prediction sheets were produced")
+          code,output,report=run_official_scorer(
+              scorer,predictions,dataset,
+              sheet_names=selected,
+              include_per_sheet=True,
+          )
+          (target/"score.txt").write_text(output,encoding="utf-8")
+          print(output,end="" if output.endswith("\n") else "\n")
+          if report is not None:
+              report["expectedSheets"]=expected
+              report["missingSheets"]=missing
+              report["complete"]=not missing and len(selected)==len(expected)
+              timing_dir=predictions/"_timings"
+              performance={}
+              if timing_dir.exists():
+                  for timing_file in sorted(timing_dir.glob("*.json")):
+                      try:
+                          timing=json.loads(timing_file.read_text(encoding="utf-8"))
+                      except Exception:
+                          continue
+                      sheet=str(timing.get("sheet") or timing_file.stem)
+                      performance[sheet]=timing
+              report["performance"]=performance
+              if performance:
+                  totals=[float(item.get("totalSeconds",0)) for item in performance.values()]
+                  analyses=[float(item.get("analysisSeconds",0)) for item in performance.values()]
+                  report["performanceSummary"]={
+                      "sheetCount":len(performance),
+                      "totalSeconds":round(sum(totals),4),
+                      "meanTotalSeconds":round(sum(totals)/len(totals),4),
+                      "maxTotalSeconds":round(max(totals),4),
+                      "meanAnalysisSeconds":round(sum(analyses)/len(analyses),4),
+                      "slowestSheet":max(
+                          performance,
+                          key=lambda name:float(performance[name].get("totalSeconds",0)),
+                      ),
+                  }
+              (target/"report.json").write_text(
+                  json.dumps(report,ensure_ascii=False,indent=2),
+                  encoding="utf-8",
+              )
+          if code:
+              raise SystemExit(code)
+          if missing:
+              raise SystemExit(
+                  f"Partial AEC-15 benchmark: missing {len(missing)} sheet(s): {missing}"
+              )
+          PY
+
+      - name: Publish AEC summary
+        if: always()
+        run: |
+          if [ -f benchmark-output/aec15/report.json ]; then
+            python - <<'PY'
+          import json, os
+          from pathlib import Path
+          report=json.loads(Path("benchmark-output/aec15/report.json").read_text())
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write("## AEC-15 real drawing benchmark\n\n")
+              for key in ("objectMicro","wallPixel","areaPixel","areaInstance"):
+                  item=report.get(key,{})
+                  out.write(f"- {key}: P {item.get('precision',0):.3f} / R {item.get('recall',0):.3f} / F1 {item.get('f1',0):.3f}\n")
+              out.write(f"- macroF1: {report.get('macroF1',0):.3f}\n")
+              missing=report.get("missingSheets",[])
+              if missing:
+                  out.write(f"- incomplete: missing {len(missing)} sheet(s): {', '.join(missing)}\n")
+              else:
+                  out.write("- complete: all expected sheets scored\n")
+              classes=report.get("classes",{})
+              if classes:
+                  out.write("\n### Object classes\n\n")
+                  out.write("| Class | TP | FP | FN | P | R | F1 |\n")
+                  out.write("|---|---:|---:|---:|---:|---:|---:|\n")
+                  for name,item in classes.items():
+                      out.write(
+                          f"| {name} | {item.get('tp',0)} | {item.get('fp',0)} | "
+                          f"{item.get('fn',0)} | {item.get('precision',0):.3f} | "
+                          f"{item.get('recall',0):.3f} | {item.get('f1',0):.3f} |\n"
+                      )
+              sheets=report.get("sheets",{})
+              if sheets:
+                  out.write("\n### Per-sheet diagnostics\n\n")
+                  out.write("| Sheet | Objects F1 | Wall F1 | Area px F1 | Area inst F1 | Macro F1 |\n")
+                  out.write("|---|---:|---:|---:|---:|---:|\n")
+                  for name,item in sheets.items():
+                      out.write(
+                          f"| {name} | {item.get('objectMicro',{}).get('f1',0):.3f} | "
+                          f"{item.get('wallPixel',{}).get('f1',0):.3f} | "
+                          f"{item.get('areaPixel',{}).get('f1',0):.3f} | "
+                          f"{item.get('areaInstance',{}).get('f1',0):.3f} | "
+                          f"{item.get('macroF1',0):.3f} |\n"
+                      )
+
+              timing_dir=Path("benchmark-output/aec15/predictions/_timings")
+              timings=[]
+              if timing_dir.exists():
+                  for timing_file in timing_dir.glob("*.json"):
+                      try:
+                          item=json.loads(timing_file.read_text(encoding="utf-8"))
+                      except Exception:
+                          continue
+                      timings.append(item)
+              if timings:
+                  timings.sort(key=lambda item:float(item.get("totalSeconds",0)),reverse=True)
+                  out.write("\n### Slowest extraction sheets\n\n")
+                  out.write("| Sheet | Analysis s | Render s | Total s | Walls | Rooms | Doors | Windows | Symbols |\n")
+                  out.write("|---|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+                  for item in timings[:10]:
+                      counts=item.get("counts",{})
+                      out.write(
+                          f"| {item.get('sheet','')} | "
+                          f"{float(item.get('analysisSeconds',0)):.2f} | "
+                          f"{float(item.get('diagnosticRenderSeconds',0)):.2f} | "
+                          f"{float(item.get('totalSeconds',0)):.2f} | "
+                          f"{counts.get('walls',0)} | {counts.get('rooms',0)} | "
+                          f"{counts.get('doors',0)} | {counts.get('windows',0)} | "
+                          f"{counts.get('symbols',0)} |\n"
+                      )
+          PY
+          fi
+
+      - name: Upload diagnostic results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stages-2-4-${{ github.sha }}
+          path: |
+            benchmark-output/model/symbol-model-info.json
+            benchmark-output/model/secondary-model-info.json
+            benchmark-output/aec15/score.txt
+            benchmark-output/aec15/report.json
+            benchmark-output/aec15/predictions/*.json
+            benchmark-output/aec15/predictions/_canonical/*.json
+            benchmark-output/aec15/predictions/_debug/*.png
+            benchmark-output/aec15/predictions/_timings/*.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  staging-e2e:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.head_ref == 'feat/cloud-floorplan-editor'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Resolve deployed staging endpoint
+        id: staging
+        env:
+          MANZIL_API_URL: ${{ secrets.MANZIL_E2E_API_URL }}
+        run: |
+          if [ -z "$MANZIL_API_URL" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "### Staging E2E not executed" >> "$GITHUB_STEP_SUMMARY"
+            echo "Repository secret MANZIL_E2E_API_URL is not configured." >> "$GITHUB_STEP_SUMMARY"
+            if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+              echo "Manual validation requires a deployed staging endpoint." >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            exit 0
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+          curl -fsS "$MANZIL_API_URL/health"
+          curl -fsS "$MANZIL_API_URL/ready"
+      - uses: actions/checkout@v4
+        if: steps.staging.outputs.configured == 'true'
+      - uses: actions/setup-python@v5
+        if: steps.staging.outputs.configured == 'true'
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        if: steps.staging.outputs.configured == 'true'
+        with:
+          node-version: 24
+      - run: pip install PyMuPDF==1.26.4
+        if: steps.staging.outputs.configured == 'true'
+      - run: python services/analyzer/tools/generate_e2e_fixture.py /tmp/manzil-e2e.pdf
+        if: steps.staging.outputs.configured == 'true'
+      - name: Run upload-to-restore against staging
+        if: steps.staging.outputs.configured == 'true'
+        env:
+          MANZIL_API_URL: ${{ secrets.MANZIL_E2E_API_URL }}
+          MANZIL_E2E_SOURCE: /tmp/manzil-e2e.pdf
+          MANZIL_E2E_TIMEOUT_MS: "240000"
+        run: node scripts/e2e_remote.mjs

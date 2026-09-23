@@ -1,0 +1,228 @@
+name: Deploy Manzil H
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/cloudflare-production-e2e]
+    paths:
+      - .github/deploy-trigger
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      INTERNAL_TOKEN_INPUT: ${{ secrets.MANZIL_INTERNAL_TOKEN }}
+      D1_DATABASE_NAME_INPUT: ${{ vars.MANZIL_D1_DATABASE_NAME }}
+      R2_BUCKET_INPUT: ${{ vars.MANZIL_R2_BUCKET }}
+      ANALYZE_QUEUE_INPUT: ${{ vars.MANZIL_ANALYZE_QUEUE }}
+      ANALYZER_URL_INPUT: ${{ vars.MANZIL_ANALYZER_URL }}
+      API_PUBLIC_URL_INPUT: ${{ vars.MANZIL_API_PUBLIC_URL }}
+      WEB_ORIGIN_INPUT: ${{ vars.MANZIL_WEB_ORIGIN }}
+      PAGES_PROJECT_INPUT: ${{ vars.MANZIL_PAGES_PROJECT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate Cloudflare credentials
+        run: |
+          set -eu
+          : "${CLOUDFLARE_API_TOKEN:?Missing secret CLOUDFLARE_API_TOKEN}"
+          : "${CLOUDFLARE_ACCOUNT_ID:?Missing secret CLOUDFLARE_ACCOUNT_ID}"
+          : "${INTERNAL_TOKEN_INPUT:?Missing secret MANZIL_INTERNAL_TOKEN}"
+          printf 'INTERNAL_TOKEN=%s\n' "$INTERNAL_TOKEN_INPUT" >> "$GITHUB_ENV"
+
+      - name: Install workspace and deployment dependencies
+        run: |
+          npm install
+          npm run build:contracts
+          npm install --no-save wrangler@latest
+
+      - name: Resolve public URLs and resource names
+        run: |
+          set -euo pipefail
+          SUBDOMAIN_JSON="$(curl --show-error --silent \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" || true)"
+          SUBDOMAIN="$(printf '%s' "$SUBDOMAIN_JSON" | python -c 'import json,sys; data=json.load(sys.stdin) if sys.stdin.readable() else {}; print((data.get("result") or {}).get("subdomain") or "")' 2>/dev/null || true)"
+          if [ -z "$SUBDOMAIN" ]; then
+            PREFERRED_SUBDOMAIN="manzil-${CLOUDFLARE_ACCOUNT_ID:0:8}"
+            echo "No workers.dev subdomain found; creating $PREFERRED_SUBDOMAIN"
+            SUBDOMAIN_JSON="$(curl --fail --show-error --silent -X PUT \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data "{\"subdomain\":\"$PREFERRED_SUBDOMAIN\"}")"
+            SUBDOMAIN="$(printf '%s' "$SUBDOMAIN_JSON" | python -c 'import json,sys; print((json.load(sys.stdin).get("result") or {}).get("subdomain") or "")')"
+          fi
+          test -n "$SUBDOMAIN"
+          D1_DATABASE_NAME="${D1_DATABASE_NAME_INPUT:-manzil-h}"
+          R2_BUCKET="${R2_BUCKET_INPUT:-manzil-h-assets}"
+          ANALYZE_QUEUE="${ANALYZE_QUEUE_INPUT:-manzil-h-analysis}"
+          PAGES_PROJECT="${PAGES_PROJECT_INPUT:-manzil-h-malik05255}"
+          ANALYZER_URL="${ANALYZER_URL_INPUT:-https://manzil-h-analyzer-malik05255.onrender.com}"
+          API_PUBLIC_URL="${API_PUBLIC_URL_INPUT:-https://manzil-h-api.${SUBDOMAIN}.workers.dev}"
+          WEB_ORIGIN="${WEB_ORIGIN_INPUT:-https://${PAGES_PROJECT}.pages.dev}"
+          {
+            echo "D1_DATABASE_NAME=$D1_DATABASE_NAME"
+            echo "R2_BUCKET=$R2_BUCKET"
+            echo "ANALYZE_QUEUE=$ANALYZE_QUEUE"
+            echo "PAGES_PROJECT=$PAGES_PROJECT"
+            echo "ANALYZER_URL=$ANALYZER_URL"
+            echo "API_PUBLIC_URL=$API_PUBLIC_URL"
+            echo "WEB_ORIGIN=$WEB_ORIGIN"
+          } >> "$GITHUB_ENV"
+
+      - name: Ensure D1 database
+        run: |
+          set -euo pipefail
+          npx wrangler d1 list --json > /tmp/d1.json
+          D1_DATABASE_ID="$(python - <<'PY'
+          import json, os
+          items=json.load(open('/tmp/d1.json'))
+          name=os.environ['D1_DATABASE_NAME']
+          match=next((x for x in items if x.get('name')==name),None)
+          print((match or {}).get('uuid') or (match or {}).get('id') or '')
+          PY
+          )"
+          if [ -z "$D1_DATABASE_ID" ]; then
+            npx wrangler d1 create "$D1_DATABASE_NAME" --location apac
+            npx wrangler d1 list --json > /tmp/d1.json
+            D1_DATABASE_ID="$(python - <<'PY'
+          import json, os
+          items=json.load(open('/tmp/d1.json'))
+          name=os.environ['D1_DATABASE_NAME']
+          match=next((x for x in items if x.get('name')==name),None)
+          print((match or {}).get('uuid') or (match or {}).get('id') or '')
+          PY
+            )"
+          fi
+          test -n "$D1_DATABASE_ID"
+          echo "D1_DATABASE_ID=$D1_DATABASE_ID" >> "$GITHUB_ENV"
+
+      - name: Ensure R2 bucket, Queue, and Pages project
+        run: |
+          set -euo pipefail
+          npx wrangler r2 bucket info "$R2_BUCKET" >/dev/null 2>&1 || npx wrangler r2 bucket create "$R2_BUCKET" --location apac
+          npx wrangler queues info "$ANALYZE_QUEUE" >/dev/null 2>&1 || npx wrangler queues create "$ANALYZE_QUEUE"
+          if ! npx wrangler pages project create "$PAGES_PROJECT" --production-branch production >/tmp/pages-create.log 2>&1; then
+            if grep -qi "already exists" /tmp/pages-create.log; then
+              echo "Pages project $PAGES_PROJECT already exists; continuing."
+            else
+              cat /tmp/pages-create.log >&2
+              exit 1
+            fi
+          fi
+
+      - name: Verify external Vision Analyzer
+        run: |
+          echo "Checking learned Vision Analyzer at $ANALYZER_URL"
+          curl --fail --show-error --silent --retry 60 --retry-delay 10 --retry-all-errors             "$ANALYZER_URL/health" -o /tmp/analyzer-health.json
+          cat /tmp/analyzer-health.json
+          python - <<'PY'
+          import json
+          payload=json.load(open("/tmp/analyzer-health.json"))
+          assert payload.get("ok") is True, payload
+          assert payload.get("reconstructionV3") is True, (
+              "Render is healthy but V3 is not active: "+repr(payload)
+          )
+          assert payload.get("visionSegmentation") is True, (
+              "Render is healthy but the learned segmentation model is not loaded: "
+              +repr(payload)
+          )
+          assert payload.get("pipelineVersion")=="vision-segmentation-v1", payload
+          print("Vision Segmentation V1 readiness confirmed.")
+          PY
+
+      - name: Generate production API Worker config
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          config={
+              "name":"manzil-h-api",
+              "main":"src/index.ts",
+              "compatibility_date":"2026-09-22",
+              "vars":{
+                  "ANALYZER_URL":os.environ["ANALYZER_URL"],
+                  "API_PUBLIC_URL":os.environ["API_PUBLIC_URL"],
+                  "APP_VERSION":os.environ.get("GITHUB_SHA","dev")[:12],
+                  "ALLOWED_ORIGIN":os.environ["WEB_ORIGIN"],
+              },
+              "d1_databases":[{
+                  "binding":"DB",
+                  "database_name":os.environ["D1_DATABASE_NAME"],
+                  "database_id":os.environ["D1_DATABASE_ID"],
+              }],
+              "r2_buckets":[{
+                  "binding":"ASSETS",
+                  "bucket_name":os.environ["R2_BUCKET"],
+              }],
+              "queues":{
+                  "producers":[{"binding":"ANALYZE_QUEUE","queue":os.environ["ANALYZE_QUEUE"]}],
+                  "consumers":[{"queue":os.environ["ANALYZE_QUEUE"],"max_batch_size":1,"max_batch_timeout":1}],
+              },
+          }
+          Path("apps/api/wrangler.deploy.json").write_text(json.dumps(config,indent=2),encoding="utf-8")
+          PY
+
+      - name: Apply D1 migrations
+        run: npx wrangler d1 migrations apply "$D1_DATABASE_NAME" --remote --config apps/api/wrangler.deploy.json
+
+      - name: Deploy API Worker
+        run: npx wrangler deploy --config apps/api/wrangler.deploy.json
+
+      - name: Configure API internal token
+        run: printf '%s' "$INTERNAL_TOKEN" | npx wrangler secret put INTERNAL_TOKEN --config apps/api/wrangler.deploy.json
+
+      - name: Verify API readiness
+        run: |
+          curl --fail --show-error --silent --retry 15 --retry-delay 5 --retry-all-errors "$API_PUBLIC_URL/health"
+          curl --fail --show-error --silent --retry 15 --retry-delay 5 --retry-all-errors "$API_PUBLIC_URL/ready"
+
+      - name: Build web application
+        env:
+          VITE_API_BASE_URL: ${{ env.API_PUBLIC_URL }}
+        run: npm run build:web
+
+      - name: Deploy web to Cloudflare Pages
+        run: npx wrangler pages deploy apps/web/dist --project-name "$PAGES_PROJECT" --branch production
+
+      - name: Generate real E2E fixture
+        run: |
+          pip install PyMuPDF==1.26.4
+          python services/analyzer/tools/generate_e2e_fixture.py /tmp/manzil-e2e.pdf
+
+      - name: Run real upload-to-restore E2E
+        env:
+          MANZIL_API_URL: ${{ env.API_PUBLIC_URL }}
+          MANZIL_E2E_SOURCE: /tmp/manzil-e2e.pdf
+          MANZIL_E2E_TIMEOUT_MS: "360000"
+        run: node scripts/e2e_remote.mjs
+
+      - name: Verify final web URL
+        run: curl --fail --show-error --silent --retry 12 --retry-delay 5 --retry-all-errors "$WEB_ORIGIN" >/dev/null
+
+      - name: Publish deployment summary
+        if: always()
+        run: |
+          {
+            echo "## Manzil H production deployment"
+            echo
+            echo "- Web: ${WEB_ORIGIN:-not-resolved}"
+            echo "- API: ${API_PUBLIC_URL:-not-resolved}"
+            echo "- Analyzer: ${ANALYZER_URL:-not-resolved}"
+            echo "- Commit: $GITHUB_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"

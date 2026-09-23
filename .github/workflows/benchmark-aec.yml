@@ -1,0 +1,161 @@
+name: AEC Real Drawing Benchmark
+
+on:
+  push:
+    branches:
+      - feat/cloud-floorplan-editor
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Number of released AEC sheets to evaluate (1-15)"
+        required: true
+        default: "15"
+        type: string
+      dataset_repository:
+        description: "Repository containing the licensed AEC-Geometric-Bench dataset"
+        required: true
+        default: "KamaiEnterprises/aec-geometric-bench"
+        type: string
+      dataset_ref:
+        description: "Dataset git ref"
+        required: true
+        default: "main"
+        type: string
+      license_confirmed:
+        description: "I confirm this benchmark run is permitted by the dataset licence"
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  benchmark:
+    if: github.event_name == 'workflow_dispatch' || vars.AEC_BENCH_LICENSE_CONFIRMED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check dataset licence confirmation
+        env:
+          MANUAL_CONFIRMED: ${{ inputs.license_confirmed }}
+          REPO_CONFIRMED: ${{ vars.AEC_BENCH_LICENSE_CONFIRMED }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            test "$MANUAL_CONFIRMED" = "true" || (echo "Dataset licence confirmation is required." && exit 1)
+          else
+            test "$REPO_CONFIRMED" = "true" || (echo "Repository variable AEC_BENCH_LICENSE_CONFIRMED=true is required." && exit 1)
+          fi
+
+      - name: Checkout Manzil H
+        uses: actions/checkout@v4
+
+      - name: Checkout AEC-Geometric-Bench
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.dataset_repository || 'KamaiEnterprises/aec-geometric-bench' }}
+          ref: ${{ inputs.dataset_ref || 'main' }}
+          path: external/aec-geometric-bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+
+      - name: Install OCR and Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          pip install -r services/analyzer/requirements.txt shapely
+
+      - name: Validate limit and record source revisions
+        run: |
+          LIMIT="${{ inputs.limit || '15' }}"
+          case "$LIMIT" in
+            ''|*[!0-9]*) echo "limit must be an integer from 1 to 15"; exit 2 ;;
+          esac
+          if [ "$LIMIT" -lt 1 ] || [ "$LIMIT" -gt 15 ]; then
+            echo "limit must be from 1 to 15"
+            exit 2
+          fi
+          mkdir -p benchmark-output/aec15
+          git rev-parse HEAD > benchmark-output/manzil-commit.txt
+          git -C external/aec-geometric-bench rev-parse HEAD > benchmark-output/dataset-commit.txt
+
+      - name: Run Manzil H on released construction drawings
+        working-directory: services/analyzer
+        env:
+          PYTHONPATH: .
+          SYMBOL_DETECTOR_URL: ${{ secrets.SYMBOL_DETECTOR_URL }}
+          SYMBOL_DETECTOR_TOKEN: ${{ secrets.SYMBOL_DETECTOR_TOKEN }}
+          SYMBOL_MIN_CONFIDENCE: "0.78"
+        run: |
+          set -o pipefail
+          PYTHONPATH=. python -m app.aec_benchmark \
+            --dataset ../../external/aec-geometric-bench/dataset \
+            --output ../../benchmark-output/aec15/predictions \
+            --limit "${{ inputs.limit || '15' }}" \
+            --scorer ../../external/aec-geometric-bench/scoring/score.py \
+            --report-json ../../benchmark-output/aec15/report.json \
+            | tee ../../benchmark-output/aec15/score.txt
+
+      - name: Publish score in workflow summary
+        if: always()
+        run: |
+          if [ -f benchmark-output/aec15/score.txt ]; then
+            echo "## Manzil H — AEC-Geometric-Bench" >> "$GITHUB_STEP_SUMMARY"
+            echo >> "$GITHUB_STEP_SUMMARY"
+            echo '~~~text' >> "$GITHUB_STEP_SUMMARY"
+            cat benchmark-output/aec15/score.txt >> "$GITHUB_STEP_SUMMARY"
+            echo '~~~' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f benchmark-output/aec15/report.json ]; then
+            python - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          report=json.loads(Path("benchmark-output/aec15/report.json").read_text(encoding="utf-8"))
+          target=Path(os.environ["GITHUB_STEP_SUMMARY"])
+          with target.open("a",encoding="utf-8") as out:
+              classes=report.get("classes",{})
+              if classes:
+                  out.write("\n### Object classes\n\n")
+                  out.write("| Class | TP | FP | FN | P | R | F1 |\n")
+                  out.write("|---|---:|---:|---:|---:|---:|---:|\n")
+                  for name,item in classes.items():
+                      out.write(
+                          f"| {name} | {item.get('tp',0)} | {item.get('fp',0)} | "
+                          f"{item.get('fn',0)} | {item.get('precision',0):.3f} | "
+                          f"{item.get('recall',0):.3f} | {item.get('f1',0):.3f} |\n"
+                      )
+
+              sheets=report.get("sheets",{})
+              if sheets:
+                  out.write("\n### Per-sheet diagnostics\n\n")
+                  out.write("| Sheet | Objects F1 | Wall F1 | Area px F1 | Area inst F1 | Macro F1 |\n")
+                  out.write("|---|---:|---:|---:|---:|---:|\n")
+                  for name,item in sheets.items():
+                      out.write(
+                          f"| {name} | {item.get('objectMicro',{}).get('f1',0):.3f} | "
+                          f"{item.get('wallPixel',{}).get('f1',0):.3f} | "
+                          f"{item.get('areaPixel',{}).get('f1',0):.3f} | "
+                          f"{item.get('areaInstance',{}).get('f1',0):.3f} | "
+                          f"{item.get('macroF1',0):.3f} |\n"
+                      )
+          PY
+          fi
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manzil-aec15-${{ github.sha }}
+          path: |
+            benchmark-output/aec15/score.txt
+            benchmark-output/aec15/report.json
+            benchmark-output/manzil-commit.txt
+            benchmark-output/dataset-commit.txt
+            benchmark-output/aec15/predictions/*.json
+            benchmark-output/aec15/predictions/_canonical/*.json
+            benchmark-output/aec15/predictions/_debug/*.png
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,0 +1,118 @@
+import { describe,expect,it } from "vitest";
+import type { FloorPlanModel } from "@manzil/contracts";
+import { calibratePlanFromDimensionSpan,calibratePlanFromSpan,correctDimensionValue,dimensionWallCandidates,linkDimensionToWall } from "./dimensionGeometry";
+
+function plan():FloorPlanModel{
+  return {
+    schemaVersion:1,
+    id:"p",
+    widthPx:1000,
+    heightPx:700,
+    metersPerPixel:.01,
+    calibrationConfidence:.6,
+    walls:[{
+      id:"top",
+      a:{x:100,y:100},
+      b:{x:500,y:100},
+      thicknessPx:10,
+      confidence:.9,
+      provenance:"opencv",
+    }],
+    rooms:[{
+      id:"room",
+      name:"غرفة",
+      polygon:[{x:100,y:100},{x:500,y:100},{x:500,y:500},{x:100,y:500}],
+      confidence:.9,
+      areaM2:16,
+    }],
+    doors:[],
+    windows:[],
+    labels:[{
+      id:"label-1",
+      text:"5.00 m",
+      center:{x:300,y:80},
+      confidence:.88,
+      kind:"dimension",
+      provenance:"ocr",
+    }],
+    dimensions:[{
+      id:"dimension-1",
+      sourceLabelId:"label-1",
+      text:"5.00 m",
+      center:{x:300,y:80},
+      valueM:5,
+      unit:"m",
+      orientation:"horizontal",
+      referenceWallId:"top",
+      confidence:.88,
+      reviewed:false,
+      provenance:"ocr",
+    }],
+    quality:{overall:.9,walls:.9,rooms:.9,text:.9,dimensions:.75,needsCalibration:true,warnings:["مقياس الرسم يحتاج مراجعة"]},
+    source:{fileName:"x.png",mimeType:"image/png",page:1},
+  };
+}
+
+describe("dimension geometry",()=>{
+  it("corrects a source dimension without rewriting its evidence text",()=>{
+    const source=plan();
+    const next=correctDimensionValue(source,"dimension-1",4.2)!;
+    expect(next.dimensions?.[0].valueM).toBe(4.2);
+    expect(next.dimensions?.[0].text).toBe("5.00 m");
+    expect(next.dimensions?.[0].reviewed).toBe(true);
+    expect(next.dimensions?.[0].provenance).toBe("mixed");
+    expect(source.dimensions?.[0].valueM).toBe(5);
+  });
+
+  it("calibrates the whole plan from an explicit pixel span without moving geometry",()=>{
+    const source=plan();
+    const beforeWall=JSON.stringify(source.walls[0]);
+    const next=calibratePlanFromSpan(source,5,{x:100,y:80},{x:500,y:80})!;
+    expect(next.metersPerPixel).toBeCloseTo(.0125,6);
+    expect(next.calibrationConfidence).toBe(1);
+    expect(next.rooms[0].areaM2).toBe(25);
+    expect(next.quality.needsCalibration).toBe(false);
+    expect(JSON.stringify(next.walls[0])).toBe(beforeWall);
+  });
+
+  it("ranks nearby walls and lets the user relink evidence",()=>{
+    const source=plan();
+    source.walls.push({
+      id:"far",
+      a:{x:700,y:500},
+      b:{x:900,y:500},
+      thicknessPx:10,
+      confidence:.9,
+    });
+    const candidates=dimensionWallCandidates(source,"dimension-1");
+    expect(candidates[0].wallId).toBe("top");
+    const linked=linkDimensionToWall(source,"dimension-1","far")!;
+    expect(linked.dimensions?.[0].referenceWallId).toBe("far");
+    expect(linked.dimensions?.[0].orientation).toBe("horizontal");
+    expect(linked.dimensions?.[0].reviewed).toBe(true);
+    expect(linked.dimensions?.[0].provenance).toBe("mixed");
+  });
+
+  it("calibrates from a reviewed dimension only when its span is explicit",()=>{
+    const source=plan();
+    source.dimensions![0].reviewed=true;
+    const next=calibratePlanFromDimensionSpan(source,"dimension-1",{x:120,y:80},{x:520,y:80})!;
+    expect(next.metersPerPixel).toBeCloseTo(.0125,6);
+    expect(next.dimensions?.[0].spanA).toEqual({x:120,y:80});
+    expect(next.dimensions?.[0].spanB).toEqual({x:520,y:80});
+    expect(next.dimensions?.[0].orientation).toBe("horizontal");
+    expect(next.dimensions?.[0].provenance).toBe("mixed");
+  });
+
+  it("refuses dimension calibration before human review",()=>{
+    const source=plan();
+    expect(calibratePlanFromDimensionSpan(source,"dimension-1",{x:100,y:80},{x:500,y:80})).toBeNull();
+  });
+
+  it("does not require a wall link when the user supplies the actual dimension span",()=>{
+    const source=plan();
+    source.dimensions![0].reviewed=true;
+    source.dimensions![0].referenceWallId=null;
+    expect(calibratePlanFromDimensionSpan(source,"dimension-1",{x:100,y:80},{x:500,y:80})).not.toBeNull();
+  });
+});

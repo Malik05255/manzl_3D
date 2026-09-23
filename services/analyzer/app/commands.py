@@ -1,0 +1,304 @@
+from __future__ import annotations
+import re
+from difflib import SequenceMatcher
+from .ocr import normalize_digits
+
+GENERIC_ROOM_WORDS={"غرفه","الغرفه","room","منطقه","مساحه"}
+
+def normalize_arabic(text:str)->str:
+    text=normalize_digits(text).lower()
+    text=re.sub(r"[\u064b-\u065f\u0670]","",text)
+    return (text.replace("أ","ا").replace("إ","ا").replace("آ","ا")
+        .replace("ة","ه").replace("ى","ي").replace("ـ","").strip())
+
+def _valid_dimension(value:float)->bool:
+    return 0.8<=value<=50
+
+def parse_target_size(command:str)->tuple[float,float]|None:
+    text=normalize_arabic(command)
+    match=re.search(
+        r"(\d+(?:\.\d+)?)\s*(?:م|متر)?\s*(?:x|×|\*|في)\s*(\d+(?:\.\d+)?)\s*(?:م|متر)?",
+        text,
+    )
+    if not match:
+        return None
+    width=float(match.group(1)); height=float(match.group(2))
+    if not (_valid_dimension(width) and _valid_dimension(height)):
+        return None
+    return width,height
+
+def _named_value(text:str,words:tuple[str,...])->float|None:
+    alternatives="|".join(re.escape(word) for word in words)
+    match=re.search(
+        rf"(?:{alternatives}).{{0,45}}?(\d+(?:\.\d+)?)\s*(?:متر|م)?(?=\s|$|[،,.])",
+        text,
+    )
+    if not match:
+        return None
+    value=float(match.group(1))
+    return value if _valid_dimension(value) else None
+
+def _relative_delta(text:str,dimension_words:tuple[str,...])->float|None:
+    dimensions="|".join(re.escape(word) for word in dimension_words)
+    increase=r"(?:زد|زود|كبر|وسع|زيد)"
+    decrease=r"(?:قلل|نقص|صغر)"
+    unit=r"(سنتيمتر|متر|سم|م)"
+    end=r"(?=\s|$|[،,.])"
+
+    for sign,actions in ((1.0,increase),(-1.0,decrease)):
+        context=rf"{actions}.{{0,35}}?(?:{dimensions}).{{0,35}}?"
+        explicit=re.search(context+rf"(\d+(?:\.\d+)?)\s*{unit}{end}",text)
+        if explicit:
+            value=float(explicit.group(1))
+            if explicit.group(2) in ("سم","سنتيمتر"):
+                value/=100
+            return sign*value if 0<value<=20 else None
+
+        default_one=re.search(context+rf"{unit}{end}",text)
+        if default_one:
+            value=0.01 if default_one.group(1) in ("سم","سنتيمتر") else 1.0
+            return sign*value
+
+    return None
+
+def resolve_target_size(command:str,current_width:float,current_height:float)->tuple[float,float]|None:
+    absolute=parse_target_size(command)
+    if absolute:
+        return absolute
+
+    text=normalize_arabic(command)
+
+    # Relative instructions must be resolved before named absolute values.
+    # Example: "نقص عرض غرفة النوم 50 سم" must mean -0.50 m, not width=50 m.
+    width_delta=_relative_delta(text,("العرض","عرض"))
+    height_delta=_relative_delta(text,("الطول","طول","العمق","عمق"))
+    if width_delta is not None or height_delta is not None:
+        target_width=current_width+(width_delta or 0)
+        target_height=current_height+(height_delta or 0)
+        if not (_valid_dimension(target_width) and _valid_dimension(target_height)):
+            return None
+        return target_width,target_height
+
+    width=_named_value(text,("العرض","عرض"))
+    height=_named_value(text,("الطول","طول","العمق","عمق"))
+    if width is not None or height is not None:
+        result=(width if width is not None else current_width,height if height is not None else current_height)
+        return result if _valid_dimension(result[0]) and _valid_dimension(result[1]) else None
+
+    return None
+
+def room_match(command:str,room_name:str)->float:
+    cmd=normalize_arabic(command)
+    name=normalize_arabic(room_name)
+    if name and name in cmd:
+        return 1.0
+
+    name_tokens={
+        token for token in re.split(r"\s+",name)
+        if len(token)>2 and not token.isdigit() and token not in GENERIC_ROOM_WORDS
+    }
+    cmd_tokens={
+        token for token in re.split(r"\s+",cmd)
+        if len(token)>2 and not token.isdigit() and token not in GENERIC_ROOM_WORDS
+    }
+    if not name_tokens or not cmd_tokens:
+        return 0.0
+    exact=len(name_tokens & cmd_tokens)/len(name_tokens)
+    if exact>0:
+        return exact
+    fuzzy=sum(max(SequenceMatcher(None,a,b).ratio() for b in cmd_tokens) for a in name_tokens)/len(name_tokens)
+    return fuzzy if fuzzy>=0.68 else 0.0
+
+def find_target_room(command:str,rooms:list)->object|None:
+    text=normalize_arabic(command)
+    exact_mentions=[]
+    for room in rooms:
+        name=normalize_arabic(room.name)
+        if not name:
+            continue
+        index=text.find(name)
+        if index>=0:
+            exact_mentions.append((index,room))
+
+    if len(exact_mentions)==1:
+        return exact_mentions[0][1]
+    if len(exact_mentions)>1:
+        action_positions=[
+            match.end()
+            for match in re.finditer(r"(?:^|\s)(?:عدل|كبر|وسع|صغر|زد|زود|نقص|اجعل|خلي)(?=\s)",text)
+        ]
+        targeted=[]
+        for index,room in exact_mentions:
+            preceding=[position for position in action_positions if position<=index]
+            if not preceding:
+                continue
+            distance=index-max(preceding)
+            if distance<=60:
+                targeted.append((distance,index,room))
+        targeted.sort(key=lambda item:(item[0],item[1]))
+        if targeted and (len(targeted)==1 or targeted[0][0]<targeted[1][0]):
+            return targeted[0][2]
+
+    scored=[(room_match(command,room.name),room) for room in rooms]
+    scored=[item for item in scored if item[0]>0]
+    if not scored:
+        return None
+    scored.sort(key=lambda item:item[0],reverse=True)
+    if len(scored)>1 and abs(scored[0][0]-scored[1][0])<0.05:
+        return None
+    return scored[0][1]
+
+
+def parse_merge_rooms(command:str,rooms:list)->tuple[object,object]|None:
+    text=normalize_arabic(command)
+    merge_signal=any(word in text for word in ("ادمج","ضم","احذف","ازل","شيل","الغي","الغ"))
+    if not merge_signal:
+        return None
+
+    mentions=[]
+    for room in rooms:
+        name=normalize_arabic(room.name)
+        if not name:
+            continue
+        index=text.find(name)
+        if index>=0:
+            mentions.append((index,room))
+    if len(mentions)<2:
+        return None
+
+    mentions.sort(key=lambda item:item[0])
+    unique=[]
+    for index,room in mentions:
+        if all(existing.id!=room.id for _,existing in unique):
+            unique.append((index,room))
+    if len(unique)<2:
+        return None
+
+    first_index,first=unique[0]
+    second_index,second=unique[1]
+    between=text[first_index:second_index]
+
+    if " الى " in f" {between} " or any(word in text[:second_index] for word in ("احذف","ازل","شيل","الغي","الغ")):
+        return first,second
+    if " مع " in f" {between} " or "ادمج" in text:
+        return first,second
+    return None
+
+
+def resize_neighbor_constraints(command:str,rooms:list,target)->tuple[set[str],set[str]]:
+    text=normalize_arabic(command)
+    preferred:set[str]=set()
+    excluded:set[str]=set()
+    preferred_markers=tuple(normalize_arabic(value) for value in ("على حساب","من مساحة","خذ من","اقتطع من","خصم من"))
+    excluded_markers=tuple(normalize_arabic(value) for value in ("بدون تغيير","دون تغيير","لا تغير","لا تصغر","لا تعدل","ما تغير","لا تمس","بدون المساس"))
+
+    for room in rooms:
+        if room.id==target.id:
+            continue
+        name=normalize_arabic(room.name)
+        if not name:
+            continue
+        index=text.find(name)
+        if index<0:
+            continue
+        prefix=text[max(0,index-42):index]
+        local=text[max(0,index-55):min(len(text),index+len(name)+20)]
+        if any(marker in prefix or marker in local for marker in excluded_markers):
+            excluded.add(room.id)
+            continue
+        if any(marker in prefix for marker in preferred_markers):
+            preferred.add(room.id)
+
+    # Common phrasing: "... على حساب الصالة". If there is only one non-target
+    # room explicitly named after a preference marker, treat it as a hard constraint.
+    if not preferred:
+        for marker in preferred_markers:
+            marker_index=text.find(marker)
+            if marker_index<0:
+                continue
+            tail=text[marker_index+len(marker):]
+            matches=[
+                room for room in rooms
+                if room.id!=target.id and normalize_arabic(room.name) and normalize_arabic(room.name) in tail
+            ]
+            if len(matches)==1:
+                preferred.add(matches[0].id)
+                break
+
+    return preferred,excluded
+
+
+def parse_metric_amount(command:str,min_m:float=0.01,max_m:float=50.0)->float|None:
+    text=normalize_arabic(command)
+    match=re.search(r"(\d+(?:\.\d+)?)\s*(سنتيمتر|سم|متر|م)(?=\s|$|[،,.])",text)
+    if not match:
+        return None
+    value=float(match.group(1))
+    if match.group(2) in ("سم","سنتيمتر"):
+        value/=100.0
+    return value if min_m<=value<=max_m else None
+
+
+def parse_selected_opening_action(command:str)->tuple[str,dict]|None:
+    text=normalize_arabic(command)
+    remove_words=("احذف","ازل","شيل","الغي","الغ")
+    if any(word in text for word in remove_words):
+        return "remove",{}
+
+    convert_words=("حول","غير","بدل","خلي","اجعل")
+    if any(word in text for word in convert_words):
+        if "نافذه" in text:
+            return "kind",{"kind":"window"}
+        if "باب" in text:
+            return "kind",{"kind":"door"}
+
+    move_words=("حرك","انقل","زحزح")
+    directions=(
+        ("يمين","right"),("يسار","left"),("فوق","up"),("اعلى","up"),
+        ("تحت","down"),("اسفل","down"),
+    )
+    if any(word in text for word in move_words):
+        amount=parse_metric_amount(command,0.01,20.0)
+        direction=next((value for word,value in directions if word in text),None)
+        if amount is not None and direction:
+            return "move",{"amount_m":amount,"direction":direction}
+        if amount is not None:
+            return "move_missing_direction",{"amount_m":amount}
+
+    width_markers=("العرض","عرض","وسع الفتحه","وسع الباب","وسع النافذه","صغر الفتحه","صغر الباب","صغر النافذه")
+    if any(marker in text for marker in width_markers) or re.search(r"(?:خلي|اجعل|غير).{0,18}(?:\d)",text):
+        amount=parse_metric_amount(command,0.20,6.0)
+        if amount is not None:
+            return "width",{"width_m":amount}
+
+    return None
+
+
+def parse_selected_wall_action(command:str)->tuple[str,dict]|None:
+    text=normalize_arabic(command)
+    add_words=("اضف","حط","ركب","انشئ","سوي")
+    if any(word in text for word in add_words):
+        if "باب" in text:
+            return "add_opening",{"kind":"door"}
+        if "نافذه" in text:
+            return "add_opening",{"kind":"window"}
+
+    if any(marker in text for marker in ("سماكه","سماكت","سمك")):
+        amount=parse_metric_amount(command,0.02,1.0)
+        if amount is not None:
+            return "thickness",{"thickness_m":amount}
+
+    move_words=("حرك","انقل","زحزح")
+    directions=(
+        ("يمين","right"),("يسار","left"),("فوق","up"),("اعلى","up"),
+        ("تحت","down"),("اسفل","down"),
+    )
+    if any(word in text for word in move_words):
+        amount=parse_metric_amount(command,0.01,20.0)
+        direction=next((value for word,value in directions if word in text),None)
+        if amount is not None and direction:
+            return "move",{"amount_m":amount,"direction":direction}
+        if amount is not None:
+            return "move_missing_direction",{"amount_m":amount}
+
+    return None

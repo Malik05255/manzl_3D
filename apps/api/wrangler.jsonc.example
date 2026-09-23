@@ -1,0 +1,17 @@
+{
+  "name":"manzil-h-api",
+  "main":"src/index.ts",
+  "compatibility_date":"2026-09-20",
+  "vars":{
+    "ANALYZER_URL":"https://YOUR-CLOUD-RUN-SERVICE.run.app",
+    "API_PUBLIC_URL":"https://api.example.com",
+    "APP_VERSION":"0.1.0",
+    "ALLOWED_ORIGIN":"https://app.example.com"
+  },
+  "d1_databases":[{"binding":"DB","database_name":"manzil-h","database_id":"REPLACE_WITH_D1_ID"}],
+  "r2_buckets":[{"binding":"ASSETS","bucket_name":"manzil-h-assets"}],
+  "queues":{
+    "producers":[{"binding":"ANALYZE_QUEUE","queue":"manzil-h-analysis"}],
+    "consumers":[{"queue":"manzil-h-analysis","max_batch_size":1,"max_batch_timeout":1}]
+  }
+}

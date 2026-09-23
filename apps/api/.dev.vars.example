@@ -1,0 +1,5 @@
+ANALYZER_URL=https://YOUR-ANALYZER.run.app
+API_PUBLIC_URL=https://api.example.com
+APP_VERSION=0.1.0
+ALLOWED_ORIGIN=http://localhost:5173
+INTERNAL_TOKEN=replace-with-a-long-random-value

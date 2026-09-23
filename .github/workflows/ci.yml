@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main, feat/cloud-floorplan-editor, feat/cloudflare-production-e2e, feat/analyzer-v2-apk, feat/reconstruction-v3, feat/vision-segmentation-v1]
+  pull_request:
+
+jobs:
+  web-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install
+      - run: npm run build
+      - run: npm test
+
+  analyzer:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/analyzer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt pytest
+      - run: python -m compileall app
+      - run: PYTHONPATH=. pytest -q
+
+
+  full-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/analyzer/requirements.txt
+      - run: npm install
+      - run: npm run build:contracts
+      - run: pip install -r services/analyzer/requirements.txt
+      - name: Apply local D1 migrations
+        run: npx wrangler d1 migrations apply DB --local --config apps/api/wrangler.e2e.jsonc
+      - name: Generate E2E floor-plan PDF
+        run: python services/analyzer/tools/generate_e2e_fixture.py /tmp/manzil-e2e.pdf
+      - name: Start analyzer and Worker
+        run: |
+          (
+            cd services/analyzer
+            INTERNAL_TOKEN=e2e-internal-token PYTHONPATH=. \
+              uvicorn app.main:app --host 127.0.0.1 --port 8080 \
+              > /tmp/manzil-analyzer.log 2>&1 &
+            echo $! > /tmp/manzil-analyzer.pid
+          )
+          npx wrangler dev --config apps/api/wrangler.e2e.jsonc --port 8787 \
+            > /tmp/manzil-worker.log 2>&1 &
+          echo $! > /tmp/manzil-worker.pid
+      - name: Wait for local services
+        run: |
+          analyzer_ok=0
+          worker_ok=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8080/health >/dev/null; then analyzer_ok=1; break; fi
+            sleep 1
+          done
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8787/health >/dev/null; then worker_ok=1; break; fi
+            sleep 1
+          done
+          test "$analyzer_ok" = "1"
+          test "$worker_ok" = "1"
+      - name: Run full upload-to-restore journey
+        env:
+          MANZIL_API_URL: http://127.0.0.1:8787
+          MANZIL_E2E_SOURCE: /tmp/manzil-e2e.pdf
+          MANZIL_E2E_TIMEOUT_MS: "180000"
+        run: node scripts/e2e_remote.mjs
+      - name: Upload local E2E logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-e2e-logs-${{ github.run_id }}
+          path: |
+            /tmp/manzil-analyzer.log
+            /tmp/manzil-worker.log
+          if-no-files-found: warn
+          retention-days: 7
