@@ -73,10 +73,12 @@ async def upload_preview(url:HttpUrl|None,image):
 @app.get("/health")
 async def health():
     reconstruction_v2=os.getenv("ANALYZER_RECONSTRUCTION_V2","1").strip().lower() not in {"0","false","off","no"}
+    reconstruction_v3=os.getenv("ANALYZER_RECONSTRUCTION_V3","1").strip().lower() not in {"0","false","off","no"}
     return {
         "ok":True,
         "pipelineVersion":PIPELINE_VERSION,
-        "reconstructionV2":reconstruction_v2,
+        "reconstructionV2":reconstruction_v2 or reconstruction_v3,
+        "reconstructionV3":reconstruction_v3,
     }
 
 @app.post("/v1/analyze",response_model=FloorPlan)
@@ -100,7 +102,9 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     await upload_preview(req.preview_url,image)
     _,ink=preprocess(image)
     reconstruction_v2=os.getenv("ANALYZER_RECONSTRUCTION_V2","1").strip().lower() not in {"0","false","off","no"}
-    structural_mask=extract_structural_wall_mask(image,ink) if reconstruction_v2 else None
+    reconstruction_v3=os.getenv("ANALYZER_RECONSTRUCTION_V3","1").strip().lower() not in {"0","false","off","no"}
+    reconstruction_enabled=reconstruction_v2 or reconstruction_v3
+    structural_mask=extract_structural_wall_mask(image,ink) if reconstruction_enabled else None
     structural_metrics=structural_mask_metrics(structural_mask) if structural_mask is not None else {}
 
     native_labels=[]
@@ -180,6 +184,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     use_region_vectorizer=(
         structural_mask is not None
         and cv2.countNonZero(structural_mask)>0
+        and reconstruction_v3
         and has_dominant_structural_color(image)
     )
     if use_region_vectorizer:
@@ -242,13 +247,13 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     ]
     room_barrier_mask=rasterize_wall_mask(
         walls,h,w,
-        base_mask=structural_mask if reconstruction_v2 and structural_mask is not None else None,
+        base_mask=structural_mask if reconstruction_enabled and structural_mask is not None else None,
         min_pdf_vector_confidence=.70,
         excluded_wall_ids=quarantined_wall_ids,
     )
 
     await progress(req.callback_url,req.project_id,"rooms",78,"إعادة بناء الغرف وإغلاق فتحات الأبواب للتحليل")
-    segmentation_barrier=build_room_barrier(room_barrier_mask) if reconstruction_v2 else room_barrier_mask
+    segmentation_barrier=build_room_barrier(room_barrier_mask) if reconstruction_v3 else room_barrier_mask
     rooms=detect_rooms(segmentation_barrier,labels,scale)
     link_room_boundaries(rooms,topology_walls)
     rooms=filter_nonarchitectural_enclosures(rooms,topology_walls,w,h)
@@ -257,8 +262,10 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
 
     await progress(req.callback_url,req.project_id,"validation",93,"التحقق من جودة النتيجة")
     engines=["opencv","canonical-wall-barrier"]
-    if reconstruction_v2:
-        engines.extend(["structural-wall-mask-v2","clean-vector-reconstruction-v2","room-barrier-v3"])
+    if reconstruction_enabled:
+        engines.extend(["structural-wall-mask-v2","clean-vector-reconstruction-v2"])
+    if reconstruction_v3:
+        engines.append("room-barrier-v3")
         if use_region_vectorizer:
             engines.append("structural-region-vectorizer-v3")
     if local_labels: engines.append("tesseract-dimensions" if use_native_fastpath else "tesseract")
