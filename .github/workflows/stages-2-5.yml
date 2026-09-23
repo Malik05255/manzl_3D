@@ -277,6 +277,7 @@ jobs:
         working-directory: services/analyzer
         env:
           PYTHONPATH: .
+          SEGMENTATION_MIN_WALL_CONSENSUS: "0.00"
         run: |
           OFFSET=${{ matrix.shard }}
           mkdir -p "../../benchmark-output/shard-${{ matrix.shard }}"
