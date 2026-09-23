@@ -5,6 +5,7 @@ import hashlib
 import os
 
 import cv2
+import numpy as np
 from datetime import datetime,timezone
 
 from .document import (
