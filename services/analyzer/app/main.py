@@ -266,7 +266,8 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     await progress(req.callback_url,req.project_id,"rooms",78,"إعادة بناء الغرف وإغلاق فتحات الأبواب للتحليل")
     learned_room_barrier=semantic_room_barrier(segmentation_result) if learned_segmentation else None
     if learned_room_barrier is not None:
-        segmentation_barrier=learned_room_barrier
+        segmentation_seed=cv2.bitwise_or(room_barrier_mask,learned_room_barrier)
+        segmentation_barrier=build_room_barrier(segmentation_seed)
     else:
         segmentation_barrier=build_room_barrier(room_barrier_mask) if reconstruction_v3 else room_barrier_mask
     rooms=detect_rooms(segmentation_barrier,labels,scale)
