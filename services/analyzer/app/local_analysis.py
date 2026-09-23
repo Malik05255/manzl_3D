@@ -53,7 +53,13 @@ def analyze_document_bytes_local(
     learned_segmentation=bool(
         segmentation_result
         and segmentation_result.get("plausible")
-        and segmentation_consensus>=float(os.getenv("SEGMENTATION_MIN_WALL_CONSENSUS",".30") or ".30")
+        and segmentation_consensus>=float(os.getenv("SEGMENTATION_MIN_WALL_CONSENSUS",".60") or ".60")
+        and (
+            has_dominant_structural_color(image)
+            or os.getenv("SEGMENTATION_ALLOW_MONOCHROME","0").strip().lower() in {"1","true","on","yes"}
+        )
+        and float(segmentation_result.get("meanConfidence",0.0))
+            >=float(os.getenv("SEGMENTATION_MIN_MEAN_CONFIDENCE",".60") or ".60")
     )
     structural_mask=heuristic_structural_mask
     structural_metrics=structural_mask_metrics(structural_mask) if structural_mask is not None else {}
