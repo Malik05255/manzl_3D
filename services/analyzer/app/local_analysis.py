@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+
+import cv2
 from datetime import datetime,timezone
 
 from .document import (
@@ -16,11 +18,12 @@ from .dimensions import extract_dimension_evidence
 from .ocr import _merge_labels,classify_text,extract_ocr_dimension_labels,extract_ocr_labels,native_pdf_text_is_sufficient
 from .openings import detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts
 from .pipeline import assemble_plan
-from .rooms import detect_rooms
+from .rooms import build_room_barrier,detect_rooms
 from .scale import estimate_scale_with_diagnostics
 from .symbols import extract_configured_onnx_detections,extract_symbol_detections,normalize_configured_symbols
+from .structural import extract_structural_wall_mask,filter_walls_by_structural_support,has_dominant_structural_color,structural_mask_metrics
 from .topology import classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
-from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,quarantine_dimension_aligned_walls,rasterize_wall_mask
+from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,fuse_region_wall_candidates,quarantine_dimension_aligned_walls,rasterize_wall_mask
 
 
 def analyze_document_bytes_local(
@@ -41,10 +44,15 @@ def analyze_document_bytes_local(
     image,page=decode_document_with_page(data,mime_type,source_page)
     h,w=image.shape[:2]
     _,ink=preprocess(image)
+    reconstruction_v3=os.getenv("ANALYZER_RECONSTRUCTION_V3","1").strip().lower() not in {"0","false","off","no"}
+    structural_mask=extract_structural_wall_mask(image,ink) if reconstruction_v3 else None
+    structural_metrics=structural_mask_metrics(structural_mask) if structural_mask is not None else {}
 
     vector_lines=[]
     native_labels=[]
     engines=["opencv","canonical-wall-barrier"]
+    if reconstruction_v3:
+        engines.extend(["structural-wall-mask-v2","clean-vector-reconstruction-v2","room-barrier-v3"])
 
     if mime_type=="application/pdf":
         native_lines=extract_pdf_text_lines(data,page)
@@ -116,7 +124,18 @@ def analyze_document_bytes_local(
     if ai_detections:
         engines.append("onnx-architectural-detector")
 
+    # Detect on the original ink so diagonal/irregular walls survive. V3 then
+    # filters raster candidates against the conservative structural mask instead
+    # of throwing away non-axis evidence before detection.
     walls,wall_mask=detect_walls(ink)
+    use_region_vectorizer=(
+        structural_mask is not None
+        and cv2.countNonZero(structural_mask)>0
+        and has_dominant_structural_color(image)
+    )
+    if use_region_vectorizer:
+        walls=fuse_region_wall_candidates(walls,structural_mask)
+        engines.append("structural-region-vectorizer-v3")
     if vector_lines:
         walls=enrich_walls_with_vector(walls,vector_lines)
         walls=add_vector_wall_candidates(walls,vector_lines,h,w,labels=labels)
@@ -127,6 +146,18 @@ def analyze_document_bytes_local(
     quarantined_wall_ids=quarantine_dimension_aligned_walls(
         walls,labels,h,w,vector_lines=vector_lines,dimensions=dimensions,
     )
+    rejected_structural_walls=[]
+    if structural_mask is not None and cv2.countNonZero(structural_mask)>0:
+        accepted_walls,rejected_structural_walls=filter_walls_by_structural_support(
+            walls,structural_mask,minimum_support=.34,
+        )
+        minimum_viable=max(3,int(round(len(walls)*.15))) if walls else 0
+        if len(accepted_walls)>=minimum_viable:
+            walls=accepted_walls
+            quarantined_wall_ids={
+                wall_id for wall_id in quarantined_wall_ids
+                if any(str(item.get("id",""))==wall_id for item in walls)
+            }
     topology_walls=[
         wall for wall in walls
         if str(wall.get("id","")) not in quarantined_wall_ids
@@ -155,8 +186,14 @@ def analyze_document_bytes_local(
             and float(wall.get("confidence",0.0))<.70
         )
     ]
-    barrier=rasterize_wall_mask(walls,h,w,min_pdf_vector_confidence=.70,excluded_wall_ids=quarantined_wall_ids)
-    rooms=detect_rooms(barrier,labels,scale)
+    barrier=rasterize_wall_mask(
+        walls,h,w,
+        base_mask=structural_mask if reconstruction_v3 and structural_mask is not None else None,
+        min_pdf_vector_confidence=.70,
+        excluded_wall_ids=quarantined_wall_ids,
+    )
+    segmentation_barrier=build_room_barrier(barrier) if reconstruction_v3 else barrier
+    rooms=detect_rooms(segmentation_barrier,labels,scale)
     link_room_boundaries(rooms,topology_walls)
     rooms=filter_nonarchitectural_enclosures(rooms,topology_walls,w,h)
     recalibrate_extracted_room_confidence(rooms,topology_walls,w,h)
@@ -168,6 +205,14 @@ def analyze_document_bytes_local(
         "sourceSha256":hashlib.sha256(data).hexdigest(),
         "engines":list(dict.fromkeys(engines)),
     }
+    if reconstruction_v3:
+        analysis["engines"].append(
+            f"structural-components:{int(structural_metrics.get('structuralComponents',0))}"
+        )
+        if rejected_structural_walls:
+            analysis["engines"].append(
+                f"rejected-raster-strokes:{len(rejected_structural_walls)}"
+            )
     if ai_detections:
         detector_counts={}
         for detection in ai_detections:
