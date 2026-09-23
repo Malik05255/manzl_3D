@@ -22,7 +22,7 @@ from .symbols import extract_local_onnx_detections,extract_symbol_detections,nor
 from .structural import extract_structural_wall_mask,filter_walls_by_structural_support,structural_mask_metrics
 from .topology import canonicalize_plan,classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
 from .semantic import normalize_edit_semantics
-from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,quarantine_dimension_aligned_walls,rasterize_wall_mask
+from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,fuse_region_wall_candidates,quarantine_dimension_aligned_walls,rasterize_wall_mask
 from .validation import validate_plan
 
 app=FastAPI(title="Manzil H Analyzer",version="0.1.0")
@@ -177,6 +177,8 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     # filters raster candidates against the conservative structural mask instead
     # of throwing away non-axis evidence before detection.
     walls,wall_mask=detect_walls(ink)
+    if structural_mask is not None and cv2.countNonZero(structural_mask)>0:
+        walls=fuse_region_wall_candidates(walls,structural_mask)
     vector_lines=[]
     if req.mime_type=="application/pdf":
         try:
@@ -251,7 +253,7 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     await progress(req.callback_url,req.project_id,"validation",93,"التحقق من جودة النتيجة")
     engines=["opencv","canonical-wall-barrier"]
     if reconstruction_v2:
-        engines.extend(["structural-wall-mask-v2","clean-vector-reconstruction-v2","room-barrier-v3"])
+        engines.extend(["structural-wall-mask-v2","structural-region-vectorizer-v3","clean-vector-reconstruction-v2","room-barrier-v3"])
     if local_labels: engines.append("tesseract-dimensions" if use_native_fastpath else "tesseract")
     if used_cloud_ocr: engines.append("google-vision")
     if used_pdf_text: engines.append("pdf-text")
