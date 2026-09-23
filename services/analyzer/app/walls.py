@@ -551,7 +551,7 @@ def detect_region_wall_candidates(region_mask:np.ndarray)->list[dict]:
                 "thicknessPx":round(max(2.0,min(48.0,measured)),2),
                 "confidence":0.95,
                 "reviewed":False,
-                "provenance":"structural-mask",
+                "provenance":"mixed",
             })
 
     # Collapse overlapping fragments but keep architectural opening-sized gaps.
@@ -587,7 +587,7 @@ def fuse_region_wall_candidates(
                     float(candidate.get("confidence",0.0)),
                     float(existing.get("confidence",0.0)),
                 ),3),
-                "provenance":"mixed" if existing.get("provenance")!="structural-mask" else "structural-mask",
+                "provenance":"mixed",
             }
             result=[
                 item for index,item in enumerate(result)
