@@ -26,5 +26,9 @@ services:
         value: "1"
       - key: OCR_MULTISCALE
         value: "1"
+      - key: SEGMENTATION_ONNX_MODEL
+        value: /app/models/manzil-segmentation-v1.onnx
+      - key: SEGMENTATION_INPUT_SIZE
+        value: "384"
       - key: ANALYZER_PIPELINE_VERSION
-        value: reconstruction-v3
+        value: vision-segmentation-v1
