@@ -96,6 +96,21 @@ def infer_segmentation(image:np.ndarray)->dict|None:
     }
 
 
+def wall_consensus_score(result:dict|None,heuristic_mask:np.ndarray|None)->float:
+    """Dice agreement between learned walls and independent geometric evidence."""
+    if not result or not result.get("plausible") or heuristic_mask is None:
+        return 0.0
+    learned=np.asarray((result.get("masks") or {}).get("wall"))
+    if learned.ndim!=2 or heuristic_mask.shape!=learned.shape:
+        return 0.0
+    a=learned>0
+    b=np.asarray(heuristic_mask)>0
+    denom=int(a.sum())+int(b.sum())
+    if denom<=0:
+        return 0.0
+    return float(2*int(np.count_nonzero(a & b))/denom)
+
+
 def learned_opening_detections(result:dict|None)->list[dict]:
     if not result or not result.get("plausible"):
         return []
