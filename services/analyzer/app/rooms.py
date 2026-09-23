@@ -3,6 +3,81 @@ import cv2
 import numpy as np
 
 
+def _estimate_wall_thickness(mask:np.ndarray)->float:
+    binary=(mask>0).astype(np.uint8)*255
+    if cv2.countNonZero(binary)==0:
+        return 4.0
+    distance=cv2.distanceTransform(binary,cv2.DIST_L2,5)
+    values=distance[distance>0]
+    if values.size==0:
+        return 4.0
+    # Upper-middle percentile tracks the wall core without being dominated by
+    # thin antialiased edges or rare oversized blobs.
+    half=float(np.percentile(values,90))
+    return max(2.0,min(48.0,half*2.0))
+
+
+def build_room_barrier(wall_mask:np.ndarray)->np.ndarray:
+    """Seal ordinary door-sized gaps only for room segmentation.
+
+    The editable wall model must preserve openings. Room extraction is a
+    different problem: two rooms connected by an open doorway are still two
+    rooms. Earlier pipelines used the same open wall mask for both tasks, so
+    connected-components merged spaces through doors and produced the large,
+    incorrect polygons seen in production.
+
+    This function builds a segmentation-only barrier by closing horizontal and
+    vertical wall runs over a gap derived from measured wall thickness. The
+    original mask is retained, so diagonal/curved structural evidence is not
+    discarded. Large open-plan connections remain open.
+    """
+    if wall_mask.ndim!=2:
+        raise ValueError("ROOM_BARRIER_SHAPE")
+    h,w=wall_mask.shape[:2]
+    if h<8 or w<8:
+        return wall_mask.copy()
+
+    binary=np.where(wall_mask>0,255,0).astype(np.uint8)
+    thickness=_estimate_wall_thickness(binary)
+    short=float(max(1,min(h,w)))
+
+    # Typical residential door openings are several wall-thicknesses wide.
+    # Cap by page scale so atria/open-plan connections are not bridged.
+    bridge=int(round(max(17.0,min(short*.16,thickness*9.5))))
+    bridge=max(9,bridge|1)
+
+    run=int(round(max(18.0,min(short*.12,thickness*4.0))))
+    run=max(7,run|1)
+
+    horizontal=cv2.morphologyEx(
+        binary,cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT,(run,1)),
+    )
+    vertical=cv2.morphologyEx(
+        binary,cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT,(1,run)),
+    )
+
+    horizontal=cv2.morphologyEx(
+        horizontal,cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT,(bridge,1)),
+    )
+    vertical=cv2.morphologyEx(
+        vertical,cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT,(1,bridge)),
+    )
+
+    barrier=cv2.bitwise_or(binary,horizontal)
+    barrier=cv2.bitwise_or(barrier,vertical)
+
+    join=max(3,min(11,int(round(thickness*.45))|1))
+    barrier=cv2.morphologyEx(
+        barrier,cv2.MORPH_CLOSE,
+        np.ones((join,join),np.uint8),
+    )
+    return barrier
+
+
 def _component_polygon(component_mask:np.ndarray,offset_x:int,offset_y:int)->tuple[list[dict],float]:
     contours,_=cv2.findContours(component_mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
     if not contours:

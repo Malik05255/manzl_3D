@@ -2,7 +2,7 @@ name: Stages 2-5 Validation
 
 on:
   push:
-    branches: [feat/cloud-floorplan-editor]
+    branches: [feat/cloud-floorplan-editor, feat/reconstruction-v3]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   prepare-model:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.head_ref == 'feat/cloud-floorplan-editor'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || (github.head_ref == 'feat/cloud-floorplan-editor' || github.head_ref == 'feat/reconstruction-v3')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:

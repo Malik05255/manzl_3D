@@ -61,6 +61,53 @@ def _edge_wall_score(a,b,wall)->float:
     return overlap_score*0.72+distance_score*0.28
 
 
+def _relaxed_edge_wall_score(a,b,wall)->float:
+    """Fallback boundary affinity for inner-face room polygons.
+
+    Room polygons are extracted from free space, so their edges follow the
+    *inner face* of walls while canonical walls are centerlines. At slanted
+    corners contour approximation can rotate/shorten an edge enough that the
+    strict matcher misses it. This fallback is intentionally used only when a
+    room has fewer than three strict boundary links.
+    """
+    ax,ay=_point(a); bx,by=_point(b)
+    wa=_wall_value(wall,"a"); wb=_wall_value(wall,"b")
+    wx1,wy1=_point(wa); wx2,wy2=_point(wb)
+    evx=bx-ax; evy=by-ay
+    wvx=wx2-wx1; wvy=wy2-wy1
+    el=math.hypot(evx,evy); wl=math.hypot(wvx,wvy)
+    if el<4 or wl<4:
+        return 0.0
+
+    cosine=abs((evx*wvx+evy*wvy)/(el*wl))
+    if cosine<0.94:
+        return 0.0
+
+    ux=wvx/wl; uy=wvy/wl
+    nx=-uy; ny=ux
+    # Use both polygon-edge endpoints instead of only the midpoint. This is
+    # stable at clipped/acute corners where the midpoint can shift inward.
+    d1=abs((ax-wx1)*nx+(ay-wy1)*ny)
+    d2=abs((bx-wx1)*nx+(by-wy1)*ny)
+    perpendicular=min(d1,d2,(d1+d2)/2.0)
+    thickness=max(2.0,float(_wall_value(wall,"thicknessPx")))
+    tolerance=max(14.0,min(64.0,thickness*5.5))
+    if perpendicular>tolerance:
+        return 0.0
+
+    p1=(ax-wx1)*ux+(ay-wy1)*uy
+    p2=(bx-wx1)*ux+(by-wy1)*uy
+    edge_start=min(p1,p2); edge_end=max(p1,p2)
+    shared=max(0.0,min(edge_end,wl)-max(edge_start,0.0))
+    if shared<max(10.0,min(el,wl)*0.12):
+        return 0.0
+
+    overlap=min(1.0,shared/max(1.0,min(el,wl)))
+    distance=max(0.0,1.0-perpendicular/max(tolerance,1.0))
+    angle=max(0.0,min(1.0,(cosine-.94)/.06))
+    return overlap*.55+distance*.30+angle*.15
+
+
 def room_boundary_coverage(room,walls:list)->float:
     polygon=_room_value(room,"polygon")
     if len(polygon)<3:
@@ -84,14 +131,42 @@ def room_boundary_coverage(room,walls:list)->float:
 def link_room_boundaries(rooms:list,walls:list)->list:
     for room in rooms:
         polygon=_room_value(room,"polygon")
-        scored=[]
+        all_scored=[]
         for wall in walls:
             best=0.0
             for index,point in enumerate(polygon):
                 other=polygon[(index+1)%len(polygon)]
                 best=max(best,_edge_wall_score(point,other,wall))
-            if best>=0.34:
-                scored.append((best,str(_wall_value(wall,"id"))))
+            if best>0:
+                all_scored.append((best,str(_wall_value(wall,"id"))))
+
+        scored=[item for item in all_scored if item[0]>=0.34]
+
+        # V3 room masks represent the inner face of a wall while canonical
+        # wall lines represent its centreline. At acute/slanted corners the
+        # polygon approximation can reduce the strict overlap score on one or
+        # two real boundary walls. If an otherwise valid enclosure links to
+        # fewer than three walls, recover only the strongest nearby candidates
+        # from a lower-confidence band. This is deliberately bounded so an
+        # interior wall cannot cause an unbounded topology fan-out.
+        if len(scored)<3 and len(polygon)>=3:
+            seen={wall_id for _,wall_id in scored}
+            relaxed=[]
+            for wall in walls:
+                wall_id=str(_wall_value(wall,"id"))
+                if wall_id in seen:
+                    continue
+                best=0.0
+                for index,point in enumerate(polygon):
+                    other=polygon[(index+1)%len(polygon)]
+                    best=max(best,_relaxed_edge_wall_score(point,other,wall))
+                if best>=0.24:
+                    relaxed.append((best,wall_id))
+            needed=max(0,3-len(scored))
+            scored.extend(
+                sorted(relaxed,key=lambda item:(-item[0],item[1]))[:needed]
+            )
+
         ids=[wall_id for _,wall_id in sorted(scored,key=lambda item:(-item[0],item[1]))]
         if isinstance(room,dict):
             room["boundaryWallIds"]=ids
