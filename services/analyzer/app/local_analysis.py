@@ -25,7 +25,7 @@ from .symbols import extract_configured_onnx_detections,extract_symbol_detection
 from .structural import extract_structural_wall_mask,filter_walls_by_structural_support,has_dominant_structural_color,structural_mask_metrics
 from .topology import classify_wall_roles,filter_nonarchitectural_enclosures,link_room_boundaries,recalibrate_extracted_room_confidence
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,fuse_region_wall_candidates,quarantine_dimension_aligned_walls,rasterize_wall_mask
-from .vision_segmentation import infer_segmentation,learned_opening_detections,semantic_room_barrier,wall_consensus_score
+from .vision_segmentation import infer_segmentation,semantic_room_barrier,should_use_learned_rooms,wall_consensus_score
 
 
 def analyze_document_bytes_local(
@@ -55,11 +55,7 @@ def analyze_document_bytes_local(
         and segmentation_result.get("plausible")
         and segmentation_consensus>=float(os.getenv("SEGMENTATION_MIN_WALL_CONSENSUS",".30") or ".30")
     )
-    if learned_segmentation:
-        structural_mask=np.asarray(segmentation_result["masks"]["wall"],dtype=np.uint8)
-        structural_mask=cv2.morphologyEx(structural_mask,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8))
-    else:
-        structural_mask=heuristic_structural_mask
+    structural_mask=heuristic_structural_mask
     structural_metrics=structural_mask_metrics(structural_mask) if structural_mask is not None else {}
 
     vector_lines=[]
@@ -134,8 +130,7 @@ def analyze_document_bytes_local(
         except Exception:
             symbols=[]
     if learned_segmentation:
-        ai_detections=[*ai_detections,*learned_opening_detections(segmentation_result)]
-        engines.append("vision-segmentation-v1")
+        engines.append("vision-segmentation-candidate-v1")
     if symbols:
         engines.append("symbol-detector")
     if ai_detections:
@@ -209,13 +204,22 @@ def analyze_document_bytes_local(
         min_pdf_vector_confidence=.70,
         excluded_wall_ids=quarantined_wall_ids,
     )
+    fallback_barrier=build_room_barrier(barrier) if reconstruction_v3 else barrier
+    fallback_rooms=detect_rooms(fallback_barrier,labels,scale)
+    rooms=fallback_rooms
+    use_learned_rooms=False
     learned_room_barrier=semantic_room_barrier(segmentation_result) if learned_segmentation else None
     if learned_room_barrier is not None:
         segmentation_seed=cv2.bitwise_or(barrier,learned_room_barrier)
-        segmentation_barrier=build_room_barrier(segmentation_seed)
-    else:
-        segmentation_barrier=build_room_barrier(barrier) if reconstruction_v3 else barrier
-    rooms=detect_rooms(segmentation_barrier,labels,scale)
+        learned_barrier=build_room_barrier(segmentation_seed)
+        learned_rooms=detect_rooms(learned_barrier,labels,scale)
+        use_learned_rooms=should_use_learned_rooms(
+            fallback_rooms,learned_rooms,labels,
+            dominant_colored_plan=has_dominant_structural_color(image),
+        )
+        if use_learned_rooms:
+            rooms=learned_rooms
+            engines.append("vision-room-rescue-v1")
     link_room_boundaries(rooms,topology_walls)
     rooms=filter_nonarchitectural_enclosures(rooms,topology_walls,w,h)
     recalibrate_extracted_room_confidence(rooms,topology_walls,w,h)
