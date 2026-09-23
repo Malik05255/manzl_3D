@@ -124,12 +124,10 @@ def analyze_document_bytes_local(
     if ai_detections:
         engines.append("onnx-architectural-detector")
 
-    wall_input=(
-        structural_mask
-        if reconstruction_v3 and structural_mask is not None and cv2.countNonZero(structural_mask)>0
-        else ink
-    )
-    walls,wall_mask=detect_walls(wall_input)
+    # Detect on the original ink so diagonal/irregular walls survive. V3 then
+    # filters raster candidates against the conservative structural mask instead
+    # of throwing away non-axis evidence before detection.
+    walls,wall_mask=detect_walls(ink)
     if vector_lines:
         walls=enrich_walls_with_vector(walls,vector_lines)
         walls=add_vector_wall_candidates(walls,vector_lines,h,w,labels=labels)
