@@ -33,9 +33,9 @@ jobs:
         run: |
           python tools/train_segmentation_synthetic.py \
             --output ../../segmentation-model \
-            --epochs 5 \
-            --train-count 900 \
-            --val-count 180 \
+            --epochs 3 \
+            --train-count 700 \
+            --val-count 140 \
             --size 256
 
       - name: Verify ONNX through production OpenCV path
