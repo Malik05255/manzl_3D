@@ -24,6 +24,7 @@ from .topology import canonicalize_plan,classify_wall_roles,filter_nonarchitectu
 from .semantic import normalize_edit_semantics
 from .walls import add_vector_wall_candidates,detect_walls,enrich_walls_with_vector,fuse_region_wall_candidates,quarantine_dimension_aligned_walls,rasterize_wall_mask
 from .validation import validate_plan
+from .vision_segmentation import infer_segmentation,learned_opening_detections,semantic_room_barrier
 
 app=FastAPI(title="Manzil H Analyzer",version="0.1.0")
 PIPELINE_VERSION=os.getenv("ANALYZER_PIPELINE_VERSION",app.version)
@@ -79,6 +80,7 @@ async def health():
         "pipelineVersion":PIPELINE_VERSION,
         "reconstructionV2":reconstruction_v2 or reconstruction_v3,
         "reconstructionV3":reconstruction_v3,
+        "visionSegmentation":bool(os.getenv("SEGMENTATION_ONNX_MODEL","").strip()),
     }
 
 @app.post("/v1/analyze",response_model=FloorPlan)
@@ -104,7 +106,14 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     reconstruction_v2=os.getenv("ANALYZER_RECONSTRUCTION_V2","1").strip().lower() not in {"0","false","off","no"}
     reconstruction_v3=os.getenv("ANALYZER_RECONSTRUCTION_V3","1").strip().lower() not in {"0","false","off","no"}
     reconstruction_enabled=reconstruction_v2 or reconstruction_v3
-    structural_mask=extract_structural_wall_mask(image,ink) if reconstruction_enabled else None
+    heuristic_structural_mask=extract_structural_wall_mask(image,ink) if reconstruction_enabled else None
+    segmentation_result=await asyncio.to_thread(infer_segmentation,image)
+    learned_segmentation=bool(segmentation_result and segmentation_result.get("plausible"))
+    if learned_segmentation:
+        structural_mask=np.asarray(segmentation_result["masks"]["wall"],dtype=np.uint8)
+        structural_mask=cv2.morphologyEx(structural_mask,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8))
+    else:
+        structural_mask=heuristic_structural_mask
     structural_metrics=structural_mask_metrics(structural_mask) if structural_mask is not None else {}
 
     native_labels=[]
@@ -166,6 +175,8 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
         _safe_symbols(),
     )
     symbols,ai_detections=symbol_bundle
+    if learned_segmentation:
+        ai_detections=[*ai_detections,*learned_opening_detections(segmentation_result)]
     used_cloud_ocr=bool(cloud_labels)
     if cloud_labels:
         distance=max(12.0,min(image.shape[:2])*0.012)
@@ -253,7 +264,11 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     )
 
     await progress(req.callback_url,req.project_id,"rooms",78,"إعادة بناء الغرف وإغلاق فتحات الأبواب للتحليل")
-    segmentation_barrier=build_room_barrier(room_barrier_mask) if reconstruction_v3 else room_barrier_mask
+    learned_room_barrier=semantic_room_barrier(segmentation_result) if learned_segmentation else None
+    if learned_room_barrier is not None:
+        segmentation_barrier=learned_room_barrier
+    else:
+        segmentation_barrier=build_room_barrier(room_barrier_mask) if reconstruction_v3 else room_barrier_mask
     rooms=detect_rooms(segmentation_barrier,labels,scale)
     link_room_boundaries(rooms,topology_walls)
     rooms=filter_nonarchitectural_enclosures(rooms,topology_walls,w,h)
@@ -274,6 +289,9 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
     if used_pdf_vector: engines.append("pdf-vector")
     if symbols: engines.append("symbol-detector")
     if ai_detections: engines.append("onnx-architectural-detector")
+    if learned_segmentation:
+        engines.append("vision-segmentation-v1")
+        engines.append(f"segmentation-confidence:{float(segmentation_result.get('meanConfidence',0.0)):.3f}")
     analysis={
         "pipelineVersion":PIPELINE_VERSION,
         "analyzedAt":datetime.now(timezone.utc).isoformat(),
