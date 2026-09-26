@@ -590,3 +590,80 @@ def test_vector_window_rejects_parallel_group_far_from_wall():
     ]
     windows=detect_windows(image,walls,None,vector_lines=vectors)
     assert windows==[]
+
+
+def test_native_vector_leaf_can_confirm_door_gap():
+    image=np.full((300,380,3),255,dtype=np.uint8)
+    cv2.line(image,(30,150),(120,150),(0,0,0),5)
+    cv2.line(image,(200,150),(350,150),(0,0,0),5)
+    walls=[
+        wall("left",30,150,120,150),
+        wall("right",200,150,350,150),
+    ]
+    vectors=[{
+        "a":{"x":120.0,"y":150.0},
+        "b":{"x":168.0,"y":104.0},
+        "widthPx":1.2,
+    }]
+
+    doors=detect_doors(
+        image,walls,meters_per_pixel=.015,
+        vector_lines=vectors,
+    )
+
+    assert len(doors)==1
+    assert doors[0]["doorSubtype"]=="single_swing"
+    assert doors[0]["provenance"]=="mixed"
+    assert doors[0]["doorSwingDepthPx"]>30
+
+
+def test_native_vector_leaves_on_both_hinges_confirm_double_swing():
+    image=np.full((320,420,3),255,dtype=np.uint8)
+    cv2.line(image,(30,160),(130,160),(0,0,0),5)
+    cv2.line(image,(230,160),(390,160),(0,0,0),5)
+    walls=[
+        wall("left",30,160,130,160),
+        wall("right",230,160,390,160),
+    ]
+    vectors=[
+        {
+            "a":{"x":130.0,"y":160.0},
+            "b":{"x":174.0,"y":112.0},
+            "widthPx":1.0,
+        },
+        {
+            "a":{"x":230.0,"y":160.0},
+            "b":{"x":186.0,"y":112.0},
+            "widthPx":1.0,
+        },
+    ]
+
+    doors=detect_doors(
+        image,walls,meters_per_pixel=.015,
+        vector_lines=vectors,
+    )
+
+    assert len(doors)==1
+    assert doors[0]["doorSubtype"]=="double_swing"
+
+
+def test_unanchored_vector_diagonal_does_not_confirm_door():
+    image=np.full((300,380,3),255,dtype=np.uint8)
+    cv2.line(image,(30,150),(120,150),(0,0,0),5)
+    cv2.line(image,(200,150),(350,150),(0,0,0),5)
+    walls=[
+        wall("left",30,150,120,150),
+        wall("right",200,150,350,150),
+    ]
+    vectors=[{
+        "a":{"x":150.0,"y":105.0},
+        "b":{"x":180.0,"y":130.0},
+        "widthPx":1.0,
+    }]
+
+    doors=detect_doors(
+        image,walls,meters_per_pixel=.015,
+        vector_lines=vectors,
+    )
+
+    assert doors==[]
