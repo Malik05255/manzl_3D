@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>منزل H · معاينة 3D</title>
+  <style>
+    :root{font-family:Inter,Tahoma,Arial,sans-serif;color:#0f172a;background:#eef2f7}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(180deg,#f8fafc,#e2e8f0)}
+    .shell{min-height:100vh;display:grid;grid-template-rows:auto 1fr}
+    header{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:14px 18px;background:#fff;border-bottom:1px solid #dbe3ee;position:sticky;top:0;z-index:3}
+    .brand{display:flex;gap:10px;align-items:center}.brand img{width:34px;height:34px}.brand div{display:grid}.brand small{color:#64748b}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}button,.file-button{border:1px solid #cbd5e1;background:#fff;color:#0f172a;padding:9px 12px;border-radius:10px;font-weight:700;cursor:pointer}
+    button.primary,.file-button.primary{background:#0f172a;color:#fff;border-color:#0f172a}.file-button input{display:none}
+    main{min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:14px;padding:14px}
+    .stage{position:relative;min-height:520px;background:#0b1220;border-radius:18px;overflow:hidden;box-shadow:0 18px 50px #0f172a22}
+    canvas{width:100%;height:100%;display:block;touch-action:none}
+    .empty{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;color:#cbd5e1;pointer-events:none}
+    .empty strong{display:block;font-size:22px;color:#fff;margin-bottom:8px}.empty span{display:block;max-width:520px;line-height:1.7}
+    aside{display:flex;flex-direction:column;gap:12px}.card{background:#fff;border:1px solid #dbe3ee;border-radius:16px;padding:14px;box-shadow:0 10px 30px #0f172a0d}
+    .card h2,.card h3{margin:0 0 8px}.muted{color:#64748b;font-size:13px;line-height:1.6}
+    .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}.stat{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:10px}.stat strong{font-size:20px;display:block}
+    label.range{display:grid;gap:6px;margin-top:12px}input[type=range]{width:100%}
+    .legend{display:grid;gap:7px;margin-top:10px}.legend span{display:flex;gap:8px;align-items:center;font-size:13px}.dot{width:12px;height:12px;border-radius:3px;display:inline-block}
+    .room-dot{background:#5eead4}.wall-dot{background:#e2e8f0}.door-dot{background:#38bdf8}.window-dot{background:#a78bfa}
+    .hint{font-size:12px;color:#475569;line-height:1.65}.error{color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;padding:9px;border-radius:10px;font-size:13px;display:none}
+    @media(max-width:880px){main{grid-template-columns:1fr}.stage{min-height:62vh}aside{display:grid;grid-template-columns:1fr 1fr}.wide{grid-column:1/-1}}
+    @media(max-width:560px){header{align-items:flex-start;flex-direction:column}.actions{width:100%}.actions>*{flex:1;text-align:center}main{padding:8px;gap:8px}.stage{border-radius:12px;min-height:58vh}aside{display:flex}}
+  </style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div class="brand"><img src="/icon.svg" alt=""><div><strong>منزل H · معاينة 3D</strong><small>عارض تجريبي لنسخة المشروع JSON</small></div></div>
+    <div class="actions">
+      <label class="file-button primary">فتح ملف JSON<input id="file" type="file" accept=".json,.manzil.json,application/json"></label>
+      <button id="reset">إعادة ضبط العرض</button>
+    </div>
+  </header>
+  <main>
+    <section class="stage" id="stage">
+      <canvas id="canvas"></canvas>
+      <div class="empty" id="empty"><div><strong>اسحب نسخة مشروع منزل H هنا</strong><span>صدّر المخطط بصيغة JSON من المحرر، ثم افتحه هنا. استخدم السحب للدوران، عجلة الماوس للتقريب، واللمس على الجوال.</span></div></div>
+    </section>
+    <aside>
+      <section class="card wide"><h2>المخطط</h2><div class="muted" id="fileName">لم يتم تحميل ملف بعد</div><div class="error" id="error"></div></section>
+      <section class="card"><div class="stats"><div class="stat"><strong id="wallCount">0</strong><span>جدار</span></div><div class="stat"><strong id="roomCount">0</strong><span>غرفة</span></div><div class="stat"><strong id="doorCount">0</strong><span>باب</span></div><div class="stat"><strong id="windowCount">0</strong><span>نافذة</span></div></div></section>
+      <section class="card"><h3>إعدادات المنظور</h3><label class="range"><span>ارتفاع الجدار <b id="heightLabel">3.0 م</b></span><input id="height" type="range" min="2" max="6" step=".1" value="3"></label><label class="range"><span>المنظور <b id="pitchLabel">55°</b></span><input id="pitch" type="range" min="25" max="75" step="1" value="55"></label></section>
+      <section class="card"><h3>المفتاح</h3><div class="legend"><span><i class="dot room-dot"></i> أرضيات الغرف</span><span><i class="dot wall-dot"></i> الجدران</span><span><i class="dot door-dot"></i> الأبواب</span><span><i class="dot window-dot"></i> النوافذ</span></div><p class="hint">المعاينة تستخدم مقياس المخطط إن كان معروفًا. ارتفاع الجدار الخاص بكل جدار يأخذ الأولوية، ثم ارتفاع الطابق، ثم القيمة المختارة هنا.</p></section>
+    </aside>
+  </main>
+</div>
+<script>
+(() => {
+  const canvas=document.getElementById("canvas"),ctx=canvas.getContext("2d"),stage=document.getElementById("stage");
+  const empty=document.getElementById("empty"),errorBox=document.getElementById("error"),fileName=document.getElementById("fileName");
+  const fileInput=document.getElementById("file"),heightInput=document.getElementById("height"),pitchInput=document.getElementById("pitch");
+  const state={plan:null,yaw:-0.72,pitch:55*Math.PI/180,zoom:1.0,panX:0,panY:0,drag:false,lastX:0,lastY:0};
+  const counts={wall:document.getElementById("wallCount"),room:document.getElementById("roomCount"),door:document.getElementById("doorCount"),window:document.getElementById("windowCount")};
+
+  function fitCanvas(){
+    const dpr=Math.min(window.devicePixelRatio||1,2),rect=stage.getBoundingClientRect();
+    canvas.width=Math.max(1,Math.round(rect.width*dpr));canvas.height=Math.max(1,Math.round(rect.height*dpr));
+    ctx.setTransform(dpr,0,0,dpr,0,0);draw();
+  }
+  function validatePlan(value){
+    return value&&typeof value==="object"&&Array.isArray(value.walls)&&Array.isArray(value.rooms)&&Array.isArray(value.doors)&&Array.isArray(value.windows)&&Number.isFinite(value.widthPx)&&Number.isFinite(value.heightPx);
+  }
+  function loadPlan(plan,name){
+    if(!validatePlan(plan))throw new Error("الملف لا يبدو كنسخة مخطط صالحة من منزل H.");
+    state.plan=plan;fileName.textContent=name||plan.source?.fileName||"مخطط منزل H";empty.style.display="none";errorBox.style.display="none";
+    counts.wall.textContent=plan.walls.length;counts.room.textContent=plan.rooms.length;counts.door.textContent=plan.doors.length;counts.window.textContent=plan.windows.length;
+    resetView();draw();
+  }
+  async function readFile(file){
+    try{const text=await file.text();loadPlan(JSON.parse(text),file.name);}catch(error){errorBox.textContent=error instanceof Error?error.message:"تعذر قراءة الملف.";errorBox.style.display="block";}
+  }
+
+  function bounds(plan){
+    const points=[];
+    for(const w of plan.walls){points.push(w.a,w.b)}for(const r of plan.rooms)for(const p of r.polygon)points.push(p);
+    if(!points.length)return {minX:0,minY:0,maxX:plan.widthPx,maxY:plan.heightPx};
+    return {minX:Math.min(...points.map(p=>p.x)),minY:Math.min(...points.map(p=>p.y)),maxX:Math.max(...points.map(p=>p.x)),maxY:Math.max(...points.map(p=>p.y))};
+  }
+  function scaleInfo(){
+    const p=state.plan,b=bounds(p),w=Math.max(1,b.maxX-b.minX),h=Math.max(1,b.maxY-b.minY),mpp=p.metersPerPixel||1;
+    return {cx:(b.minX+b.maxX)/2,cy:(b.minY+b.maxY)/2,mpp,span:Math.max(w,h)*mpp};
+  }
+  function project(x,y,z){
+    const info=scaleInfo(),X=(x-info.cx)*info.mpp,Y=(y-info.cy)*info.mpp;
+    const c=Math.cos(state.yaw),s=Math.sin(state.yaw),rx=X*c-Y*s,ry=X*s+Y*c;
+    const cp=Math.cos(state.pitch),sp=Math.sin(state.pitch),py=ry*cp-z*sp,pz=ry*sp+z*cp;
+    const rect=stage.getBoundingClientRect(),base=Math.min(rect.width,rect.height)/(info.span*1.45||1);
+    const f=state.zoom*base*(1+Math.max(-.5,Math.min(.5,pz/(info.span*8||1))));
+    return {x:rect.width/2+state.panX+rx*f,y:rect.height/2+state.panY+py*f,depth:pz};
+  }
+  function poly(points,fill,stroke,width=1){
+    if(points.length<3)return;ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);for(let i=1;i<points.length;i++)ctx.lineTo(points[i].x,points[i].y);ctx.closePath();ctx.fillStyle=fill;ctx.fill();if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=width;ctx.stroke();}
+  }
+  function line(a,b,color,width=2,dash=[]){ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.strokeStyle=color;ctx.lineWidth=width;ctx.setLineDash(dash);ctx.stroke();ctx.setLineDash([]);}
+  function wallPrism(wall){
+    const p=state.plan,defaultH=Number(heightInput.value),floorH=Number(p.floorHeightM||0),h=wall.heightM||floorH||defaultH;
+    const dx=wall.b.x-wall.a.x,dy=wall.b.y-wall.a.y,len=Math.hypot(dx,dy)||1,nx=-dy/len,ny=dx/len,t=(wall.thicknessPx||5)/2;
+    const a1={x:wall.a.x+nx*t,y:wall.a.y+ny*t},a2={x:wall.a.x-nx*t,y:wall.a.y-ny*t},b1={x:wall.b.x+nx*t,y:wall.b.y+ny*t},b2={x:wall.b.x-nx*t,y:wall.b.y-ny*t};
+    const base=[project(a1.x,a1.y,0),project(b1.x,b1.y,0),project(b2.x,b2.y,0),project(a2.x,a2.y,0)];
+    const top=[project(a1.x,a1.y,h),project(b1.x,b1.y,h),project(b2.x,b2.y,h),project(a2.x,a2.y,h)];
+    return {depth:(base.reduce((s,q)=>s+q.depth,0)+top.reduce((s,q)=>s+q.depth,0))/8,base,top};
+  }
+  function draw(){
+    const rect=stage.getBoundingClientRect();ctx.clearRect(0,0,rect.width,rect.height);ctx.fillStyle="#0b1220";ctx.fillRect(0,0,rect.width,rect.height);
+    const p=state.plan;if(!p)return;
+    const roomFaces=p.rooms.map(r=>({depth:r.polygon.reduce((s,q)=>s+project(q.x,q.y,0).depth,0)/Math.max(1,r.polygon.length),pts:r.polygon.map(q=>project(q.x,q.y,0))})).sort((a,b)=>a.depth-b.depth);
+    for(const r of roomFaces)poly(r.pts,"rgba(45,212,191,.16)","rgba(94,234,212,.34)",1);
+    const walls=p.walls.map(w=>wallPrism(w)).sort((a,b)=>a.depth-b.depth);
+    for(const w of walls){poly([w.base[0],w.base[1],w.top[1],w.top[0]],"#94a3b8","#cbd5e1");poly([w.base[1],w.base[2],w.top[2],w.top[1]],"#64748b","#94a3b8");poly(w.top,"#e2e8f0","#f8fafc",1);}
+    for(const d of p.doors)line(project(d.a.x,d.a.y,.08),project(d.b.x,d.b.y,.08),"#38bdf8",4);
+    for(const w of p.windows){const z=(w.sillHeightM??.9)+((w.heightM??1.2)/2);line(project(w.a.x,w.a.y,z),project(w.b.x,w.b.y,z),"#a78bfa",4);}
+  }
+  function resetView(){state.yaw=-.72;state.pitch=Number(pitchInput.value)*Math.PI/180;state.zoom=1;state.panX=0;state.panY=0;draw();}
+  document.getElementById("reset").addEventListener("click",resetView);
+  heightInput.addEventListener("input",()=>{document.getElementById("heightLabel").textContent=Number(heightInput.value).toFixed(1)+" م";draw();});
+  pitchInput.addEventListener("input",()=>{state.pitch=Number(pitchInput.value)*Math.PI/180;document.getElementById("pitchLabel").textContent=pitchInput.value+"°";draw();});
+  fileInput.addEventListener("change",e=>{const f=e.target.files?.[0];if(f)readFile(f);});
+  stage.addEventListener("dragover",e=>{e.preventDefault();});
+  stage.addEventListener("drop",e=>{e.preventDefault();const f=e.dataTransfer?.files?.[0];if(f)readFile(f);});
+  stage.addEventListener("pointerdown",e=>{state.drag=true;state.lastX=e.clientX;state.lastY=e.clientY;stage.setPointerCapture?.(e.pointerId);});
+  stage.addEventListener("pointermove",e=>{if(!state.drag)return;const dx=e.clientX-state.lastX,dy=e.clientY-state.lastY;state.lastX=e.clientX;state.lastY=e.clientY;state.yaw+=dx*.008;state.pitch=Math.max(.35,Math.min(1.35,state.pitch+dy*.006));pitchInput.value=String(Math.round(state.pitch*180/Math.PI));document.getElementById("pitchLabel").textContent=pitchInput.value+"°";draw();});
+  stage.addEventListener("pointerup",()=>state.drag=false);stage.addEventListener("pointercancel",()=>state.drag=false);
+  stage.addEventListener("wheel",e=>{e.preventDefault();state.zoom=Math.max(.35,Math.min(4,state.zoom*Math.exp(-e.deltaY*.001)));draw();},{passive:false});
+  window.addEventListener("resize",fitCanvas);new ResizeObserver(fitCanvas).observe(stage);fitCanvas();
+})();
+</script>
+</body>
+</html>
