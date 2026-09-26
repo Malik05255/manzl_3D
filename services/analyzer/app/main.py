@@ -15,7 +15,7 @@ from .dimensions import extract_dimension_evidence
 from .edits import build_proposals,build_resize_proposals
 from .models import CanonicalizeRequest,EditRequest,FloorPlan,ProposalResponse,ResizeRequest,ValidationReport,ValidationRequest
 from .ocr import _merge_labels,classify_text,extract_ocr_dimension_labels,extract_ocr_labels,native_pdf_text_is_sufficient
-from .openings import detect_doors,detect_windows,fuse_ai_opening_detections,normalize_opening_hosts
+from .openings import detect_doors,detect_windows,filter_implausible_doors,fuse_ai_opening_detections,normalize_opening_hosts
 from .pipeline import assemble_plan
 from .rooms import build_room_barrier,detect_rooms
 from .scale import estimate_scale_with_diagnostics
@@ -264,6 +264,10 @@ async def analyze(req:AnalyzeRequest,x_manzil_internal:str|None=Header(default=N
             topology_walls,doors,windows,ai_detections,
             min_confidence=max(.15,min(.99,float(os.getenv("OPENING_ONNX_MIN_CONFIDENCE",".35") or ".35"))),
         )
+    doors=filter_implausible_doors(
+        doors,w,h,
+        max_envelope_ratio=float(os.getenv("DOOR_MAX_ENVELOPE_RATIO",".045") or ".045"),
+    )
     walls,doors,windows=normalize_opening_hosts(walls,doors,windows)
     topology_walls=[
         wall for wall in walls

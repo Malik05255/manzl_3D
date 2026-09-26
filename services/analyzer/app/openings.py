@@ -530,6 +530,55 @@ def detect_doors(
     return result
 
 
+def filter_implausible_doors(
+    doors:list[dict],
+    width:int,
+    height:int,
+    *,
+    max_envelope_ratio:float=.045,
+)->list[dict]:
+    """Remove door detections whose swing envelope is implausibly large.
+
+    The threshold is normalized to the shorter page dimension so it behaves
+    consistently across raster sizes. Doors without reliable swing depth are
+    judged only by their opening span.
+    """
+    page_base=max(1.0,float(min(width,height)))
+    limit=max(.01,min(.20,float(max_envelope_ratio)))*page_base
+    accepted=[]
+    for door in doors:
+        try:
+            ax,ay=_point(door["a"])
+            bx,by=_point(door["b"])
+        except (KeyError,TypeError,ValueError):
+            continue
+        points=[(ax,ay),(bx,by)]
+        try:
+            depth=float(door.get("doorSwingDepthPx") or 0.0)
+        except (TypeError,ValueError):
+            depth=0.0
+        side=str(door.get("doorSwingSide") or "unknown")
+        dx=bx-ax
+        dy=by-ay
+        length=math.hypot(dx,dy)
+        if depth>1.0 and length>1e-9 and side in {"positive","negative"}:
+            nx=-dy/length
+            ny=dx/length
+            sign=1.0 if side=="positive" else -1.0
+            depth=max(length*.25,min(depth,length*1.25))
+            points.extend([
+                (ax+nx*depth*sign,ay+ny*depth*sign),
+                (bx+nx*depth*sign,by+ny*depth*sign),
+            ])
+        span=max(
+            max(x for x,_ in points)-min(x for x,_ in points),
+            max(y for _,y in points)-min(y for _,y in points),
+        )
+        if span<=limit:
+            accepted.append(door)
+    return accepted
+
+
 def _vector_window_candidates(
     vector_lines:list[dict],
     walls:list[dict],
